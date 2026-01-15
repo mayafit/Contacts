@@ -23,7 +23,32 @@ const compat = new FlatCompat({
 
 export default [
   {
-    ignores: ['**/*.svg', '**/node_modules', '**/public', '**/coverage'],
+    ignores: [
+      '**/*.svg',
+      '**/node_modules',
+      '**/public',
+      '**/coverage',
+      '**/dist',
+      '**/_bmad-output',
+      '**/_bmad',
+      '**/.storybook',
+      '**/blueFiberSrc/_webpack.*.js',
+      '**/blueFiberSrc/configureStore.ts',
+      '**/webpack.*.js',
+      '**/*.config.js',
+      '**/*.config.mjs',
+      '**/babel.config.js',
+      '**/MuiTheme.js',
+      '**/bluefiber.config.js',
+      '**/jest.polyfills.js',
+      '**/jest.setup.js',
+      '**/src/GLOBALS.ts',
+      '**/src/bluefiber.decs.d.ts',
+      '**/src/entries/Todos/**',
+      '**/src/external/**',
+      '**/src/store/trackSlice.js',
+      '**/src/utils/utils.ts',
+    ],
   },
   ...compat.extends(
     'eslint:recommended',
