@@ -1,0 +1,4 @@
+{
+  "./Init": "./src/InitComp.tsx",
+  "./ExternalAction": "./src/external/ExternalAction.tsx"
+}

@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "sourceMap": false /* Generates corresponding '.map' file. */,
+    "declaration": false /* Generates corresponding '.d.ts' file. */
+    // "noUnusedLocals": true,
+    // "skipLibCheck": true
+  }
+}

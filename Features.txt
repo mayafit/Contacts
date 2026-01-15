@@ -1,0 +1,35 @@
+* Typescript support
+* Build - dev/prod/e2e (webpack merge)
+* Hot-Reload development
+* Eslint + Prettier
+* Easy modules-expose
+* Toastify notifications
+* Babel
+* CSS/LESS loaders support (import .css / .less files)
+* Alias (src)
+* Jest + Coverage + Reports (support typescript)
+* Storybook
+* Features Flags
+* Env config  (internal use only)
+* Dockerfile
+* Based on BlueFiber 1.7.23
+
+
+
+                                                                                                    
+                     .:.                                                                            
+                  .!?!.                                                                             
+               .!YP?:                                                                               
+            :!YGGY:                                                                                 
+           ^!5PY^                                                                                   
+            ^7.  .::::.         :JYYY^  .?YYYYYYJ.  .JYYY~                                          
+          .?!:~?JY5YJ55J?!:     7GGGP.  ?GGGGGGGP.  !GGGG:                                          
+         :Y^!J77~!^!!^!~!7J7   .PGGG7  ~GGGYJGGG5   5GGGJ                                           
+        .5~~Y:7:?JYGGYJ?:!:J?  !GGGP: :PGGP:JGGGY  ~GGGG^                                           
+        !G.7J:?.JPPGGGPY.7^?J  5GGGJ  YGGG! YGGGJ  YGGGY   .......  ...    .:......    ..           
+        !G7.J?!~^~^?J^~^~!7Y: ~GGGG^ ?GGGY..5GGG? ^GGGG~  7PYJJJJ7  YG^   .?JYP5JJ?  .YPP^          
+         JGJ^~?JJYY?7YYJJ?!   YGGGY ~GGGGGPGGGGG! ?GGG5  .PG7~~~^  ^G5       ?G?    ^5Y7GJ          
+          !5G5?!!77??7!~:.   ^GGGG^:PGGG?7??GGGG~.PGGG!  !GY!!!!^  JG!      .PG:   !GP!7GP.         
+            ^?YPPPPPPPPPPY.  JGGG5.5GGG?   .PGGG^7GGGP. .5GJ7777: :GG?77?~  7BJ  .JG7~~~YG7         
+               .::^^^^^^^.   :^^^:.^^^^    .^^^^.:^^^:  .^^~~~~~. .~^~~~~:  ^~.  :~:    :~:         
+                                                                                                   

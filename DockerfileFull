@@ -1,0 +1,70 @@
+###############################
+# !!! PLEASE NOTE !!!
+# In hardened environments (openshift + restricted)
+# you should mount the following folders:
+# /var/cache/nginx
+# /var/run
+# /env-scripts
+###############################
+
+FROM node:22.12.0-slim as builder
+
+ENV MIRROR_NPM=http://mirror.example/artifactory/api/npm/npm/
+
+
+RUN npm config set registry ${MIRROR_NPM}
+
+RUN npm config set @bf:registry ${INTERNAL_NPM} 
+# RUN npm config set sass_binary_site ${ARTIFACTORY01_NODE_SASS} 
+RUN npm config set strict-ssl false
+
+
+WORKDIR /usr/src/app
+
+# COPY package.json .
+COPY package*.json ./
+#RUN rm -rf node_modules && npm i
+RUN npm ci
+#RUN npm i --only=production
+
+COPY . .
+
+RUN npm run build:prod
+
+
+#WORKDIR /usr/src/malkodot2/public
+
+FROM nginx:1.27.0-alpine-slim
+
+WORKDIR /usr/share/nginx/html
+# RUN command rm -rf /usr/share/nginx/html/*
+
+COPY ./.nginx/nginx.conf /etc/nginx/nginx.conf
+COPY ./.nginx/mime.types /etc/nginx/mime.types
+
+COPY --from=builder /usr/src/app/dist /usr/share/nginx/html
+
+
+
+RUN mkdir -p /env-scripts
+# WORKDIR /env-scripts
+COPY --from=builder /usr/src/app/dist/env.config.json /scripts/env.config.json
+
+
+EXPOSE 8080
+
+RUN mkdir -p /scripts
+WORKDIR /scripts
+COPY blueFiberSrc/setup.sh .
+
+RUN tr -d '\r' < setup.sh > setupunix.sh
+RUN chmod +x setupunix.sh
+ENTRYPOINT [ "sh", "/scripts/setupunix.sh" ]
+RUN ln -s /env-scripts/env.docker.js /usr/share/nginx/html/env.docker.js
+
+CMD [ "nginx", "-g", "daemon off;" ]
+
+#ENTRYPOINT [ "nginx", "-g", "daemon off;" ]
+
+#CMD ["node","index.js"]
+

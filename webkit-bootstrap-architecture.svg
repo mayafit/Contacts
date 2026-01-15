@@ -1,0 +1,125 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600">
+  <!-- WebKit Bootstrap Architecture Diagram -->
+
+  <!-- Background -->
+  <rect width="800" height="600" fill="#fafafa"/>
+
+  <!-- Title -->
+  <text x="400" y="40" font-family="Arial, sans-serif" font-size="24" font-weight="bold" text-anchor="middle" fill="#1e88e5">
+    WebKit Bootstrap Architecture
+  </text>
+
+  <!-- WebKit Bootstrap Box (Top Center) -->
+  <rect x="210" y="80" width="380" height="120" rx="8" fill="#e3f2fd" stroke="#1e88e5" stroke-width="3"/>
+  <text x="400" y="120" font-family="Arial, sans-serif" font-size="20" font-weight="bold" text-anchor="middle" fill="#0d47a1">
+    WebKit Bootstrap
+  </text>
+  <text x="400" y="145" font-family="Arial, sans-serif" font-size="14" text-anchor="middle" fill="#424242">
+    React 18 + TypeScript + Redux Toolkit
+  </text>
+  <text x="400" y="165" font-family="Arial, sans-serif" font-size="14" text-anchor="middle" fill="#424242">
+    Material-UI + Webpack Module Federation
+  </text>
+  <text x="400" y="185" font-family="Arial, sans-serif" font-size="13" font-style="italic" text-anchor="middle" fill="#666">
+    Fork this template to start your project
+  </text>
+
+  <!-- Arrow down to Fork Decision -->
+  <line x1="400" y1="200" x2="400" y2="240" stroke="#666" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <text x="420" y="225" font-family="Arial, sans-serif" font-size="12" fill="#666">Fork</text>
+
+  <!-- Fork Decision Diamond -->
+  <polygon points="400,240 480,270 400,300 320,270" fill="#fff9c4" stroke="#f57f17" stroke-width="2"/>
+  <text x="400" y="275" font-family="Arial, sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#f57f17">
+    Choose Path
+  </text>
+
+  <!-- Left Arrow to SPA Path -->
+  <path d="M 320 270 L 200 270 L 200 350" stroke="#666" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
+  <text x="250" y="265" font-family="Arial, sans-serif" font-size="12" fill="#666">Path A</text>
+
+  <!-- Right Arrow to Module Federation Path -->
+  <path d="M 480 270 L 600 270 L 600 350" stroke="#666" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
+  <text x="520" y="265" font-family="Arial, sans-serif" font-size="12" fill="#666">Path B</text>
+
+  <!-- Left Box: Standalone SPA -->
+  <rect x="70" y="350" width="260" height="140" rx="8" fill="#fff3e0" stroke="#f57c00" stroke-width="2"/>
+  <text x="200" y="380" font-family="Arial, sans-serif" font-size="16" font-weight="bold" text-anchor="middle" fill="#e65100">
+    Standalone SPA
+  </text>
+  <text x="200" y="405" font-family="Arial, sans-serif" font-size="13" text-anchor="middle" fill="#424242">
+    Complete, independent application
+  </text>
+  <text x="200" y="430" font-family="Arial, sans-serif" font-size="12" text-anchor="middle" fill="#666">
+    ✓ Self-contained routing
+  </text>
+  <text x="200" y="450" font-family="Arial, sans-serif" font-size="12" text-anchor="middle" fill="#666">
+    ✓ Own Redux store
+  </text>
+  <text x="200" y="470" font-family="Arial, sans-serif" font-size="12" text-anchor="middle" fill="#666">
+    ✓ All dependencies bundled
+  </text>
+
+  <!-- Right Box: Module Federation Component -->
+  <rect x="470" y="350" width="260" height="140" rx="8" fill="#e8f5e9" stroke="#388e3c" stroke-width="2"/>
+  <text x="600" y="380" font-family="Arial, sans-serif" font-size="16" font-weight="bold" text-anchor="middle" fill="#1b5e20">
+    Module Federation
+  </text>
+  <text x="600" y="405" font-family="Arial, sans-serif" font-size="13" text-anchor="middle" fill="#424242">
+    Reusable components for hosts
+  </text>
+  <text x="600" y="430" font-family="Arial, sans-serif" font-size="12" text-anchor="middle" fill="#666">
+    ✓ Shares Redux store
+  </text>
+  <text x="600" y="450" font-family="Arial, sans-serif" font-size="12" text-anchor="middle" fill="#666">
+    ✓ Exposes components
+  </text>
+  <text x="600" y="470" font-family="Arial, sans-serif" font-size="12" text-anchor="middle" fill="#666">
+    ✓ Shared dependencies
+  </text>
+
+  <!-- Build Output Arrow Left -->
+  <line x1="200" y1="490" x2="200" y2="520" stroke="#666" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <text x="220" y="510" font-family="Arial, sans-serif" font-size="11" fill="#666">npm run build:prod</text>
+
+  <!-- Build Output Arrow Right -->
+  <line x1="600" y1="490" x2="600" y2="520" stroke="#666" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <text x="620" y="510" font-family="Arial, sans-serif" font-size="11" fill="#666">npm run build:prod</text>
+
+  <!-- Build Output Left: dist/ -->
+  <rect x="70" y="520" width="260" height="60" rx="6" fill="#eceff1" stroke="#546e7a" stroke-width="2"/>
+  <text x="200" y="545" font-family="Arial, sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="#263238">
+    dist/index.html
+  </text>
+  <text x="200" y="565" font-family="Arial, sans-serif" font-size="11" text-anchor="middle" fill="#546e7a">
+    Complete bundle • Ready to deploy
+  </text>
+
+  <!-- Build Output Right: dist/remoteEntry.js -->
+  <rect x="470" y="520" width="260" height="60" rx="6" fill="#eceff1" stroke="#546e7a" stroke-width="2"/>
+  <text x="600" y="545" font-family="Arial, sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="#263238">
+    dist/remoteEntry.js
+  </text>
+  <text x="600" y="565" font-family="Arial, sans-serif" font-size="11" text-anchor="middle" fill="#546e7a">
+    Federation remote • Exposed modules
+  </text>
+
+  <!-- Configuration Note -->
+  <rect x="20" y="240" width="180" height="80" rx="6" fill="#f3e5f5" stroke="#7b1fa2" stroke-width="1" stroke-dasharray="4,4"/>
+  <text x="110" y="260" font-family="Arial, sans-serif" font-size="11" font-weight="bold" text-anchor="middle" fill="#4a148c">
+    Configuration:
+  </text>
+  <text x="110" y="280" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#6a1b9a">
+    bluefiber.config.js
+  </text>
+  <text x="110" y="298" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#6a1b9a">
+    MODULES_EXPOSE.json
+  </text>
+
+  <!-- Arrow marker definition -->
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <polygon points="0 0, 10 3, 0 6" fill="#666"/>
+    </marker>
+  </defs>
+</svg>

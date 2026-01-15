@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="650" viewBox="0 0 900 650">
+  <!-- Module Federation Integration Diagram -->
+
+  <!-- Background -->
+  <rect width="900" height="650" fill="#fafafa"/>
+
+  <!-- Title -->
+  <text x="450" y="40" font-family="Arial, sans-serif" font-size="24" font-weight="bold" text-anchor="middle" fill="#1e88e5">
+    Module Federation Integration
+  </text>
+
+  <!-- Host Application Box (Left) -->
+  <rect x="80" y="100" width="280" height="180" rx="8" fill="#e3f2fd" stroke="#1e88e5" stroke-width="3"/>
+  <text x="220" y="135" font-family="Arial, sans-serif" font-size="18" font-weight="bold" text-anchor="middle" fill="#0d47a1">
+    Host Application
+  </text>
+  <text x="220" y="160" font-family="Arial, sans-serif" font-size="13" text-anchor="middle" fill="#424242">
+    Main SPA (Your Application)
+  </text>
+  <line x1="100" y1="170" x2="340" y2="170" stroke="#90caf9" stroke-width="1"/>
+
+  <text x="110" y="195" font-family="Arial, sans-serif" font-size="12" fill="#424242">
+    - Manages Redux store
+  </text>
+  <text x="110" y="215" font-family="Arial, sans-serif" font-size="12" fill="#424242">
+    - Provides routing
+  </text>
+  <text x="110" y="235" font-family="Arial, sans-serif" font-size="12" fill="#424242">
+    - Loads remote modules
+  </text>
+  <text x="110" y="255" font-family="Arial, sans-serif" font-size="12" fill="#424242">
+    - Exposes window.GLOBALS
+  </text>
+
+  <!-- Remote Module Box (Right) -->
+  <rect x="540" y="100" width="280" height="180" rx="8" fill="#e8f5e9" stroke="#388e3c" stroke-width="3"/>
+  <text x="680" y="135" font-family="Arial, sans-serif" font-size="18" font-weight="bold" text-anchor="middle" fill="#1b5e20">
+    Remote Module
+  </text>
+  <text x="680" y="160" font-family="Arial, sans-serif" font-size="13" text-anchor="middle" fill="#424242">
+    WebKit-based Component
+  </text>
+  <line x1="560" y1="170" x2="800" y2="170" stroke="#a5d6a7" stroke-width="1"/>
+
+  <text x="570" y="195" font-family="Arial, sans-serif" font-size="12" fill="#424242">
+    - Registers reducers dynamically
+  </text>
+  <text x="570" y="215" font-family="Arial, sans-serif" font-size="12" fill="#424242">
+    - Exposes components
+  </text>
+  <text x="570" y="235" font-family="Arial, sans-serif" font-size="12" fill="#424242">
+    - Uses window.GLOBALS API
+  </text>
+  <text x="570" y="255" font-family="Arial, sans-serif" font-size="12" fill="#424242">
+    - Shares dependencies
+  </text>
+
+  <!-- Arrow markers definition (must be before use) -->
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <polygon points="0 0, 10 3, 0 6" fill="#666"/>
+    </marker>
+    <marker id="arrowPurple" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <polygon points="0 0, 10 3, 0 6" fill="#7b1fa2"/>
+    </marker>
+  </defs>
+
+  <!-- Connection Arrow (Host to Module) -->
+  <path d="M 360 190 L 540 190" stroke="#666" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
+  <text x="450" y="180" font-family="Arial, sans-serif" font-size="12" text-anchor="middle" fill="#666">
+    Loads via
+  </text>
+  <text x="450" y="195" font-family="Arial, sans-serif" font-size="11" text-anchor="middle" fill="#666" font-style="italic">
+    remoteEntry.js
+  </text>
+
+  <!-- Shared Redux Store Box (Bottom Center) -->
+  <rect x="330" y="380" width="240" height="140" rx="8" fill="#f3e5f5" stroke="#7b1fa2" stroke-width="4"/>
+  <text x="450" y="415" font-family="Arial, sans-serif" font-size="18" font-weight="bold" text-anchor="middle" fill="#4a148c">
+    Shared Redux Store
+  </text>
+  <line x1="350" y1="425" x2="550" y2="425" stroke="#ce93d8" stroke-width="2"/>
+
+  <text x="450" y="450" font-family="Arial, sans-serif" font-size="13" text-anchor="middle" fill="#6a1b9a">
+    Single source of truth
+  </text>
+  <text x="450" y="475" font-family="Arial, sans-serif" font-size="12" text-anchor="middle" fill="#7b1fa2">
+    Host reducers + Dynamic reducers
+  </text>
+  <text x="450" y="495" font-family="Arial, sans-serif" font-size="11" text-anchor="middle" fill="#8e24aa" font-style="italic">
+    Managed via window.GLOBALS
+  </text>
+
+  <!-- Arrow from Host to Store -->
+  <path d="M 220 280 L 220 350 L 380 350 L 380 380" stroke="#7b1fa2" stroke-width="2" fill="none" marker-end="url(#arrowPurple)"/>
+  <text x="250" y="320" font-family="Arial, sans-serif" font-size="11" fill="#7b1fa2">
+    Creates and owns
+  </text>
+
+  <!-- Arrow from Module to Store -->
+  <path d="M 680 280 L 680 350 L 520 350 L 520 380" stroke="#7b1fa2" stroke-width="2" fill="none" marker-end="url(#arrowPurple)"/>
+  <text x="620" y="320" font-family="Arial, sans-serif" font-size="11" fill="#7b1fa2">
+    Registers reducers
+  </text>
+
+  <!-- window.GLOBALS API Box (Left Bottom) -->
+  <rect x="40" y="380" width="250" height="180" rx="6" fill="#fff3e0" stroke="#f57c00" stroke-width="2"/>
+  <text x="165" y="410" font-family="Arial, sans-serif" font-size="15" font-weight="bold" text-anchor="middle" fill="#e65100">
+    window.GLOBALS API
+  </text>
+  <line x1="60" y1="420" x2="270" y2="420" stroke="#ffb74d" stroke-width="1"/>
+
+  <text x="60" y="440" font-family="Courier New, monospace" font-size="10" fill="#424242">
+    addDynamicReducer(name, reducer)
+  </text>
+  <text x="60" y="460" font-family="Courier New, monospace" font-size="10" fill="#424242">
+    removeDynamicReducer(name)
+  </text>
+  <text x="60" y="480" font-family="Courier New, monospace" font-size="10" fill="#424242">
+    dispatch(action)
+  </text>
+  <text x="60" y="500" font-family="Courier New, monospace" font-size="10" fill="#424242">
+    getState()
+  </text>
+  <text x="60" y="520" font-family="Courier New, monospace" font-size="10" fill="#424242">
+    getStore()
+  </text>
+  <text x="165" y="545" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#e65100" font-style="italic">
+    Module integration interface
+  </text>
+
+  <!-- Shared Dependencies Box (Right Bottom) -->
+  <rect x="610" y="380" width="250" height="180" rx="6" fill="#e1f5fe" stroke="#0288d1" stroke-width="2"/>
+  <text x="735" y="410" font-family="Arial, sans-serif" font-size="15" font-weight="bold" text-anchor="middle" fill="#01579b">
+    Shared Dependencies
+  </text>
+  <line x1="630" y1="420" x2="840" y2="420" stroke="#4fc3f7" stroke-width="1"/>
+
+  <text x="735" y="445" font-family="Arial, sans-serif" font-size="12" text-anchor="middle" fill="#424242">
+    Singleton mode (required):
+  </text>
+  <text x="630" y="470" font-family="Courier New, monospace" font-size="11" fill="#01579b">
+    react: ^18.3.1
+  </text>
+  <text x="630" y="490" font-family="Courier New, monospace" font-size="11" fill="#01579b">
+    react-dom: ^18.3.1
+  </text>
+  <text x="630" y="510" font-family="Courier New, monospace" font-size="11" fill="#01579b">
+    @reduxjs/toolkit
+  </text>
+  <text x="630" y="530" font-family="Courier New, monospace" font-size="11" fill="#01579b">
+    react-redux
+  </text>
+  <text x="630" y="550" font-family="Courier New, monospace" font-size="11" fill="#01579b">
+    @mui/material
+  </text>
+
+  <!-- Exposed Components Note -->
+  <rect x="610" y="580" width="250" height="50" rx="6" fill="#fff9c4" stroke="#f57f17" stroke-width="2"/>
+  <text x="735" y="605" font-family="Arial, sans-serif" font-size="12" font-weight="bold" text-anchor="middle" fill="#f57f17">
+    Exposed via remoteEntry.js
+  </text>
+  <text x="735" y="620" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#f9a825">
+    Components, Layouts, Services
+  </text>
+
+  <!-- Configuration Note -->
+  <rect x="40" y="580" width="250" height="50" rx="6" fill="#ffebee" stroke="#c62828" stroke-width="2"/>
+  <text x="165" y="605" font-family="Arial, sans-serif" font-size="12" font-weight="bold" text-anchor="middle" fill="#c62828">
+    Configuration Files
+  </text>
+  <text x="165" y="620" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#d32f2f">
+    bluefiber.config.js, MODULES_EXPOSE.json
+  </text>
+</svg>

@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "src/*": ["./src/*"],
+      "bfSrc/*": ["./blueFiberSrc/*"]
+    }
+  },
+  "exclude": ["node_modules", "public", "dist", ".nginx", "Docs", "storybook-static", ".git"]
+}

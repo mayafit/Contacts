@@ -1,0 +1,19 @@
+/node_modules/
+/dist/
+/storybook-static/
+/coverage/
+eslint-report.html
+/test-reports/
+/mapHelperDocs/
+/coverage/
+/typedoc/
+/.idea/
+/.vscode/
+junit.xml
+package-lock.json
+
+# BMAD framework and workflow outputs
+/_bmad/
+/_bmad-output/
+/.agent/
+/.claude/

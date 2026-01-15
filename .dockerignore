@@ -1,0 +1,7 @@
+**/.git
+**/node_modules
+.gitmodules
+**/coverage
+eslint-report.html
+.npmrc
+**/mapHelperDocs

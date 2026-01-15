@@ -1,0 +1,1 @@
+> CRITICAL: Read ./agents/AGENT.md first.
