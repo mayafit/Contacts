@@ -438,6 +438,72 @@ REACT_APP_API_BASE_URL=https://people.googleapis.com/v1
 3. ✅ Understand the feature's requirements from PRD/stories
 4. ✅ Follow established patterns exactly
 
+### ⚠️ MANDATORY: Git Feature Branch Workflow
+
+**CRITICAL**: NEVER commit directly to `dev` or `main` branches. Always use feature branches.
+
+**Before Writing ANY Code:**
+
+1. **Verify `dev` branch exists** (base branch for all features):
+   ```bash
+   git fetch origin
+   git branch -a | grep -E '(^|\/)dev$'
+   ```
+   If `dev` does not exist, STOP and ask the user to create it.
+
+2. **Create feature branch from `dev`**:
+   ```bash
+   git checkout dev
+   git pull origin dev
+   git checkout -b <branch-type>/<short-description>
+   ```
+
+3. **Branch Naming Convention**:
+   - `feature/<description>` — New functionality
+   - `bugfix/<description>` — Bug fixes
+   - `hotfix/<description>` — Urgent production fixes
+   - `chore/<description>` — Maintenance tasks (dependencies, config, docs)
+
+   Examples:
+   - `feature/oauth-login-flow`
+   - `bugfix/contact-sync-race-condition`
+   - `chore/update-dependencies`
+
+**During Development:**
+
+4. **Commit frequently with conventional commits**:
+   ```bash
+   git add .
+   git commit -m "type(scope): description"
+   ```
+
+   Types: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `style`, `perf`
+
+   Examples:
+   - `feat(auth): implement Google OAuth login flow`
+   - `fix(sync): resolve race condition in optimistic updates`
+   - `chore(deps): update React to 18.3.1`
+
+**When Development is Complete:**
+
+5. **Push feature branch to origin**:
+   ```bash
+   git push -u origin <branch-name>
+   ```
+
+6. **Create Pull Request**:
+   - Target branch: `dev`
+   - Use `gh pr create` or GitHub web interface
+   - Include description of changes and testing performed
+
+7. **Inform user**: "Feature branch `<branch-name>` pushed and ready for PR to `dev`"
+
+**NEVER:**
+- ❌ Commit directly to `dev` or `main`
+- ❌ Use `git commit --amend` on pushed commits
+- ❌ Force push to shared branches (`git push --force`)
+- ❌ Skip hooks with `--no-verify` unless explicitly requested
+
 **Development Commands**:
 ```bash
 npm run dev          # Start development server with HMR
