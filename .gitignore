@@ -12,6 +12,11 @@ eslint-report.html
 junit.xml
 package-lock.json
 
+# Environment variables
+.env
+.env.local
+.env.production
+
 # BMAD framework and workflow outputs
 /_bmad/
 /_bmad-output/
