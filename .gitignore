@@ -17,6 +17,9 @@ package-lock.json
 .env.local
 .env.production
 
+# Sensitive project notes
+google.md
+
 # BMAD framework and workflow outputs
 /_bmad/
 /_bmad-output/
