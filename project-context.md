@@ -442,7 +442,9 @@ REACT_APP_API_BASE_URL=https://people.googleapis.com/v1
 
 **CRITICAL**: NEVER commit directly to `dev` or `main` branches. Always use feature branches.
 
-**Before Writing ANY Code:**
+**The Complete Git Development Flow:**
+
+#### Step 1: Setup and Branch Creation
 
 1. **Verify `dev` branch exists** (base branch for all features):
    ```bash
@@ -451,27 +453,33 @@ REACT_APP_API_BASE_URL=https://people.googleapis.com/v1
    ```
    If `dev` does not exist, STOP and ask the user to create it.
 
-2. **Create feature branch from `dev`**:
+2. **Ensure local `dev` is up to date**:
    ```bash
    git checkout dev
    git pull origin dev
+   ```
+
+3. **Create feature branch from `dev`**:
+   ```bash
    git checkout -b <branch-type>/<short-description>
    ```
 
-3. **Branch Naming Convention**:
+4. **Branch Naming Convention**:
    - `feature/<description>` — New functionality
    - `bugfix/<description>` — Bug fixes
    - `hotfix/<description>` — Urgent production fixes
    - `chore/<description>` — Maintenance tasks (dependencies, config, docs)
+   - `docs/<description>` — Documentation updates
 
    Examples:
    - `feature/oauth-login-flow`
    - `bugfix/contact-sync-race-condition`
    - `chore/update-dependencies`
+   - `docs/update-api-documentation`
 
-**During Development:**
+#### Step 2: Development
 
-4. **Commit frequently with conventional commits**:
+5. **Develop and commit frequently** with conventional commits:
    ```bash
    git add .
    git commit -m "type(scope): description"
@@ -484,25 +492,58 @@ REACT_APP_API_BASE_URL=https://people.googleapis.com/v1
    - `fix(sync): resolve race condition in optimistic updates`
    - `chore(deps): update React to 18.3.1`
 
-**When Development is Complete:**
+#### Step 3: Rebase Before Push (CRITICAL)
 
-5. **Push feature branch to origin**:
+6. **Before pushing, rebase on latest `dev`**:
+   ```bash
+   # Fetch latest changes from remote
+   git fetch origin
+
+   # Pull latest dev changes
+   git checkout dev
+   git pull origin dev
+
+   # Rebase feature branch on top of dev
+   git checkout <feature-branch-name>
+   git rebase dev
+   ```
+
+   If conflicts occur during rebase:
+   ```bash
+   # Resolve conflicts in your editor
+   # Then continue the rebase
+   git add .
+   git rebase --continue
+   ```
+
+   **Why rebase?** Ensures your feature branch contains all latest changes from `dev` and creates a clean, linear history.
+
+#### Step 4: Push and Create PR
+
+7. **Push feature branch to origin**:
    ```bash
    git push -u origin <branch-name>
    ```
 
-6. **Create Pull Request**:
+   If you've rebased and already pushed before:
+   ```bash
+   git push --force-with-lease origin <branch-name>
+   ```
+   ⚠️ Only use `--force-with-lease` on YOUR feature branches, never on shared branches!
+
+8. **Create Pull Request**:
    - Target branch: `dev`
    - Use `gh pr create` or GitHub web interface
    - Include description of changes and testing performed
 
-7. **Inform user**: "Feature branch `<branch-name>` pushed and ready for PR to `dev`"
+9. **Inform user**: "Feature branch `<branch-name>` pushed and ready for PR to `dev`"
 
 **NEVER:**
 - ❌ Commit directly to `dev` or `main`
-- ❌ Use `git commit --amend` on pushed commits
-- ❌ Force push to shared branches (`git push --force`)
+- ❌ Use `git commit --amend` on pushed commits (unless it's your feature branch)
+- ❌ Force push to `dev` or `main` (use `--force-with-lease` only on feature branches)
 - ❌ Skip hooks with `--no-verify` unless explicitly requested
+- ❌ Skip the rebase step before pushing - always rebase on latest `dev`
 
 **Development Commands**:
 ```bash
