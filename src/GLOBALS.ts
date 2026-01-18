@@ -7,7 +7,7 @@ let _globals: {
   removeGlobalComponentById?: any;
 } = {};
 
-export const setGlobals = (globals) => {
+export const setGlobals = (globals: any) => {
   if (!globals) {
     return;
   }
