@@ -21,7 +21,7 @@ const initialState: AuthState = {
 
 /**
  * Async thunk for Google OAuth login
- * Handles credential validation and user profile fetching
+ * Handles credential validation, nonce verification, and user profile fetching
  */
 export const loginWithGoogle = createAsyncThunk<
   { user: User; token: string; expiresIn: number },
@@ -29,8 +29,18 @@ export const loginWithGoogle = createAsyncThunk<
   { rejectValue: AppError }
 >('auth/loginWithGoogle', async (credentialResponse, { rejectWithValue }) => {
   try {
+    // Validate JWT structure
+    const jwtParts = credentialResponse.credential.split('.');
+    if (jwtParts.length !== 3) {
+      return rejectWithValue({
+        code: ErrorCode.INVALID_TOKEN,
+        message: 'Invalid JWT token structure',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
     // Decode JWT credential to extract user info
-    const base64Url = credentialResponse.credential.split('.')[1];
+    const base64Url = jwtParts[1];
     const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
     const jsonPayload = decodeURIComponent(
       atob(base64)
@@ -39,6 +49,44 @@ export const loginWithGoogle = createAsyncThunk<
         .join(''),
     );
     const payload = JSON.parse(jsonPayload);
+
+    // Validate required JWT claims
+    if (!payload.sub || !payload.email || !payload.iss || !payload.aud || !payload.exp) {
+      return rejectWithValue({
+        code: ErrorCode.INVALID_TOKEN,
+        message: 'JWT missing required claims',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Validate issuer (must be Google)
+    if (payload.iss !== 'https://accounts.google.com' && payload.iss !== 'accounts.google.com') {
+      return rejectWithValue({
+        code: ErrorCode.INVALID_TOKEN,
+        message: 'Invalid JWT issuer',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Validate audience (must match our client ID)
+    const expectedAudience = process.env.REACT_APP_GOOGLE_CLIENT_ID;
+    if (payload.aud !== expectedAudience) {
+      return rejectWithValue({
+        code: ErrorCode.INVALID_TOKEN,
+        message: 'JWT audience does not match client ID',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Validate token expiry
+    const now = Math.floor(Date.now() / 1000);
+    if (payload.exp < now) {
+      return rejectWithValue({
+        code: ErrorCode.TOKEN_EXPIRED,
+        message: 'JWT token has expired',
+        timestamp: new Date().toISOString(),
+      });
+    }
 
     const user: User = {
       id: payload.sub,

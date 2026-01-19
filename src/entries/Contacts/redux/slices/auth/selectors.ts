@@ -46,6 +46,8 @@ export const selectAuthLoading = (state: RootState) => selectAuthState(state)?.i
  */
 export const selectIsTokenExpired = (state: RootState): boolean => {
   const tokenExpiry = selectTokenExpiry(state);
-  if (!tokenExpiry) return true;
+  if (!tokenExpiry) {
+    return true;
+  }
   return new Date() > new Date(tokenExpiry);
 };

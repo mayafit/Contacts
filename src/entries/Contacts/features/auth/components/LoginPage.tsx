@@ -11,6 +11,7 @@ import { Box, Card, CardContent, Typography, Container } from '@mui/material';
 import { loginWithGoogle } from '../../../redux/slices/auth/authSlice';
 import type { AppDispatch } from '../../../types/store';
 import type { GoogleCredentialResponse } from '../../../types';
+import { logger } from '../../../../../shared/logger';
 
 /**
  * Login page component
@@ -25,7 +26,13 @@ const LoginPage: React.FC = () => {
    */
   const handleSuccess = async (credentialResponse: CredentialResponse) => {
     if (!credentialResponse.credential) {
-      console.error('No credential received from Google');
+      logger.error(
+        {
+          context: 'auth/LoginPage',
+          metadata: { selectBy: credentialResponse.select_by },
+        },
+        'No credential received from Google OAuth',
+      );
       return;
     }
 
@@ -36,10 +43,26 @@ const LoginPage: React.FC = () => {
 
     try {
       await dispatch(loginWithGoogle(googleCred)).unwrap();
+      logger.info(
+        {
+          context: 'auth/LoginPage',
+          metadata: { selectBy: credentialResponse.select_by },
+        },
+        'User successfully authenticated with Google',
+      );
       // Redirect to main app on successful login
       navigate('/');
     } catch (error) {
-      console.error('Login failed:', error);
+      logger.error(
+        {
+          context: 'auth/LoginPage',
+          metadata: {
+            selectBy: credentialResponse.select_by,
+          },
+        },
+        'Google OAuth login failed',
+        error instanceof Error ? error : new Error(String(error)),
+      );
     }
   };
 
@@ -47,7 +70,12 @@ const LoginPage: React.FC = () => {
    * Handle Google OAuth authentication error
    */
   const handleError = () => {
-    console.error('Google OAuth authentication failed');
+    logger.error(
+      {
+        context: 'auth/LoginPage',
+      },
+      'Google OAuth authentication failed',
+    );
   };
 
   return (
@@ -78,6 +106,9 @@ const LoginPage: React.FC = () => {
             </Typography>
             <Box sx={{ mt: 2 }}>
               <GoogleLogin onSuccess={handleSuccess} onError={handleError} />
+              <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                Note: Contacts scope will be requested during authorization
+              </Typography>
             </Box>
           </CardContent>
         </Card>

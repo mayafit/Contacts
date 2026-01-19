@@ -13,6 +13,7 @@ import ProtectedRoute from './routes/ProtectedRoute';
 import ContactsHome from './components/ContactsHome';
 import { restoreAuthState } from './redux/slices/auth/authSlice';
 import type { User } from './types';
+import { logger } from '../../shared/logger';
 
 /**
  * Contacts application component
@@ -23,7 +24,12 @@ const ContactsApp: React.FC = () => {
   const clientId = process.env.REACT_APP_GOOGLE_CLIENT_ID;
 
   if (!clientId) {
-    console.error('REACT_APP_GOOGLE_CLIENT_ID is not defined');
+    logger.error(
+      {
+        context: 'Contacts/ContactsApp',
+      },
+      'REACT_APP_GOOGLE_CLIENT_ID environment variable is not defined',
+    );
     return (
       <div>
         <h1>Configuration Error</h1>
@@ -61,7 +67,18 @@ const ContactsApp: React.FC = () => {
           sessionStorage.removeItem('user');
         }
       } catch (error) {
-        console.error('Failed to restore auth state:', error);
+        logger.error(
+          {
+            context: 'Contacts/ContactsApp',
+            metadata: {
+              hasAccessToken: !!accessToken,
+              hasTokenExpiry: !!tokenExpiry,
+              hasUserJson: !!userJson,
+            },
+          },
+          'Failed to restore authentication state from sessionStorage',
+          error instanceof Error ? error : new Error(String(error)),
+        );
       }
     }
   }, [dispatch]);
