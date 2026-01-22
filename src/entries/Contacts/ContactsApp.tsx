@@ -14,6 +14,7 @@ import ContactsHome from './components/ContactsHome';
 import { restoreAuthState } from './redux/slices/auth/authSlice';
 import type { User } from './types';
 import { logger } from '../../shared/logger';
+import { setupAuthInterceptor } from './services/api/interceptors/authInterceptor';
 
 /**
  * Contacts application component
@@ -37,6 +38,13 @@ const ContactsApp: React.FC = () => {
       </div>
     );
   }
+
+  /**
+   * Setup 401 auth interceptor on app mount
+   */
+  useEffect(() => {
+    setupAuthInterceptor();
+  }, []);
 
   /**
    * Restore authentication state from sessionStorage on app load

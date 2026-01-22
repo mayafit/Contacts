@@ -178,6 +178,20 @@ const authSlice = createSlice({
       state.tokenExpiry = action.payload.tokenExpiry;
       state.isAuthenticated = true;
     },
+
+    /**
+     * Update access token after refresh (for Story 1.6 token refresh flow)
+     */
+    tokenRefreshSuccess(state, action: PayloadAction<string>) {
+      state.accessToken = action.payload;
+      state.isAuthenticated = true;
+      state.error = null;
+      // Update sessionStorage with new token
+      sessionStorage.setItem('access_token', action.payload);
+      sessionStorage.setItem('token_expiry', new Date(Date.now() + 3600 * 1000).toISOString());
+      // Update state token expiry
+      state.tokenExpiry = new Date(Date.now() + 3600 * 1000).toISOString();
+    },
   },
   extraReducers: (builder) => {
     builder
@@ -213,7 +227,14 @@ const authSlice = createSlice({
   },
 });
 
-export const { setUser, setToken, logout, setAuthError, clearAuthError, restoreAuthState } =
-  authSlice.actions;
+export const {
+  setUser,
+  setToken,
+  logout,
+  setAuthError,
+  clearAuthError,
+  restoreAuthState,
+  tokenRefreshSuccess,
+} = authSlice.actions;
 
 export default authSlice.reducer;

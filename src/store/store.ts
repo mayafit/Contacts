@@ -3,7 +3,7 @@
  * @module store/store
  */
 
-import type { ThunkDispatch, UnknownAction } from '@reduxjs/toolkit'
+import type { ThunkDispatch, UnknownAction } from '@reduxjs/toolkit';
 
 /**
  * Root state type
@@ -11,12 +11,12 @@ import type { ThunkDispatch, UnknownAction } from '@reduxjs/toolkit'
  */
 export type RootState = {
   contacts?: {
-    auth?: import('../entries/Contacts/types').AuthState
-  }
-  [key: string]: any
-}
+    auth?: import('../entries/Contacts/types').AuthState;
+  };
+  [key: string]: any;
+};
 
 /**
  * App dispatch type with thunk support
  */
-export type AppDispatch = ThunkDispatch<RootState, undefined, UnknownAction>
+export type AppDispatch = ThunkDispatch<RootState, undefined, UnknownAction>;
