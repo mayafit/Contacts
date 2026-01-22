@@ -6,8 +6,8 @@
 import React from 'react';
 import { GoogleLogin, type CredentialResponse } from '@react-oauth/google';
 import { useDispatch } from 'react-redux';
-import { useNavigate } from 'react-router';
-import { Box, Card, CardContent, Typography, Container } from '@mui/material';
+import { useNavigate, useLocation } from 'react-router';
+import { Box, Card, CardContent, Typography, Container, Alert } from '@mui/material';
 import { loginWithGoogle } from '../../../redux/slices/auth/authSlice';
 import type { AppDispatch } from '../../../types/store';
 import type { GoogleCredentialResponse } from '../../../types';
@@ -20,6 +20,8 @@ import { logger } from '../../../../../shared/logger';
 const LoginPage: React.FC = () => {
   const dispatch = useDispatch<AppDispatch>();
   const navigate = useNavigate();
+  const location = useLocation();
+  const errorMessage = (location.state as { message?: string })?.message;
 
   /**
    * Handle successful Google OAuth authentication
@@ -101,6 +103,11 @@ const LoginPage: React.FC = () => {
             <Typography variant="h4" component="h1" gutterBottom>
               Contacts
             </Typography>
+            {errorMessage && (
+              <Alert severity="warning" sx={{ width: '100%' }}>
+                {errorMessage}
+              </Alert>
+            )}
             <Typography variant="body1" color="text.secondary" align="center">
               Sign in with your Google account to access and manage your contacts
             </Typography>

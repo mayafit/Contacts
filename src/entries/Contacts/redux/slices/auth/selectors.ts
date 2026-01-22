@@ -3,6 +3,7 @@
  * @module Contacts/redux/slices/auth/selectors
  */
 
+import { createSelector } from '@reduxjs/toolkit';
 import type { RootState } from '../../../types/store';
 
 /**
@@ -51,3 +52,18 @@ export const selectIsTokenExpired = (state: RootState): boolean => {
   }
   return new Date() > new Date(tokenExpiry);
 };
+
+/**
+ * Memoized selector for auth ready state (not loading)
+ * Derived from isLoading state
+ */
+export const selectAuthReady = createSelector([selectAuthLoading], (isLoading) => !isLoading);
+
+/**
+ * Memoized selector for complete auth status
+ * Combines authentication status with token expiry
+ */
+export const selectIsFullyAuthenticated = createSelector(
+  [selectIsAuthenticated, selectIsTokenExpired],
+  (isAuthenticated, isExpired) => isAuthenticated && !isExpired,
+);
