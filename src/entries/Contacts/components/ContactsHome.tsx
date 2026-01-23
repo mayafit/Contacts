@@ -5,9 +5,12 @@
 
 import React from 'react';
 import { useSelector, useDispatch } from 'react-redux';
+import { useNavigate } from 'react-router';
 import { Container, Typography, Button, Box, Card, CardContent, Avatar } from '@mui/material';
+import { Logout as LogoutIcon } from '@mui/icons-material';
 import { logout } from '../redux/slices/auth/authSlice';
 import { selectUser } from '../redux/slices/auth/selectors';
+import { logger } from '../../../shared/logger';
 
 /**
  * Contacts home page component
@@ -16,10 +19,27 @@ import { selectUser } from '../redux/slices/auth/selectors';
  */
 const ContactsHome: React.FC = () => {
   const dispatch = useDispatch();
+  const navigate = useNavigate();
   const user = useSelector(selectUser);
 
   const handleSignOut = () => {
+    logger.info(
+      {
+        context: 'ContactsHome/handleSignOut',
+        metadata: { userId: user?.id, userEmail: user?.email },
+      },
+      'User initiated sign out',
+    );
+
     dispatch(logout());
+    navigate('/login');
+
+    logger.info(
+      {
+        context: 'ContactsHome/handleSignOut',
+      },
+      'User signed out successfully and redirected to login',
+    );
   };
 
   return (
@@ -40,7 +60,7 @@ const ContactsHome: React.FC = () => {
                 </Typography>
               </Box>
               <Box sx={{ ml: 'auto' }}>
-                <Button variant="outlined" onClick={handleSignOut}>
+                <Button variant="outlined" startIcon={<LogoutIcon />} onClick={handleSignOut}>
                   Sign Out
                 </Button>
               </Box>

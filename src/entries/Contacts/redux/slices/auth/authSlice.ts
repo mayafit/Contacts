@@ -6,6 +6,7 @@
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import type { AuthState, User, AppError, GoogleCredentialResponse } from '../../../types';
 import { ErrorCode } from '../../../types';
+import { GoogleAuthService } from '../../../services/auth/GoogleAuthService';
 
 /**
  * Initial authentication state
@@ -111,6 +112,29 @@ export const loginWithGoogle = createAsyncThunk<
       timestamp: new Date().toISOString(),
     });
   }
+});
+
+/**
+ * Async thunk for refreshing access token
+ * Attempts to refresh the access token using the refresh token from sessionStorage
+ */
+export const refreshAccessToken = createAsyncThunk<
+  { access_token: string; expires_in: number },
+  void,
+  { rejectValue: AppError }
+>('auth/refreshAccessToken', async (_, { rejectWithValue }) => {
+  const response = await GoogleAuthService.refreshAccessToken();
+
+  if (!response.success) {
+    return rejectWithValue({
+      code: ErrorCode.TOKEN_EXPIRED,
+      message: response.error?.message || 'Failed to refresh access token',
+      timestamp: new Date().toISOString(),
+      context: { details: response.error?.details },
+    });
+  }
+
+  return response.data!;
 });
 
 /**
@@ -223,6 +247,32 @@ const authSlice = createSlice({
           timestamp: new Date().toISOString(),
         };
         state.isAuthenticated = false;
+      })
+      // Token refresh pending
+      .addCase(refreshAccessToken.pending, (state) => {
+        state.isLoading = true;
+      })
+      // Token refresh fulfilled
+      .addCase(refreshAccessToken.fulfilled, (state, action) => {
+        state.isLoading = false;
+        state.accessToken = action.payload.access_token;
+        state.tokenExpiry = new Date(Date.now() + action.payload.expires_in * 1000).toISOString();
+        state.isAuthenticated = true;
+        state.error = null;
+
+        // Update sessionStorage with new token
+        sessionStorage.setItem('access_token', action.payload.access_token);
+        sessionStorage.setItem('token_expiry', state.tokenExpiry);
+      })
+      // Token refresh rejected
+      .addCase(refreshAccessToken.rejected, (state, action) => {
+        state.isLoading = false;
+        state.error = action.payload || {
+          code: ErrorCode.TOKEN_EXPIRED,
+          message: 'Failed to refresh access token',
+          timestamp: new Date().toISOString(),
+        };
+        // Do NOT set isAuthenticated to false here - let the interceptor handle logout
       });
   },
 });

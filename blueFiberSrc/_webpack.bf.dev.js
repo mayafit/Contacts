@@ -24,7 +24,8 @@ const mergedFeaturesFlag = {
   ...featuresFlags,
   ...envFeaturesFlag,
 };
-const devPort = portFinderSync.getPort(BFConfig.devPort);
+// Use the exact port specified in BFConfig (no auto-fallback to next available port)
+const devPort = BFConfig.devPort;
 
 const getRootDirname = () => {
   return path.resolve(__dirname, '..');
