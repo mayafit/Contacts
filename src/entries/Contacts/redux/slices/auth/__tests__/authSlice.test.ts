@@ -3,6 +3,7 @@
  * @module Contacts/redux/slices/auth/__tests__/authSlice
  */
 
+import { jest } from '@jest/globals';
 import authReducer, { loginWithGoogle, logout, restoreAuthState } from '../authSlice';
 import { ErrorCode } from '../../../../types';
 import type { AuthState, GoogleCredentialResponse } from '../../../../types';
