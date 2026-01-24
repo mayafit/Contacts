@@ -44,11 +44,12 @@ export const selectAuthLoading = (state: RootState) => selectAuthState(state)?.i
 
 /**
  * Select whether token is expired
+ * Returns false if no token expiry is set (not yet authenticated)
  */
 export const selectIsTokenExpired = (state: RootState): boolean => {
   const tokenExpiry = selectTokenExpiry(state);
   if (!tokenExpiry) {
-    return true;
+    return false; // No token expiry means not authenticated yet, not expired
   }
   return new Date() > new Date(tokenExpiry);
 };

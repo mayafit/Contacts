@@ -3,6 +3,7 @@
  * @module Contacts/contacts.entry
  */
 
+import { combineReducers } from '@reduxjs/toolkit';
 import { getGlobals } from '../../GLOBALS';
 import authReducer from './redux/slices/auth/authSlice';
 
@@ -13,9 +14,9 @@ import authReducer from './redux/slices/auth/authSlice';
 export const initContactsEntry = () => {
   getGlobals().addDynamicReducer({
     reducerName: 'contacts',
-    reducer: {
+    reducer: combineReducers({
       auth: authReducer,
-    },
+    }),
   });
 };
 

@@ -1,0 +1,86 @@
+version: '3.8'
+
+# Hardened Docker Compose configuration for Contacts application
+# Compliant with CIS Docker Benchmark and OWASP Docker Security
+# Story: 1-7-set-up-docker-deployment-configuration
+
+services:
+  contacts-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Pass React environment variables as build arguments
+        # These get baked into the JavaScript bundle at build time
+        REACT_APP_GOOGLE_CLIENT_ID: ${REACT_APP_GOOGLE_CLIENT_ID}
+        REACT_APP_API_BASE_URL: ${REACT_APP_API_BASE_URL:-https://people.googleapis.com/v1}
+    container_name: contacts-app
+
+    # Port mapping: host:container
+    # Maps host port 3002 to container port 8080 (matches Google OAuth configuration)
+    ports:
+      - "3002:8080"
+
+    # Environment variables (non-sensitive configuration)
+    environment:
+      - NODE_ENV=production
+
+    # Load sensitive configuration from .env file
+    # DO NOT commit .env to version control
+    env_file:
+      - .env
+
+    # Security: Read-only root filesystem (CIS 5.12)
+    # Prevents container processes from modifying the filesystem
+    read_only: true
+
+    # Security: Temporary filesystems for writable directories
+    # Required for nginx to function with read-only root
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+      - /var/run
+
+    # Security: Drop all Linux capabilities and add only required ones (CIS 5.25)
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN        # Allow changing file ownership
+      - SETGID       # Allow changing group ID
+      - SETUID       # Allow changing user ID
+      - NET_BIND_SERVICE  # Allow binding to privileged ports (not needed for 8080, but safe to include)
+
+    # Security: Prevent privilege escalation (CIS 5.11)
+    security_opt:
+      - no-new-privileges:true
+
+    # Resource limits to prevent DoS (CIS 5.10)
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'       # Max 1 CPU core
+          memory: 512M      # Max 512MB RAM
+        reservations:
+          cpus: '0.25'      # Min 0.25 CPU cores
+          memory: 128M      # Min 128MB RAM
+
+    # Restart policy
+    restart: unless-stopped
+
+    # Health check configuration
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    # Custom network for isolation
+    networks:
+      - contacts-network
+
+networks:
+  contacts-network:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: br-contacts
