@@ -9,14 +9,14 @@ import type { AuthState } from './AuthTypes';
 /**
  * Root state type
  */
-export type RootState = {
+export interface RootState {
   contacts?: {
     auth?: AuthState;
   };
   // Dynamic reducers can add additional state slices
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   [key: string]: any;
-};
+}
 
 /**
  * App dispatch type with thunk support

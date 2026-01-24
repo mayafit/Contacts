@@ -39,21 +39,49 @@ module.exports = (env, args) => {
 
       module: {
         rules: [
+          // Contacts application code - with full TypeScript type checking
           {
             test: /\.[jt]sx?$/,
-            exclude: [/node_modules/, /MapManager/],
+            include: [path.resolve(getRootDirname(), 'src/entries/Contacts')],
+            exclude: [/node_modules/],
             use: [
               { loader: 'babel-loader' },
               {
                 loader: require.resolve('ts-loader'),
                 options: {
-                  transpileOnly: true, // TEMPORARY: Skip type checking for Docker build - fix types in Story 1.8
+                  transpileOnly: false, // Type checking enabled for Contacts application code
                   configFile: path.resolve(
                     getRootDirname(),
                     process.env?.DEV_BUILD === 'true'
                       ? './tsconfig.dev.json'
                       : './tsconfig.prod.json',
                   ),
+                },
+              },
+              {
+                loader: 'ifdef-loader',
+                options: { FEATURES_FLAGS: mergedFeaturesFlag, ...BFConfig.ifdef },
+              },
+            ],
+          },
+          // WebKit framework files (blueFiberSrc/ and other src/) - transpile only
+          {
+            test: /\.[jt]sx?$/,
+            include: [
+              path.resolve(getRootDirname(), 'blueFiberSrc'),
+              path.resolve(getRootDirname(), 'src'),
+            ],
+            exclude: [
+              /node_modules/,
+              path.resolve(getRootDirname(), 'src/entries/Contacts'),
+            ],
+            use: [
+              { loader: 'babel-loader' },
+              {
+                loader: require.resolve('ts-loader'),
+                options: {
+                  transpileOnly: true, // Skip type checking for WebKit framework files
+                  configFile: path.resolve(getRootDirname(), './tsconfig.json'),
                 },
               },
               {
