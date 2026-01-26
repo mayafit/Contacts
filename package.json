@@ -1,7 +1,7 @@
 {
   "name": "contacts",
   "author": "",
-  "version": "26a26-build.2",
+  "version": "26a26-build.3",
   "private": true,
   "scripts": {
     "dev": "node --max_old_space_size=8192 ./node_modules/webpack/bin/webpack.js serve  --config blueFiberSrc/_webpack.bf.dev.js",
