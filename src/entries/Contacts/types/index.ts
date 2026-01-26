@@ -12,3 +12,12 @@ export type {
 } from './AuthTypes';
 
 export { ErrorCode } from './AuthTypes';
+
+export type {
+  Contact,
+  ContactName,
+  ContactPhone,
+  ContactEmail,
+  ContactAddress,
+  APIResponse,
+} from './Contact';

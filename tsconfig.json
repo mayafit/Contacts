@@ -11,7 +11,10 @@
     "blueFiberSrc",
     "src/entries/Todos",
     "src/external",
-    "src/store"
+    "src/store",
+    "**/__tests__/**",
+    "**/*.test.ts",
+    "**/*.test.tsx"
   ],
   "include": [
     "./src/entries/Contacts",
