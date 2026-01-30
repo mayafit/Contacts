@@ -26,7 +26,22 @@ google.md
 /_bmad/
 /_bmad-output/
 /.agent/
+/.agents/
 /.claude/
+/.cline/
+/.cursor/
+/.gemini/
+/skills/
+
+# Documentation and scripts (project-specific - review before committing)
+/docs/VAULT_SETUP.md
+/scripts/init-vault.*
+DOCKER-DEPLOYMENT.md
+VAULT_QUICKSTART.md
+
+# GitHub Copilot
+.github/copilot-instructions.md
+.github/skills/
 
 # .NET Core / C# build outputs
 [Bb]in/
@@ -76,3 +91,8 @@ bld/
 # ASP.NET Core
 *.log
 *.cache
+
+# Backup files
+*.old
+*.bak
+*.tmp
