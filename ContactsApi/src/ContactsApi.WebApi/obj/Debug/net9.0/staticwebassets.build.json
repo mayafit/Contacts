@@ -1,0 +1,12 @@
+{
+  "Version": 1,
+  "Hash": "yoxYNDnpKfXj0bsPuMO6ilSbpuaZbehmOVaWa0RwRrc=",
+  "Source": "ContactsApi.WebApi",
+  "BasePath": "_content/ContactsApi.WebApi",
+  "Mode": "Default",
+  "ManifestType": "Build",
+  "ReferencedProjectsConfiguration": [],
+  "DiscoveryPatterns": [],
+  "Assets": [],
+  "Endpoints": []
+}

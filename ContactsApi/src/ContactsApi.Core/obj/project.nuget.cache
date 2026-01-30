@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "dgSpecHash": "rfGHtgFPAK0=",
+  "success": true,
+  "projectFilePath": "D:\\Code\\ContactsApi\\src\\ContactsApi.Core\\ContactsApi.Core.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\726125\\.nuget\\packages\\microsoft.extensions.dependencyinjection.abstractions\\10.0.2\\microsoft.extensions.dependencyinjection.abstractions.10.0.2.nupkg.sha512",
+    "C:\\Users\\726125\\.nuget\\packages\\microsoft.extensions.logging.abstractions\\10.0.2\\microsoft.extensions.logging.abstractions.10.0.2.nupkg.sha512",
+    "C:\\Users\\726125\\.nuget\\packages\\system.diagnostics.diagnosticsource\\10.0.2\\system.diagnostics.diagnosticsource.10.0.2.nupkg.sha512"
+  ],
+  "logs": []
+}

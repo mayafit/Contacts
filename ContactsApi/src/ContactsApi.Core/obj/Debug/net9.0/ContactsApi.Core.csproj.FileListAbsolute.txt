@@ -1,0 +1,12 @@
+D:\Code\ContactsApi\src\ContactsApi.Core\obj\Debug\net9.0\ContactsApi.Core.GeneratedMSBuildEditorConfig.editorconfig
+D:\Code\ContactsApi\src\ContactsApi.Core\obj\Debug\net9.0\ContactsApi.Core.AssemblyInfoInputs.cache
+D:\Code\ContactsApi\src\ContactsApi.Core\obj\Debug\net9.0\ContactsApi.Core.AssemblyInfo.cs
+D:\Code\ContactsApi\src\ContactsApi.Core\obj\Debug\net9.0\ContactsApi.Core.csproj.CoreCompileInputs.cache
+D:\Code\ContactsApi\src\ContactsApi.Core\bin\Debug\net9.0\ContactsApi.Core.deps.json
+D:\Code\ContactsApi\src\ContactsApi.Core\bin\Debug\net9.0\ContactsApi.Core.dll
+D:\Code\ContactsApi\src\ContactsApi.Core\bin\Debug\net9.0\ContactsApi.Core.pdb
+D:\Code\ContactsApi\src\ContactsApi.Core\obj\Debug\net9.0\ContactsApi.Core.csproj.AssemblyReference.cache
+D:\Code\ContactsApi\src\ContactsApi.Core\obj\Debug\net9.0\ContactsApi.Core.dll
+D:\Code\ContactsApi\src\ContactsApi.Core\obj\Debug\net9.0\refint\ContactsApi.Core.dll
+D:\Code\ContactsApi\src\ContactsApi.Core\obj\Debug\net9.0\ContactsApi.Core.pdb
+D:\Code\ContactsApi\src\ContactsApi.Core\obj\Debug\net9.0\ref\ContactsApi.Core.dll
