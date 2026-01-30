@@ -11,7 +11,7 @@ FROM node:18.20.4-alpine3.20 AS builder
 # Build arguments for React environment variables
 # These are baked into the bundle at build time
 ARG REACT_APP_GOOGLE_CLIENT_ID
-ARG REACT_APP_API_BASE_URL=https://people.googleapis.com/v1
+ARG REACT_APP_API_BASE_URL=http://localhost:5000/api
 
 # Set as environment variables for the build process
 ENV REACT_APP_GOOGLE_CLIENT_ID=${REACT_APP_GOOGLE_CLIENT_ID}

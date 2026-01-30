@@ -1,35 +1,37 @@
 /**
  * @fileoverview Google Contacts service layer for contact operations
  * @module Contacts/services/GoogleContactsService
+ *
+ * Updated for Story 2.1B: Now communicates with C# ASP.NET backend API
+ * instead of calling Google People API directly from the browser.
  */
 
 import { logger } from '../../../shared/logger';
-import { PeopleAPIClient } from './api/PeopleAPIClient';
-import { GoogleAPIError } from '../errors/GoogleAPIError';
+import { backendApiClient } from '../../../services/api/BackendApiClient';
 import type { Contact, APIResponse } from '../types/Contact';
 
 /**
  * Google Contacts Service
- * Service layer that wraps PeopleAPIClient and provides APIResponse<T> format
+ * Service layer that wraps BackendApiClient and provides APIResponse<T> format
  * This is the layer that Redux thunks should call
+ *
+ * Note: No longer requires access token parameters - backend handles auth via cookies
  */
 export class GoogleContactsService {
   /**
-   * Fetches all contacts from Google People API
-   * @param accessToken - OAuth 2.0 access token
+   * Fetches all contacts from backend API
    * @returns Promise resolving to APIResponse with Contact array
    */
-  static async fetchAllContacts(accessToken: string): Promise<APIResponse<Contact[]>> {
+  static async fetchAllContacts(): Promise<APIResponse<Contact[]>> {
     try {
       logger.info(
         {
           context: 'GoogleContactsService/fetchAllContacts',
         },
-        'Fetching all contacts',
+        'Fetching all contacts from backend',
       );
 
-      const client = new PeopleAPIClient(accessToken);
-      const contacts = await client.fetchAllContacts();
+      const { contacts } = await backendApiClient.fetchContacts();
 
       logger.info(
         {
@@ -51,29 +53,17 @@ export class GoogleContactsService {
           context: 'GoogleContactsService/fetchAllContacts',
           metadata: {
             errorMessage: error instanceof Error ? error.message : String(error),
-            errorCode: error instanceof GoogleAPIError ? error.code : 'UNKNOWN_ERROR',
           },
         },
         'Failed to fetch contacts',
         error instanceof Error ? error : new Error(String(error)),
       );
 
-      if (error instanceof GoogleAPIError) {
-        return {
-          success: false,
-          error: {
-            code: error.code,
-            message: 'Failed to fetch contacts from Google People API',
-            details: error,
-          },
-        };
-      }
-
       return {
         success: false,
         error: {
-          code: 'UNKNOWN_ERROR',
-          message: 'An unexpected error occurred while fetching contacts',
+          code: 'FETCH_CONTACTS_FAILED',
+          message: 'Failed to fetch contacts from backend API',
           details: error,
         },
       };
@@ -82,12 +72,10 @@ export class GoogleContactsService {
 
   /**
    * Retrieves a single contact by resource name
-   * @param accessToken - OAuth 2.0 access token
    * @param resourceName - Contact resource name (e.g., "people/123")
    * @returns Promise resolving to APIResponse with Contact
    */
   static async getContact(
-    accessToken: string,
     resourceName: string,
   ): Promise<APIResponse<Contact>> {
     try {
@@ -96,11 +84,10 @@ export class GoogleContactsService {
           context: 'GoogleContactsService/getContact',
           metadata: { resourceName },
         },
-        'Fetching contact',
+        'Fetching contact from backend',
       );
 
-      const client = new PeopleAPIClient(accessToken);
-      const contact = await client.getContact(resourceName);
+      const contact = await backendApiClient.getContact(resourceName);
 
       logger.info(
         {
@@ -121,29 +108,17 @@ export class GoogleContactsService {
           metadata: {
             resourceName,
             errorMessage: error instanceof Error ? error.message : String(error),
-            errorCode: error instanceof GoogleAPIError ? error.code : 'UNKNOWN_ERROR',
           },
         },
         'Failed to fetch contact',
         error instanceof Error ? error : new Error(String(error)),
       );
 
-      if (error instanceof GoogleAPIError) {
-        return {
-          success: false,
-          error: {
-            code: error.code,
-            message: `Failed to fetch contact: ${resourceName}`,
-            details: error,
-          },
-        };
-      }
-
       return {
         success: false,
         error: {
-          code: 'UNKNOWN_ERROR',
-          message: `An unexpected error occurred while fetching contact: ${resourceName}`,
+          code: 'GET_CONTACT_FAILED',
+          message: `Failed to fetch contact: ${resourceName}`,
           details: error,
         },
       };
@@ -152,13 +127,11 @@ export class GoogleContactsService {
 
   /**
    * Updates a contact with new data
-   * @param accessToken - OAuth 2.0 access token
    * @param resourceName - Contact resource name (e.g., "people/123")
    * @param updates - Partial contact data to update
    * @returns Promise resolving to APIResponse with updated Contact
    */
   static async updateContact(
-    accessToken: string,
     resourceName: string,
     updates: Partial<Contact>,
   ): Promise<APIResponse<Contact>> {
@@ -171,11 +144,13 @@ export class GoogleContactsService {
             updateFields: Object.keys(updates),
           },
         },
-        'Updating contact',
+        'Updating contact via backend',
       );
 
-      const client = new PeopleAPIClient(accessToken);
-      const updatedContact = await client.updateContact(resourceName, updates);
+      const updatedContact = await backendApiClient.updateContact(
+        resourceName,
+        updates as Contact, // Backend expects full Contact object
+      );
 
       logger.info(
         {
@@ -196,29 +171,130 @@ export class GoogleContactsService {
           metadata: {
             resourceName,
             errorMessage: error instanceof Error ? error.message : String(error),
-            errorCode: error instanceof GoogleAPIError ? error.code : 'UNKNOWN_ERROR',
           },
         },
         'Failed to update contact',
         error instanceof Error ? error : new Error(String(error)),
       );
 
-      if (error instanceof GoogleAPIError) {
-        return {
-          success: false,
-          error: {
-            code: error.code,
-            message: `Failed to update contact: ${resourceName}`,
-            details: error,
+      return {
+        success: false,
+        error: {
+          code: 'UPDATE_CONTACT_FAILED',
+          message: `Failed to update contact: ${resourceName}`,
+          details: error,
+        },
+      };
+    }
+  }
+
+  /**
+   * Check authentication status with backend
+   * @returns Promise resolving to APIResponse with auth status
+   */
+  static async checkAuthStatus(): Promise<APIResponse<{ isAuthenticated: boolean }>> {
+    try {
+      logger.info(
+        {
+          context: 'GoogleContactsService/checkAuthStatus',
+        },
+        'Checking authentication status',
+      );
+
+      const status = await backendApiClient.getAuthStatus();
+
+      logger.info(
+        {
+          context: 'GoogleContactsService/checkAuthStatus',
+          metadata: { isAuthenticated: status.isAuthenticated },
+        },
+        'Auth status retrieved',
+      );
+
+      return {
+        success: true,
+        data: { isAuthenticated: status.isAuthenticated },
+      };
+    } catch (error) {
+      logger.error(
+        {
+          context: 'GoogleContactsService/checkAuthStatus',
+          metadata: {
+            errorMessage: error instanceof Error ? error.message : String(error),
           },
-        };
-      }
+        },
+        'Failed to check auth status',
+        error instanceof Error ? error : new Error(String(error)),
+      );
 
       return {
         success: false,
         error: {
-          code: 'UNKNOWN_ERROR',
-          message: `An unexpected error occurred while updating contact: ${resourceName}`,
+          code: 'AUTH_STATUS_CHECK_FAILED',
+          message: 'Failed to check authentication status',
+          details: error,
+        },
+      };
+    }
+  }
+
+  /**
+   * Initiate OAuth login flow (redirects to backend)
+   */
+  static login(): void {
+    logger.info(
+      {
+        context: 'GoogleContactsService/login',
+      },
+      'Initiating backend OAuth login',
+    );
+
+    backendApiClient.login();
+  }
+
+  /**
+   * Logout from backend
+   * @returns Promise resolving to APIResponse with logout result
+   */
+  static async logout(): Promise<APIResponse<void>> {
+    try {
+      logger.info(
+        {
+          context: 'GoogleContactsService/logout',
+        },
+        'Logging out',
+      );
+
+      await backendApiClient.logout();
+
+      logger.info(
+        {
+          context: 'GoogleContactsService/logout',
+        },
+        'Logout successful',
+      );
+
+      return {
+        success: true,
+        data: undefined,
+      };
+    } catch (error) {
+      logger.error(
+        {
+          context: 'GoogleContactsService/logout',
+          metadata: {
+            errorMessage: error instanceof Error ? error.message : String(error),
+          },
+        },
+        'Failed to logout',
+        error instanceof Error ? error : new Error(String(error)),
+      );
+
+      return {
+        success: false,
+        error: {
+          code: 'LOGOUT_FAILED',
+          message: 'Failed to logout',
           details: error,
         },
       };

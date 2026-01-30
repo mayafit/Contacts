@@ -31,6 +31,19 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
   const isTokenExpired = useSelector(selectIsTokenExpired);
   const authError = useSelector(selectAuthError);
 
+  // DIAGNOSTIC: Log whenever ProtectedRoute renders
+  logger.info(
+    {
+      context: 'auth/ProtectedRoute',
+      metadata: {
+        isAuthenticated,
+        isTokenExpired,
+        hasAuthError: !!authError,
+      },
+    },
+    'ProtectedRoute rendering',
+  );
+
   // Clear expired tokens when detected
   useEffect(() => {
     if (isTokenExpired && isAuthenticated) {

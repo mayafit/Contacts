@@ -1,83 +1,49 @@
 /**
- * @fileoverview Login page with Google OAuth button
+ * @fileoverview Login page with backend OAuth redirect
  * @module Contacts/features/auth/components/LoginPage
+ *
+ * Updated for Story 2.1B: Now redirects to backend OAuth endpoint
+ * OAuth flow handled server-side
  */
 
 import React from 'react';
-import { GoogleLogin, type CredentialResponse } from '@react-oauth/google';
-import { useDispatch } from 'react-redux';
-import { useNavigate, useLocation } from 'react-router';
-import { Box, Card, CardContent, Typography, Container, Alert } from '@mui/material';
-import { loginWithGoogle } from '../../../redux/slices/auth/authSlice';
-import type { AppDispatch } from '../../../types/store';
-import type { GoogleCredentialResponse } from '../../../types';
+import { useLocation } from 'react-router';
+import { Box, Card, CardContent, Typography, Container, Alert, Button } from '@mui/material';
+import { Login as LoginIcon } from '@mui/icons-material';
+import { GoogleContactsService } from '../../../services/GoogleContactsService';
 import { logger } from '../../../../../shared/logger';
 
 /**
  * Login page component
- * Displays Google OAuth login button for user authentication
+ * Displays sign-in button that redirects to backend OAuth flow
  */
 const LoginPage: React.FC = () => {
-  const dispatch = useDispatch<AppDispatch>();
-  const navigate = useNavigate();
   const location = useLocation();
-  const errorMessage = (location.state as { message?: string })?.message;
+  const searchParams = new URLSearchParams(location.search);
+  const errorParam = searchParams.get('error');
 
-  /**
-   * Handle successful Google OAuth authentication
-   */
-  const handleSuccess = async (credentialResponse: CredentialResponse) => {
-    if (!credentialResponse.credential) {
-      logger.error(
-        {
-          context: 'auth/LoginPage',
-          metadata: { selectBy: credentialResponse.select_by },
-        },
-        'No credential received from Google OAuth',
-      );
-      return;
-    }
-
-    const googleCred: GoogleCredentialResponse = {
-      credential: credentialResponse.credential,
-      select_by: credentialResponse.select_by,
-    };
-
-    try {
-      await dispatch(loginWithGoogle(googleCred)).unwrap();
-      logger.info(
-        {
-          context: 'auth/LoginPage',
-          metadata: { selectBy: credentialResponse.select_by },
-        },
-        'User successfully authenticated with Google',
-      );
-      // Redirect to main app on successful login
-      navigate('/');
-    } catch (error) {
-      logger.error(
-        {
-          context: 'auth/LoginPage',
-          metadata: {
-            selectBy: credentialResponse.select_by,
-          },
-        },
-        'Google OAuth login failed',
-        error instanceof Error ? error : new Error(String(error)),
-      );
-    }
+  const errorMessages: Record<string, string> = {
+    invalid_state: 'Authentication failed: invalid state parameter',
+    no_code: 'Authentication failed: no authorization code received',
+    config_error: 'Server configuration error. Please contact support.',
+    auth_failed: 'Authentication failed. Please try again.',
   };
 
+  const errorMessage = errorParam ? errorMessages[errorParam] || 'An unknown error occurred' : null;
+
   /**
-   * Handle Google OAuth authentication error
+   * Handle sign in button click
+   * Redirects to backend OAuth login endpoint
    */
-  const handleError = () => {
-    logger.error(
+  const handleSignIn = () => {
+    logger.info(
       {
         context: 'auth/LoginPage',
       },
-      'Google OAuth authentication failed',
+      'User initiated backend OAuth login',
     );
+
+    GoogleContactsService.login();
   };
 
   return (
@@ -104,7 +70,7 @@ const LoginPage: React.FC = () => {
               Contacts
             </Typography>
             {errorMessage && (
-              <Alert severity="warning" sx={{ width: '100%' }}>
+              <Alert severity="error" sx={{ width: '100%' }}>
                 {errorMessage}
               </Alert>
             )}
@@ -112,9 +78,21 @@ const LoginPage: React.FC = () => {
               Sign in with your Google account to access and manage your contacts
             </Typography>
             <Box sx={{ mt: 2 }}>
-              <GoogleLogin onSuccess={handleSuccess} onError={handleError} />
-              <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-                Note: Contacts scope will be requested during authorization
+              <Button
+                variant="contained"
+                size="large"
+                startIcon={<LoginIcon />}
+                onClick={handleSignIn}
+                sx={{
+                  textTransform: 'none',
+                  px: 4,
+                  py: 1.5,
+                }}
+              >
+                Sign in with Google
+              </Button>
+              <Typography variant="caption" color="text.secondary" sx={{ mt: 2, display: 'block', textAlign: 'center' }}>
+                You will be redirected to Google to authorize access to your contacts
               </Typography>
             </Box>
           </CardContent>
