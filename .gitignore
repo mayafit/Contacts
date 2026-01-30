@@ -9,6 +9,8 @@ eslint-report.html
 /typedoc/
 /.idea/
 /.vscode/
+/.factory/
+/.crush
 junit.xml
 package-lock.json
 
@@ -25,3 +27,52 @@ google.md
 /_bmad-output/
 /.agent/
 /.claude/
+
+# .NET Core / C# build outputs
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# .NET Core
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# NuGet Packages
+*.nupkg
+*.snupkg
+**/packages/*
+!**/packages/build/
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Rider
+.idea/
+*.sln.iml
+
+# User-specific files
+*.rsuser
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Build results
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+
+# ASP.NET Core
+*.log
+*.cache
