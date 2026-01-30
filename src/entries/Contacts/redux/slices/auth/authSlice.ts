@@ -1,141 +1,69 @@
 /**
- * @fileoverview Authentication Redux slice with OAuth state management
+ * @fileoverview Authentication Redux slice with backend session management
  * @module Contacts/redux/slices/auth/authSlice
+ *
+ * Updated for Story 2.1B: Simplified to work with backend cookie-based authentication
+ * OAuth flow and token management now handled server-side
  */
 
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
-import type { AuthState, User, AppError, GoogleCredentialResponse } from '../../../types';
+import { GoogleContactsService } from '../../../services/GoogleContactsService';
+import type { AuthState, User, AppError } from '../../../types';
 import { ErrorCode } from '../../../types';
-import { GoogleAuthService } from '../../../services/auth/GoogleAuthService';
 
 /**
  * Initial authentication state
+ * Simplified - no more access tokens or expiry tracking (handled by backend)
  */
 const initialState: AuthState = {
   user: null,
-  accessToken: null,
-  tokenExpiry: null,
+  accessToken: null, // Kept for backward compatibility but not used
+  tokenExpiry: null, // Kept for backward compatibility but not used
   isLoading: false,
   error: null,
   isAuthenticated: false,
 };
 
 /**
- * Async thunk for Google OAuth login
- * Handles credential validation, nonce verification, and user profile fetching
+ * Async thunk to check authentication status with backend
+ * Verifies if user has valid session cookie
  */
-export const loginWithGoogle = createAsyncThunk<
-  { user: User; token: string; expiresIn: number },
-  GoogleCredentialResponse,
-  { rejectValue: AppError }
->('auth/loginWithGoogle', async (credentialResponse, { rejectWithValue }) => {
-  try {
-    // Validate JWT structure
-    const jwtParts = credentialResponse.credential.split('.');
-    if (jwtParts.length !== 3) {
-      return rejectWithValue({
-        code: ErrorCode.INVALID_TOKEN,
-        message: 'Invalid JWT token structure',
-        timestamp: new Date().toISOString(),
-      });
-    }
-
-    // Decode JWT credential to extract user info
-    const base64Url = jwtParts[1];
-    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-    const jsonPayload = decodeURIComponent(
-      atob(base64)
-        .split('')
-        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-        .join(''),
-    );
-    const payload = JSON.parse(jsonPayload);
-
-    // Validate required JWT claims
-    if (!payload.sub || !payload.email || !payload.iss || !payload.aud || !payload.exp) {
-      return rejectWithValue({
-        code: ErrorCode.INVALID_TOKEN,
-        message: 'JWT missing required claims',
-        timestamp: new Date().toISOString(),
-      });
-    }
-
-    // Validate issuer (must be Google)
-    if (payload.iss !== 'https://accounts.google.com' && payload.iss !== 'accounts.google.com') {
-      return rejectWithValue({
-        code: ErrorCode.INVALID_TOKEN,
-        message: 'Invalid JWT issuer',
-        timestamp: new Date().toISOString(),
-      });
-    }
-
-    // Validate audience (must match our client ID)
-    const expectedAudience = process.env.REACT_APP_GOOGLE_CLIENT_ID;
-    if (payload.aud !== expectedAudience) {
-      return rejectWithValue({
-        code: ErrorCode.INVALID_TOKEN,
-        message: 'JWT audience does not match client ID',
-        timestamp: new Date().toISOString(),
-      });
-    }
-
-    // Validate token expiry
-    const now = Math.floor(Date.now() / 1000);
-    if (payload.exp < now) {
-      return rejectWithValue({
-        code: ErrorCode.TOKEN_EXPIRED,
-        message: 'JWT token has expired',
-        timestamp: new Date().toISOString(),
-      });
-    }
-
-    const user: User = {
-      id: payload.sub,
-      name: payload.name,
-      email: payload.email,
-      profilePicture: payload.picture,
-    };
-
-    // Token expires in 3600 seconds (1 hour) by default
-    const expiresIn = payload.exp ? payload.exp - Math.floor(Date.now() / 1000) : 3600;
-
-    return {
-      user,
-      token: credentialResponse.credential,
-      expiresIn,
-    };
-  } catch (err) {
-    return rejectWithValue({
-      code: ErrorCode.AUTH_FAILED,
-      message: 'Failed to authenticate with Google',
-      technicalMessage: err instanceof Error ? err.message : String(err),
-      timestamp: new Date().toISOString(),
-    });
-  }
-});
-
-/**
- * Async thunk for refreshing access token
- * Attempts to refresh the access token using the refresh token from sessionStorage
- */
-export const refreshAccessToken = createAsyncThunk<
-  { access_token: string; expires_in: number },
+export const checkAuthStatus = createAsyncThunk<
+  { isAuthenticated: boolean },
   void,
   { rejectValue: AppError }
->('auth/refreshAccessToken', async (_, { rejectWithValue }) => {
-  const response = await GoogleAuthService.refreshAccessToken();
+>('auth/checkAuthStatus', async (_, { rejectWithValue }) => {
+  const response = await GoogleContactsService.checkAuthStatus();
 
   if (!response.success) {
     return rejectWithValue({
-      code: ErrorCode.TOKEN_EXPIRED,
-      message: response.error?.message || 'Failed to refresh access token',
+      code: ErrorCode.AUTH_FAILED,
+      message: response.error?.message || 'Failed to check auth status',
       timestamp: new Date().toISOString(),
-      context: { details: response.error?.details },
     });
   }
 
   return response.data!;
 });
+
+/**
+ * Async thunk for logout
+ * Calls backend to clear session and cookies
+ */
+export const logoutUser = createAsyncThunk<void, void, { rejectValue: AppError }>(
+  'auth/logoutUser',
+  async (_, { rejectWithValue }) => {
+    const response = await GoogleContactsService.logout();
+
+    if (!response.success) {
+      return rejectWithValue({
+        code: ErrorCode.AUTH_FAILED,
+        message: response.error?.message || 'Failed to logout',
+        timestamp: new Date().toISOString(),
+      });
+    }
+  },
+);
 
 /**
  * Authentication Redux slice
@@ -153,7 +81,8 @@ const authSlice = createSlice({
     },
 
     /**
-     * Set access token and expiry
+     * Set access token and expiry (kept for backward compatibility)
+     * In the new architecture, this is not used (backend handles tokens)
      */
     setToken(state, action: PayloadAction<{ token: string; expiresIn: number }>) {
       state.accessToken = action.payload.token;
@@ -162,6 +91,7 @@ const authSlice = createSlice({
 
     /**
      * Clear authentication state (logout)
+     * Note: This just clears Redux state. Use logoutUser thunk to also clear backend session
      */
     logout(state) {
       state.user = null;
@@ -169,10 +99,6 @@ const authSlice = createSlice({
       state.tokenExpiry = null;
       state.isAuthenticated = false;
       state.error = null;
-      // Clear tokens from sessionStorage
-      sessionStorage.removeItem('access_token');
-      sessionStorage.removeItem('token_expiry');
-      sessionStorage.removeItem('user');
     },
 
     /**
@@ -191,55 +117,45 @@ const authSlice = createSlice({
     },
 
     /**
-     * Restore auth state from sessionStorage
+     * Restore auth state (simplified - just user info)
      */
-    restoreAuthState(
-      state,
-      action: PayloadAction<{ user: User; token: string; tokenExpiry: string }>,
-    ) {
+    restoreAuthState(state, action: PayloadAction<{ user: User }>) {
       state.user = action.payload.user;
-      state.accessToken = action.payload.token;
-      state.tokenExpiry = action.payload.tokenExpiry;
       state.isAuthenticated = true;
     },
 
     /**
-     * Update access token after refresh (for Story 1.6 token refresh flow)
+     * Kept for backward compatibility but not used in new architecture
      */
     tokenRefreshSuccess(state, action: PayloadAction<string>) {
       state.accessToken = action.payload;
       state.isAuthenticated = true;
       state.error = null;
-      // Update sessionStorage with new token
-      sessionStorage.setItem('access_token', action.payload);
-      sessionStorage.setItem('token_expiry', new Date(Date.now() + 3600 * 1000).toISOString());
-      // Update state token expiry
-      state.tokenExpiry = new Date(Date.now() + 3600 * 1000).toISOString();
     },
   },
   extraReducers: (builder) => {
     builder
-      // Login pending
-      .addCase(loginWithGoogle.pending, (state) => {
+      // Check auth status pending
+      .addCase(checkAuthStatus.pending, (state) => {
         state.isLoading = true;
         state.error = null;
       })
-      // Login fulfilled
-      .addCase(loginWithGoogle.fulfilled, (state, action) => {
+      // Check auth status fulfilled
+      .addCase(checkAuthStatus.fulfilled, (state, action) => {
         state.isLoading = false;
-        state.user = action.payload.user;
-        state.accessToken = action.payload.token;
-        state.tokenExpiry = new Date(Date.now() + action.payload.expiresIn * 1000).toISOString();
-        state.isAuthenticated = true;
-        state.error = null;
+        state.isAuthenticated = action.payload.isAuthenticated;
+        if (!action.payload.isAuthenticated) {
+          state.user = null;
+        }
 
-        // Store in sessionStorage for persistence
-        sessionStorage.setItem('access_token', action.payload.token);
-        sessionStorage.setItem('token_expiry', state.tokenExpiry);
-        sessionStorage.setItem('user', JSON.stringify(action.payload.user));
+        // DIAGNOSTIC: This will show in Redux DevTools console
+        console.log('[authSlice] checkAuthStatus.fulfilled:', {
+          isAuthenticated: action.payload.isAuthenticated,
+          payload: action.payload,
+        });
       })
-      // Login rejected
-      .addCase(loginWithGoogle.rejected, (state, action) => {
+      // Check auth status rejected
+      .addCase(checkAuthStatus.rejected, (state, action) => {
         state.isLoading = false;
         state.error = action.payload || {
           code: ErrorCode.UNKNOWN_ERROR,
@@ -247,32 +163,34 @@ const authSlice = createSlice({
           timestamp: new Date().toISOString(),
         };
         state.isAuthenticated = false;
+        state.user = null;
       })
-      // Token refresh pending
-      .addCase(refreshAccessToken.pending, (state) => {
+      // Logout pending
+      .addCase(logoutUser.pending, (state) => {
         state.isLoading = true;
       })
-      // Token refresh fulfilled
-      .addCase(refreshAccessToken.fulfilled, (state, action) => {
+      // Logout fulfilled
+      .addCase(logoutUser.fulfilled, (state) => {
         state.isLoading = false;
-        state.accessToken = action.payload.access_token;
-        state.tokenExpiry = new Date(Date.now() + action.payload.expires_in * 1000).toISOString();
-        state.isAuthenticated = true;
+        state.user = null;
+        state.accessToken = null;
+        state.tokenExpiry = null;
+        state.isAuthenticated = false;
         state.error = null;
-
-        // Update sessionStorage with new token
-        sessionStorage.setItem('access_token', action.payload.access_token);
-        sessionStorage.setItem('token_expiry', state.tokenExpiry);
       })
-      // Token refresh rejected
-      .addCase(refreshAccessToken.rejected, (state, action) => {
+      // Logout rejected
+      .addCase(logoutUser.rejected, (state, action) => {
         state.isLoading = false;
         state.error = action.payload || {
-          code: ErrorCode.TOKEN_EXPIRED,
-          message: 'Failed to refresh access token',
+          code: ErrorCode.UNKNOWN_ERROR,
+          message: 'Failed to logout',
           timestamp: new Date().toISOString(),
         };
-        // Do NOT set isAuthenticated to false here - let the interceptor handle logout
+        // Still clear local state even if backend logout fails
+        state.user = null;
+        state.accessToken = null;
+        state.tokenExpiry = null;
+        state.isAuthenticated = false;
       });
   },
 });

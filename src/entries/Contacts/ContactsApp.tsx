@@ -1,114 +1,104 @@
 /**
  * @fileoverview Contacts application root component with routing
  * @module Contacts/ContactsApp
+ *
+ * Updated for Story 2.1B: Simplified to work with backend cookie-based authentication
+ * OAuth flow now handled server-side
  */
 
 import React, { useEffect } from 'react';
-import { GoogleOAuthProvider } from '@react-oauth/google';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router';
 import { useDispatch } from 'react-redux';
 import LoginPage from './features/auth/components/LoginPage';
 import AuthCallback from './routes/AuthCallback';
 import ProtectedRoute from './routes/ProtectedRoute';
 import ContactsHome from './components/ContactsHome';
-import { restoreAuthState } from './redux/slices/auth/authSlice';
-import type { User } from './types';
+import { checkAuthStatus } from './redux/slices/auth/authSlice';
+import type { AppDispatch } from './types/store';
 import { logger } from '../../shared/logger';
-import { setupAuthInterceptor } from './services/api/interceptors/authInterceptor';
 
 /**
  * Contacts application component
- * Sets up OAuth provider, routing, and session restoration
+ * Sets up routing and checks authentication status with backend on load
  */
 const ContactsApp: React.FC = () => {
-  const dispatch = useDispatch();
-  const clientId = process.env.REACT_APP_GOOGLE_CLIENT_ID;
+  const dispatch = useDispatch<AppDispatch>();
+  const [isCheckingAuth, setIsCheckingAuth] = React.useState(true);
 
-  if (!clientId) {
-    logger.error(
+  /**
+   * Check authentication status with backend on app mount
+   * Backend will verify session cookie and return auth status
+   */
+  useEffect(() => {
+    logger.info(
       {
         context: 'Contacts/ContactsApp',
       },
-      'REACT_APP_GOOGLE_CLIENT_ID environment variable is not defined',
+      'Checking authentication status with backend',
     );
-    return (
-      <div>
-        <h1>Configuration Error</h1>
-        <p>Google OAuth Client ID is not configured. Please check your .env file.</p>
-      </div>
-    );
-  }
 
-  /**
-   * Setup 401 auth interceptor on app mount
-   */
-  useEffect(() => {
-    setupAuthInterceptor();
-  }, []);
-
-  /**
-   * Restore authentication state from sessionStorage on app load
-   */
-  useEffect(() => {
-    const accessToken = sessionStorage.getItem('access_token');
-    const tokenExpiry = sessionStorage.getItem('token_expiry');
-    const userJson = sessionStorage.getItem('user');
-
-    if (accessToken && tokenExpiry && userJson) {
-      try {
-        const user: User = JSON.parse(userJson);
-        const expiry = new Date(tokenExpiry);
-
-        // Only restore if token hasn't expired
-        if (expiry > new Date()) {
-          dispatch(
-            restoreAuthState({
-              user,
-              token: accessToken,
-              tokenExpiry,
-            }),
-          );
-        } else {
-          // Clear expired tokens
-          sessionStorage.removeItem('access_token');
-          sessionStorage.removeItem('token_expiry');
-          sessionStorage.removeItem('user');
-        }
-      } catch (error) {
+    dispatch(checkAuthStatus())
+      .then((result) => {
+        logger.info(
+          {
+            context: 'Contacts/ContactsApp',
+            metadata: {
+              type: result.type,
+              payload: result.payload,
+            },
+          },
+          'Auth check completed',
+        );
+      })
+      .catch((error) => {
         logger.error(
           {
             context: 'Contacts/ContactsApp',
             metadata: {
-              hasAccessToken: !!accessToken,
-              hasTokenExpiry: !!tokenExpiry,
-              hasUserJson: !!userJson,
+              error: error.message,
             },
           },
-          'Failed to restore authentication state from sessionStorage',
-          error instanceof Error ? error : new Error(String(error)),
+          'Auth check failed',
+          error,
         );
-      }
-    }
+      })
+      .finally(() => {
+        logger.info(
+          {
+            context: 'Contacts/ContactsApp',
+          },
+          'Setting isCheckingAuth to false',
+        );
+        setIsCheckingAuth(false);
+      });
   }, [dispatch]);
 
+  // Show loading state while checking authentication
+  // This prevents ProtectedRoute from redirecting before auth check completes
+  if (isCheckingAuth) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+        <div>Checking authentication...</div>
+      </div>
+    );
+  }
+
   return (
-    <GoogleOAuthProvider clientId={clientId}>
-      <BrowserRouter>
-        <Routes>
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/auth/callback" element={<AuthCallback />} />
-          <Route
-            path="/"
-            element={
-              <ProtectedRoute>
-                <ContactsHome />
-              </ProtectedRoute>
-            }
-          />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </BrowserRouter>
-    </GoogleOAuthProvider>
+    <BrowserRouter>
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/auth/callback" element={<AuthCallback />} />
+        <Route
+          path="/"
+          element={
+            <ProtectedRoute>
+              <ContactsHome />
+            </ProtectedRoute>
+          }
+        />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </BrowserRouter>
   );
 };
 

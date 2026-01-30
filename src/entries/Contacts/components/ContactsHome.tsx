@@ -1,5 +1,5 @@
 /**
- * @fileoverview Main Contacts home page (placeholder for contact grid)
+ * @fileoverview Main Contacts home page with contact grid
  * @module Contacts/components/ContactsHome
  */
 
@@ -11,11 +11,11 @@ import { Logout as LogoutIcon } from '@mui/icons-material';
 import { logout } from '../redux/slices/auth/authSlice';
 import { selectUser } from '../redux/slices/auth/selectors';
 import { logger } from '../../../shared/logger';
+import ContactsTable from './ContactsTable';
 
 /**
  * Contacts home page component
- * Placeholder for the main contact grid (Epic 2)
- * Currently displays authenticated user info and sign out button
+ * Displays authenticated user info, sign out button, and Google contacts table
  */
 const ContactsHome: React.FC = () => {
   const dispatch = useDispatch();
@@ -65,16 +65,14 @@ const ContactsHome: React.FC = () => {
                 </Button>
               </Box>
             </Box>
-            <Typography variant="h6" gutterBottom>
-              Contacts
-            </Typography>
-            <Typography variant="body1" color="text.secondary">
-              Contact grid will be implemented in Epic 2.
-              <br />
-              Authentication is now complete! ✅
+            <Typography variant="h6" gutterBottom sx={{ mb: 2 }}>
+              Your Contacts
             </Typography>
           </CardContent>
         </Card>
+        <Box sx={{ mt: 3 }}>
+          <ContactsTable />
+        </Box>
       </Box>
     </Container>
   );
