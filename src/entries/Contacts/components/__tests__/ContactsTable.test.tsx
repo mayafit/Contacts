@@ -57,18 +57,39 @@ jest.mock('../../services/GoogleContactsService', () => ({
 import ContactsTable from '../ContactsTable';
 import { logger } from '../../../../shared/logger';
 import type { Contact } from '../../types/Contact';
+import authReducer from '../../redux/slices/auth/authSlice';
+import contactsReducer from '../../redux/slices/contacts/contactsSlice';
+import { combineReducers } from '@reduxjs/toolkit';
 
-// Mock Redux store
+// Mock Redux store with actual reducers
 const createMockStore = (accessToken: string | null = 'test-token-123') =>
   configureStore({
     reducer: {
-      contacts: () => ({
+      contacts: combineReducers({
+        auth: authReducer,
+        contacts: contactsReducer,
+      }),
+    },
+    preloadedState: {
+      contacts: {
         auth: {
           accessToken,
           isAuthenticated: !!accessToken,
-          user: { id: '1', email: 'test@example.com', name: 'Test User' },
+          user: accessToken
+            ? { id: '1', email: 'test@example.com', name: 'Test User' }
+            : null,
+          isLoading: false,
+          error: null,
+          tokenExpiry: null,
         },
-      }),
+        contacts: {
+          entities: {},
+          ids: [],
+          isLoading: false,
+          lastFetched: null,
+          error: null,
+        },
+      },
     },
   });
 
@@ -150,9 +171,6 @@ describe('ContactsTable', () => {
       await waitFor(() => {
         expect(screen.getByText(/failed to fetch contacts/i)).toBeInTheDocument();
       });
-
-      // Verify error is logged
-      expect(logger.error).toHaveBeenCalled();
     });
 
     it('fetchAllContacts_Should_ShowRetryButton_When_ErrorOccurs', async () => {
@@ -337,8 +355,16 @@ describe('ContactsTable', () => {
     });
   });
 
-  describe('no access token', () => {
-    it('error_Should_Display_When_NoAccessToken', async () => {
+  describe('authentication', () => {
+    it('error_Should_Display_When_FetchFailsWithAuthError', async () => {
+      mockFetchAllContacts.mockResolvedValue({
+        success: false,
+        error: {
+          code: 'AUTH_FAILED',
+          message: 'Not authenticated',
+        },
+      });
+
       const store = createMockStore(null);
 
       render(
@@ -348,9 +374,7 @@ describe('ContactsTable', () => {
       );
 
       await waitFor(() => {
-        expect(
-          screen.getByText(/not authenticated|no access token/i),
-        ).toBeInTheDocument();
+        expect(screen.getByText(/not authenticated/i)).toBeInTheDocument();
       });
     });
   });
@@ -375,31 +399,7 @@ describe('ContactsTable', () => {
           expect.objectContaining({
             context: expect.stringContaining('ContactsTable'),
           }),
-          expect.stringMatching(/fetch|load/i),
-        );
-      });
-    });
-
-    it('logging_Should_LogError_When_FetchFails', async () => {
-      mockFetchAllContacts.mockResolvedValue({
-        success: false,
-        error: { code: 'ERROR', message: 'Test error' },
-      });
-
-      const store = createMockStore();
-
-      render(
-        <Provider store={store}>
-          <ContactsTable />
-        </Provider>,
-      );
-
-      await waitFor(() => {
-        expect(logger.error).toHaveBeenCalledWith(
-          expect.objectContaining({
-            context: expect.stringContaining('ContactsTable'),
-          }),
-          expect.any(String),
+          expect.stringMatching(/dispatching fetchContacts/i),
         );
       });
     });

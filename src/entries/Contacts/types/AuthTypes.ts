@@ -52,13 +52,15 @@ export interface AppError {
 }
 
 /**
- * Error codes for authentication failures
+ * Error codes for authentication and API failures
  */
 export enum ErrorCode {
   NETWORK_ERROR = 'NETWORK_ERROR',
   AUTH_FAILED = 'AUTH_FAILED',
   TOKEN_EXPIRED = 'TOKEN_EXPIRED',
   INVALID_TOKEN = 'INVALID_TOKEN',
+  FETCH_FAILED = 'FETCH_FAILED',
+  UPDATE_FAILED = 'UPDATE_FAILED',
   UNKNOWN_ERROR = 'UNKNOWN_ERROR',
 }
 

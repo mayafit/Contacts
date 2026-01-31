@@ -6,16 +6,19 @@
 import { combineReducers } from '@reduxjs/toolkit';
 import { getGlobals } from '../../GLOBALS';
 import authReducer from './redux/slices/auth/authSlice';
+import contactsReducer from './redux/slices/contacts/contactsSlice';
 
 /**
  * Initialize Contacts entry module
- * Registers auth reducer with dynamic reducer injection
+ * Registers auth and contacts reducers with dynamic reducer injection
+ * Updated for Story 2.2: Added normalized contacts state management
  */
 export const initContactsEntry = () => {
   getGlobals().addDynamicReducer({
     reducerName: 'contacts',
     reducer: combineReducers({
       auth: authReducer,
+      contacts: contactsReducer,
     }),
   });
 };
