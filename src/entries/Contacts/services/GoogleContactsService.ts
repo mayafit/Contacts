@@ -28,24 +28,62 @@ export class GoogleContactsService {
         {
           context: 'GoogleContactsService/fetchAllContacts',
         },
-        'Fetching all contacts from backend',
+        'Fetching all contacts from backend (paginated)',
       );
 
-      const { contacts } = await backendApiClient.fetchContacts();
+      const allContacts: Contact[] = [];
+      let nextPageToken: string | undefined;
+      let pageCount = 0;
+
+      // Loop through all pages until no more nextPageToken
+      do {
+        pageCount++;
+        logger.debug(
+          {
+            context: 'GoogleContactsService/fetchAllContacts',
+            metadata: {
+              pageNumber: pageCount,
+              hasPageToken: !!nextPageToken,
+              totalSoFar: allContacts.length,
+            },
+          },
+          `Fetching page ${pageCount}`,
+        );
+
+        const { contacts, nextPageToken: nextToken } =
+          await backendApiClient.fetchContacts(1000, nextPageToken);
+
+        allContacts.push(...contacts);
+        nextPageToken = nextToken;
+
+        logger.debug(
+          {
+            context: 'GoogleContactsService/fetchAllContacts',
+            metadata: {
+              pageNumber: pageCount,
+              pageSize: contacts.length,
+              totalSoFar: allContacts.length,
+              hasMorePages: !!nextToken,
+            },
+          },
+          `Page ${pageCount} fetched`,
+        );
+      } while (nextPageToken);
 
       logger.info(
         {
           context: 'GoogleContactsService/fetchAllContacts',
           metadata: {
-            contactCount: contacts.length,
+            totalContacts: allContacts.length,
+            totalPages: pageCount,
           },
         },
-        'Successfully fetched contacts',
+        'Successfully fetched all contacts',
       );
 
       return {
         success: true,
-        data: contacts,
+        data: allContacts,
       };
     } catch (error) {
       logger.error(
@@ -53,6 +91,7 @@ export class GoogleContactsService {
           context: 'GoogleContactsService/fetchAllContacts',
           metadata: {
             errorMessage: error instanceof Error ? error.message : String(error),
+            errorName: error instanceof Error ? error.name : 'Unknown',
           },
         },
         'Failed to fetch contacts',

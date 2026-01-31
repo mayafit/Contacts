@@ -2,11 +2,12 @@
  * @fileoverview ContactsTable component - displays Google contacts in a basic table view
  * @module Contacts/components/ContactsTable
  *
- * Updated for Story 2.1B: Now fetches from backend API instead of direct Google API calls
- * Authentication handled via session cookies, no access token needed
+ * Updated for Story 2.2: Now uses Redux normalized state for centralized state management
+ * Provides efficient O(1) lookups and maintains referential equality
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useEffect } from 'react';
+import { useDispatch, useSelector } from 'react-redux';
 import {
   Table,
   TableBody,
@@ -21,84 +22,43 @@ import {
   Button,
 } from '@mui/material';
 import { Refresh as RefreshIcon } from '@mui/icons-material';
-import { GoogleContactsService } from '../services/GoogleContactsService';
+import { fetchContacts } from '../redux/slices/contacts/contactsSlice';
+import {
+  selectAllContacts,
+  selectContactsLoading,
+  selectContactsError,
+} from '../redux/slices/contacts/selectors';
 import { logger } from '../../../shared/logger';
 import type { Contact } from '../types/Contact';
+import type { AppDispatch } from '../types/store';
 
 /**
  * ContactsTable component
- * Fetches and displays Google contacts in a basic table view with Name, Phone, and Email columns
+ * Fetches and displays Google contacts using Redux normalized state
+ * Story 2.2: Implements centralized state management with efficient selectors
  */
 const ContactsTable: React.FC = () => {
-  const [contacts, setContacts] = useState<Contact[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
+  const dispatch = useDispatch<AppDispatch>();
 
-  /**
-   * Fetches contacts from backend API
-   */
-  const fetchContacts = async () => {
-    try {
-      logger.info(
-        {
-          context: 'ContactsTable/fetchContacts',
-        },
-        'Starting to fetch contacts from backend',
-      );
-
-      setLoading(true);
-      setError(null);
-
-      const response = await GoogleContactsService.fetchAllContacts();
-
-      if (response.success && response.data) {
-        setContacts(response.data);
-        logger.info(
-          {
-            context: 'ContactsTable/fetchContacts',
-            metadata: {
-              contactCount: response.data.length,
-            },
-          },
-          'Successfully fetched contacts',
-        );
-      } else {
-        const errorMessage = response.error?.message || 'Failed to fetch contacts';
-        setError(errorMessage);
-        logger.error(
-          {
-            context: 'ContactsTable/fetchContacts',
-            metadata: {
-              errorCode: response.error?.code,
-              errorMessage,
-            },
-          },
-          'Failed to fetch contacts',
-        );
-      }
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred';
-      setError(errorMessage);
-      logger.error(
-        {
-          context: 'ContactsTable/fetchContacts',
-          metadata: {
-            errorMessage,
-          },
-        },
-        'Exception while fetching contacts',
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
+  // Select contacts state from Redux store using memoized selectors
+  const contacts = useSelector(selectAllContacts);
+  const loading = useSelector(selectContactsLoading);
+  const error = useSelector(selectContactsError);
 
   /**
    * Fetch contacts on component mount
+   * Dispatches Redux thunk action
    */
   useEffect(() => {
-    fetchContacts();
-  }, []);
+    logger.info(
+      {
+        context: 'ContactsTable/mount',
+      },
+      'Component mounted, dispatching fetchContacts action',
+    );
+
+    dispatch(fetchContacts());
+  }, [dispatch]);
 
   /**
    * Extract display name from contact
@@ -115,9 +75,9 @@ const ContactsTable: React.FC = () => {
    */
   const getPrimaryPhone = (contact: Contact): string => {
     if (contact.phoneNumbers && contact.phoneNumbers.length > 0) {
-      return contact.phoneNumbers[0].value || '-';
+      return contact.phoneNumbers[0].value || '—';
     }
-    return '-';
+    return '—';
   };
 
   /**
@@ -125,22 +85,23 @@ const ContactsTable: React.FC = () => {
    */
   const getPrimaryEmail = (contact: Contact): string => {
     if (contact.emailAddresses && contact.emailAddresses.length > 0) {
-      return contact.emailAddresses[0].value || '-';
+      return contact.emailAddresses[0].value || '—';
     }
-    return '-';
+    return '—';
   };
 
   /**
    * Handle retry button click
+   * Dispatches fetchContacts action again
    */
   const handleRetry = () => {
     logger.info(
       {
         context: 'ContactsTable/handleRetry',
       },
-      'User initiated retry',
+      'User initiated retry, dispatching fetchContacts',
     );
-    fetchContacts();
+    dispatch(fetchContacts());
   };
 
   // Loading state
@@ -175,7 +136,7 @@ const ContactsTable: React.FC = () => {
             color: 'white',
           }}
         >
-          <Typography variant="body1">{error}</Typography>
+          <Typography variant="body1">{error.message}</Typography>
         </Box>
         <Button variant="contained" startIcon={<RefreshIcon />} onClick={handleRetry}>
           Retry
