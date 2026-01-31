@@ -11,7 +11,7 @@ import { Logout as LogoutIcon } from '@mui/icons-material';
 import { logout } from '../redux/slices/auth/authSlice';
 import { selectUser } from '../redux/slices/auth/selectors';
 import { logger } from '../../../shared/logger';
-import ContactsTable from './ContactsTable';
+import VirtualizedContactsTable from './VirtualizedContactsTable';
 
 /**
  * Contacts home page component
@@ -71,7 +71,7 @@ const ContactsHome: React.FC = () => {
           </CardContent>
         </Card>
         <Box sx={{ mt: 3 }}>
-          <ContactsTable />
+          <VirtualizedContactsTable />
         </Box>
       </Box>
     </Container>
