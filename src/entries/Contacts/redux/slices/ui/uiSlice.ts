@@ -114,13 +114,24 @@ export const {
 
 // Selectors
 export const selectColumnConfig = (state: RootState): ColumnConfig =>
-  state.ui.columnConfig;
+  state.contacts?.ui?.columnConfig || {
+    visibleColumns: ['displayName', 'phoneNumbers', 'emailAddresses'],
+    columnOrder: ['displayName', 'phoneNumbers', 'emailAddresses'],
+  };
 
 export const selectVisibleColumns = (state: RootState): string[] =>
-  state.ui.columnConfig.visibleColumns;
+  state.contacts?.ui?.columnConfig?.visibleColumns || [
+    'displayName',
+    'phoneNumbers',
+    'emailAddresses',
+  ];
 
 export const selectColumnOrder = (state: RootState): string[] =>
-  state.ui.columnConfig.columnOrder;
+  state.contacts?.ui?.columnConfig?.columnOrder || [
+    'displayName',
+    'phoneNumbers',
+    'emailAddresses',
+  ];
 
 // Export reducer
 export default uiSlice.reducer;
