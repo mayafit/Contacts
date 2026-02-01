@@ -109,6 +109,23 @@ const VirtualizedContactsTable: React.FC = () => {
   const columns = useMemo<ColumnDef<Contact>[]>(() => {
     const { visibleColumns, columnOrder } = columnConfig;
 
+    // Safety check: ensure we have valid column config
+    if (!visibleColumns || visibleColumns.length === 0) {
+      logger.warn(
+        { context: 'VirtualizedContactsTable/columns' },
+        'No visible columns configured, using defaults'
+      );
+      // Return default columns if config is invalid
+      return AVAILABLE_COLUMNS.filter((col) => col.isDefault).map((colDef) => ({
+        id: colDef.id,
+        header: colDef.label,
+        accessorFn: (row: Contact) => colDef.accessor(row),
+        cell: (info: CellContext<Contact, unknown>) => (
+          <div style={{ padding: '12px' }}>{info.getValue() as string}</div>
+        ),
+      }));
+    }
+
     // Get visible column definitions
     const visibleColumnDefs = AVAILABLE_COLUMNS.filter((col) =>
       visibleColumns.includes(col.id)

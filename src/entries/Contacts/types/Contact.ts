@@ -13,8 +13,16 @@ export interface ContactName {
   familyName?: string;
   /** Full display name */
   displayName?: string;
+  /** Middle name */
+  middleName?: string;
   /** Phonetic representation of full name */
   phoneticFullName?: string;
+  /** Phonetic given name */
+  phoneticGivenName?: string;
+  /** Phonetic family name */
+  phoneticFamilyName?: string;
+  /** Phonetic middle name */
+  phoneticMiddleName?: string;
 }
 
 /**

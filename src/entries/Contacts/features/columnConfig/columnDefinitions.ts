@@ -92,12 +92,20 @@ export const AVAILABLE_COLUMNS: ColumnDefinition[] = [
 
   // Advanced Fields
   {
-    id: 'phoneticFullName',
-    label: 'Phonetic Name',
+    id: 'phoneticGivenName',
+    label: 'Phonetic First Name',
     category: 'Advanced',
     isDefault: false,
     accessor: (contact: Contact) =>
-      contact.names?.[0]?.phoneticFullName || '—',
+      contact.names?.[0]?.phoneticGivenName || '—',
+  },
+  {
+    id: 'phoneticFamilyName',
+    label: 'Phonetic Last Name',
+    category: 'Advanced',
+    isDefault: false,
+    accessor: (contact: Contact) =>
+      contact.names?.[0]?.phoneticFamilyName || '—',
   },
   {
     id: 'userDefined',
