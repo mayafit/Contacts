@@ -8,7 +8,7 @@
 
 import React, { useRef, useMemo } from 'react';
 import { useSelector } from 'react-redux';
-import { useReactTable, getCoreRowModel, ColumnDef, flexRender } from '@tanstack/react-table';
+import { useReactTable, getCoreRowModel, ColumnDef, CellContext, flexRender } from '@tanstack/react-table';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Box, CircularProgress, Typography, Paper } from '@mui/material';
 import {
@@ -126,8 +126,8 @@ const VirtualizedContactsTable: React.FC = () => {
       id: colDef.id,
       header: colDef.label,
       accessorFn: (row: Contact) => colDef.accessor(row),
-      cell: ({ getValue }: { getValue: () => string | undefined }) => (
-        <div style={{ padding: '12px' }}>{getValue()}</div>
+      cell: (info: CellContext<Contact, unknown>) => (
+        <div style={{ padding: '12px' }}>{info.getValue() as string}</div>
       ),
     }));
   }, [columnConfig]);

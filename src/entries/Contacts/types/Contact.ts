@@ -49,6 +49,75 @@ export interface ContactAddress {
   country?: string;
   /** Postal code */
   postalCode?: string;
+  /** Formatted address string */
+  formattedValue?: string;
+}
+
+/**
+ * Contact organization
+ */
+export interface ContactOrganization {
+  /** Organization name */
+  name?: string;
+  /** Job title */
+  title?: string;
+  /** Department */
+  department?: string;
+}
+
+/**
+ * Contact birthday
+ */
+export interface ContactBirthday {
+  /** Birthday date */
+  date?: {
+    /** Year */
+    year?: number;
+    /** Month (1-12) */
+    month?: number;
+    /** Day of month */
+    day?: number;
+  };
+}
+
+/**
+ * Contact URL
+ */
+export interface ContactUrl {
+  /** URL value */
+  value: string;
+  /** URL type */
+  type?: string;
+}
+
+/**
+ * Contact biography/notes
+ */
+export interface ContactBiography {
+  /** Biography text */
+  value: string;
+  /** Content type */
+  contentType?: string;
+}
+
+/**
+ * User-defined custom field
+ */
+export interface ContactUserDefined {
+  /** Field key */
+  key: string;
+  /** Field value */
+  value: string;
+}
+
+/**
+ * Contact relation
+ */
+export interface ContactRelation {
+  /** Related person name */
+  person: string;
+  /** Relation type (spouse, child, etc.) */
+  type?: string;
 }
 
 /**
@@ -65,6 +134,18 @@ export interface Contact {
   emailAddresses?: ContactEmail[];
   /** Physical addresses */
   addresses?: ContactAddress[];
+  /** Organizations and job titles */
+  organizations?: ContactOrganization[];
+  /** Birthdays */
+  birthdays?: ContactBirthday[];
+  /** URLs/websites */
+  urls?: ContactUrl[];
+  /** Biographies/notes */
+  biographies?: ContactBiography[];
+  /** User-defined custom fields */
+  userDefined?: ContactUserDefined[];
+  /** Relations (spouse, child, etc.) */
+  relations?: ContactRelation[];
 }
 
 /**

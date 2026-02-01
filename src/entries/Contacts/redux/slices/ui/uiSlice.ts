@@ -5,7 +5,7 @@
 
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 import type { ColumnConfig } from '../../../features/columnConfig/types';
-import type { RootState } from '../../store';
+import type { RootState } from '../../../types/store';
 
 /**
  * UI state interface
