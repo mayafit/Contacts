@@ -6,7 +6,7 @@
  * Uses TanStack Table v8 for table features and TanStack Virtual for row virtualization
  */
 
-import React, { useRef, useMemo } from 'react';
+import React, { useRef, useMemo, useEffect } from 'react';
 import { useSelector } from 'react-redux';
 import { useReactTable, getCoreRowModel, ColumnDef, CellContext, flexRender } from '@tanstack/react-table';
 import { useVirtualizer } from '@tanstack/react-virtual';
@@ -17,6 +17,8 @@ import {
   selectContactsError,
 } from '../redux/slices/contacts/selectors';
 import { selectColumnConfig } from '../redux/slices/ui/uiSlice';
+import { fetchContacts } from '../redux/slices/contacts/contactsSlice';
+import { useAppDispatch } from '../types/hooks';
 import { AVAILABLE_COLUMNS } from '../features/columnConfig/columnDefinitions';
 import { logger } from '../../../shared/logger';
 import type { Contact } from '../types/Contact';
@@ -85,6 +87,7 @@ EmailCell.displayName = 'EmailCell';
  */
 const VirtualizedContactsTable: React.FC = () => {
   const parentRef = useRef<HTMLDivElement>(null);
+  const dispatch = useAppDispatch();
 
   // Select contacts state from Redux store using memoized selectors
   const contacts = useSelector(selectAllContacts);
@@ -92,14 +95,23 @@ const VirtualizedContactsTable: React.FC = () => {
   const error = useSelector(selectContactsError);
   const columnConfig = useSelector(selectColumnConfig);
 
-  // Log component mount
-  React.useEffect(() => {
+  // Fetch contacts on component mount
+  useEffect(() => {
+    logger.info(
+      { context: 'VirtualizedContactsTable/mount' },
+      'Component mounted, dispatching fetchContacts action'
+    );
+    dispatch(fetchContacts());
+  }, [dispatch]);
+
+  // Log contact count changes
+  useEffect(() => {
     logger.info(
       {
-        context: 'VirtualizedContactsTable/mount',
+        context: 'VirtualizedContactsTable/contactsUpdated',
         metadata: { contactCount: contacts.length },
       },
-      'VirtualizedContactsTable mounted',
+      'Contacts updated',
     );
   }, [contacts.length]);
 
