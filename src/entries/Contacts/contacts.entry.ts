@@ -7,11 +7,13 @@ import { combineReducers } from '@reduxjs/toolkit';
 import { getGlobals } from '../../GLOBALS';
 import authReducer from './redux/slices/auth/authSlice';
 import contactsReducer from './redux/slices/contacts/contactsSlice';
+import uiReducer from './redux/slices/ui/uiSlice';
 
 /**
  * Initialize Contacts entry module
- * Registers auth and contacts reducers with dynamic reducer injection
+ * Registers auth, contacts, and ui reducers with dynamic reducer injection
  * Updated for Story 2.2: Added normalized contacts state management
+ * Updated for Story 2.6: Added UI slice for column configuration
  */
 export const initContactsEntry = () => {
   getGlobals().addDynamicReducer({
@@ -19,6 +21,7 @@ export const initContactsEntry = () => {
     reducer: combineReducers({
       auth: authReducer,
       contacts: contactsReducer,
+      ui: uiReducer,
     }),
   });
 };

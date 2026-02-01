@@ -3,15 +3,16 @@
  * @module Contacts/components/ContactsHome
  */
 
-import React from 'react';
+import React, { useState } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import { useNavigate } from 'react-router';
-import { Container, Typography, Button, Box, Card, CardContent, Avatar } from '@mui/material';
-import { Logout as LogoutIcon } from '@mui/icons-material';
+import { Container, Typography, Button, Box, Card, CardContent, Avatar, IconButton, Tooltip } from '@mui/material';
+import { Logout as LogoutIcon, Settings as SettingsIcon } from '@mui/icons-material';
 import { logout } from '../redux/slices/auth/authSlice';
 import { selectUser } from '../redux/slices/auth/selectors';
 import { logger } from '../../../shared/logger';
 import VirtualizedContactsTable from './VirtualizedContactsTable';
+import ColumnConfigDialog from '../features/columnConfig/components/ColumnConfigDialog';
 
 /**
  * Contacts home page component
@@ -21,6 +22,7 @@ const ContactsHome: React.FC = () => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const user = useSelector(selectUser);
+  const [isColumnConfigOpen, setIsColumnConfigOpen] = useState(false);
 
   const handleSignOut = () => {
     logger.info(
@@ -65,15 +67,31 @@ const ContactsHome: React.FC = () => {
                 </Button>
               </Box>
             </Box>
-            <Typography variant="h6" gutterBottom sx={{ mb: 2 }}>
-              Your Contacts
-            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+              <Typography variant="h6" gutterBottom sx={{ mb: 0 }}>
+                Your Contacts
+              </Typography>
+              <Tooltip title="Configure Columns">
+                <IconButton
+                  onClick={() => setIsColumnConfigOpen(true)}
+                  aria-label="Configure columns"
+                >
+                  <SettingsIcon />
+                </IconButton>
+              </Tooltip>
+            </Box>
           </CardContent>
         </Card>
         <Box sx={{ mt: 3 }}>
           <VirtualizedContactsTable />
         </Box>
       </Box>
+
+      {/* Column Configuration Dialog */}
+      <ColumnConfigDialog
+        open={isColumnConfigOpen}
+        onClose={() => setIsColumnConfigOpen(false)}
+      />
     </Container>
   );
 };

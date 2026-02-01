@@ -6,9 +6,9 @@
  * Uses TanStack Table v8 for table features and TanStack Virtual for row virtualization
  */
 
-import React, { useRef, useMemo } from 'react';
+import React, { useRef, useMemo, useEffect } from 'react';
 import { useSelector } from 'react-redux';
-import { useReactTable, getCoreRowModel, ColumnDef, flexRender } from '@tanstack/react-table';
+import { useReactTable, getCoreRowModel, ColumnDef, CellContext, flexRender } from '@tanstack/react-table';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Box, CircularProgress, Typography, Paper } from '@mui/material';
 import {
@@ -16,6 +16,10 @@ import {
   selectContactsLoading,
   selectContactsError,
 } from '../redux/slices/contacts/selectors';
+import { selectColumnConfig } from '../redux/slices/ui/uiSlice';
+import { fetchContacts } from '../redux/slices/contacts/contactsSlice';
+import { useAppDispatch } from '../types/hooks';
+import { AVAILABLE_COLUMNS } from '../features/columnConfig/columnDefinitions';
 import { logger } from '../../../shared/logger';
 import type { Contact } from '../types/Contact';
 
@@ -83,47 +87,79 @@ EmailCell.displayName = 'EmailCell';
  */
 const VirtualizedContactsTable: React.FC = () => {
   const parentRef = useRef<HTMLDivElement>(null);
+  const dispatch = useAppDispatch();
 
   // Select contacts state from Redux store using memoized selectors
   const contacts = useSelector(selectAllContacts);
   const loading = useSelector(selectContactsLoading);
   const error = useSelector(selectContactsError);
+  const columnConfig = useSelector(selectColumnConfig);
 
-  // Log component mount
-  React.useEffect(() => {
+  // Fetch contacts on component mount
+  useEffect(() => {
+    logger.info(
+      { context: 'VirtualizedContactsTable/mount' },
+      'Component mounted, dispatching fetchContacts action'
+    );
+    dispatch(fetchContacts());
+  }, [dispatch]);
+
+  // Log contact count changes
+  useEffect(() => {
     logger.info(
       {
-        context: 'VirtualizedContactsTable/mount',
+        context: 'VirtualizedContactsTable/contactsUpdated',
         metadata: { contactCount: contacts.length },
       },
-      'VirtualizedContactsTable mounted',
+      'Contacts updated',
     );
   }, [contacts.length]);
 
-  // Define columns for TanStack Table
-  const columns = useMemo<ColumnDef<Contact>[]>(
-    () => [
-      {
-        id: 'name',
-        header: 'Name',
-        accessorFn: (row) => getDisplayName(row),
-        cell: ({ row }) => <NameCell contact={row.original} />,
-      },
-      {
-        id: 'phone',
-        header: 'Phone',
-        accessorFn: (row) => getPrimaryPhone(row),
-        cell: ({ row }) => <PhoneCell contact={row.original} />,
-      },
-      {
-        id: 'email',
-        header: 'Email',
-        accessorFn: (row) => getPrimaryEmail(row),
-        cell: ({ row }) => <EmailCell contact={row.original} />,
-      },
-    ],
-    [],
-  );
+  // Define columns for TanStack Table based on Redux column configuration
+  // Filters and reorders columns based on user preferences
+  // Memoized for performance (<100ms update requirement)
+  const columns = useMemo<ColumnDef<Contact>[]>(() => {
+    const { visibleColumns, columnOrder } = columnConfig;
+
+    // Safety check: ensure we have valid column config
+    if (!visibleColumns || visibleColumns.length === 0) {
+      logger.warn(
+        { context: 'VirtualizedContactsTable/columns' },
+        'No visible columns configured, using defaults'
+      );
+      // Return default columns if config is invalid
+      return AVAILABLE_COLUMNS.filter((col) => col.isDefault).map((colDef) => ({
+        id: colDef.id,
+        header: colDef.label,
+        accessorFn: (row: Contact) => colDef.accessor(row),
+        cell: (info: CellContext<Contact, unknown>) => (
+          <div style={{ padding: '12px' }}>{info.getValue() as string}</div>
+        ),
+      }));
+    }
+
+    // Get visible column definitions
+    const visibleColumnDefs = AVAILABLE_COLUMNS.filter((col) =>
+      visibleColumns.includes(col.id)
+    );
+
+    // Sort columns according to columnOrder
+    const orderedColumns = visibleColumnDefs.sort((a, b) => {
+      const indexA = columnOrder.indexOf(a.id);
+      const indexB = columnOrder.indexOf(b.id);
+      return indexA - indexB;
+    });
+
+    // Convert to TanStack Table column definitions
+    return orderedColumns.map((colDef) => ({
+      id: colDef.id,
+      header: colDef.label,
+      accessorFn: (row: Contact) => colDef.accessor(row),
+      cell: (info: CellContext<Contact, unknown>) => (
+        <div style={{ padding: '12px' }}>{info.getValue() as string}</div>
+      ),
+    }));
+  }, [columnConfig]);
 
   // Initialize TanStack Table
   const table = useReactTable({
