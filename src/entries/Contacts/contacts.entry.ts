@@ -14,8 +14,12 @@ import uiReducer from './redux/slices/ui/uiSlice';
  * Registers auth, contacts, and ui reducers with dynamic reducer injection
  * Updated for Story 2.2: Added normalized contacts state management
  * Updated for Story 2.6: Added UI slice for column configuration
+ * Updated for Story 2.7: Added localStorage persistence for column configuration
+ * Note: Column config persistence middleware is registered in PluginWrapper.tsx
+ *       before store initialization to ensure it's active when the store is created
  */
 export const initContactsEntry = () => {
+  // Register reducers
   getGlobals().addDynamicReducer({
     reducerName: 'contacts',
     reducer: combineReducers({

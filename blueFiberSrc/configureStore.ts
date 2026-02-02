@@ -1,10 +1,11 @@
-import { configureStore, combineReducers, Reducer, EnhancedStore } from '@reduxjs/toolkit';
+import { configureStore, combineReducers, Reducer, EnhancedStore, Middleware } from '@reduxjs/toolkit';
 
 const defaultReducers = {};
 
 let appReducer: Reducer | null = null;
 let store: EnhancedStore | null = null;
 let userReducers = { ...defaultReducers };
+let userMiddlewares: Middleware[] = [];
 
 const rootReducer = (state, action) => {
   if (action.type === 'USER_LOGOUT') {
@@ -20,6 +21,8 @@ const _configureStore = (initialStore = {}) => {
     reducer: rootReducer,
     preloadedState: initialStore,
     devTools: process.env.NODE_ENV !== 'production',
+    middleware: (getDefaultMiddleware) =>
+      getDefaultMiddleware().concat(userMiddlewares),
     /* no need for window.__REDUCE..., redux toolkit handle this */
   });
   // const reduxStore = createStore(
@@ -113,6 +116,15 @@ export const getState = () => {
     return store.getState();
   }
   return null;
+};
+
+/**
+ * Add middleware to the Redux store
+ * Must be called before initStore() to take effect
+ * @param middleware Redux middleware to add
+ */
+export const addMiddleware = (middleware: Middleware) => {
+  userMiddlewares.push(middleware);
 };
 
 export const addDynamicReducer = ({
