@@ -1,5 +1,6 @@
 let _globals: {
   addDynamicReducer?: any;
+  addMiddleware?: any;
   dispatch?: any;
   getStore?: any;
   getState?: any;

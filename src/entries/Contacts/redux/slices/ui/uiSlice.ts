@@ -4,6 +4,8 @@
  */
 
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
+import { loadColumnConfig } from '../../../utils/storage';
+import { logger } from '../../../../../shared/logger';
 import type { ColumnConfig } from '../../../features/columnConfig/types';
 import type { RootState } from '../../../types/store';
 
@@ -25,10 +27,36 @@ const defaultColumnConfig: ColumnConfig = {
 };
 
 /**
+ * Load persisted column configuration from localStorage
+ * Falls back to default columns if no persisted config exists or if it's invalid
+ */
+const loadPersistedColumnConfig = (): ColumnConfig => {
+  const persisted = loadColumnConfig();
+
+  if (persisted) {
+    logger.info(
+      {
+        context: 'uiSlice/loadPersistedColumnConfig',
+        metadata: { persisted },
+      },
+      'Loaded persisted column configuration from localStorage'
+    );
+    return persisted;
+  }
+
+  logger.info(
+    { context: 'uiSlice/loadPersistedColumnConfig' },
+    'No persisted column configuration found, using defaults'
+  );
+  return defaultColumnConfig;
+};
+
+/**
  * Initial UI state
+ * Loads column configuration from localStorage if available
  */
 const initialState: UIState = {
-  columnConfig: defaultColumnConfig,
+  columnConfig: loadPersistedColumnConfig(),
 };
 
 /**

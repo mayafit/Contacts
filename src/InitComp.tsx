@@ -6,6 +6,7 @@ const InitComp = ({
   shared: {
     addDynamicReducer,
     removeDynamicReducer,
+    addMiddleware,
     dispatch,
     getStore,
     getState,
@@ -20,6 +21,7 @@ const InitComp = ({
     setGlobals({
       addDynamicReducer,
       removeDynamicReducer,
+      addMiddleware,
       dispatch,
       getStore,
       getState,
