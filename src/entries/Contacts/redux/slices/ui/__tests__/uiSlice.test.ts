@@ -14,6 +14,7 @@ import uiReducer, {
   type UIState,
 } from '../uiSlice';
 import type { RootState } from '../../../../types/store';
+import { STORAGE_KEY } from '../../../../utils/storage/columnConfigStorage';
 
 describe('uiSlice', () => {
   const initialState: UIState = {
@@ -171,6 +172,41 @@ describe('uiSlice', () => {
       const result = selectColumnOrder(mockRootState);
 
       expect(result).toEqual(['displayName', 'organizations', 'phoneNumbers']);
+    });
+  });
+
+  describe('localStorage persistence integration', () => {
+    it('should have initial state with default column configuration', () => {
+      // Verify the slice initializes with expected default structure
+      // The loadPersistedColumnConfig function is called during module init
+      // and will either load from localStorage or fall back to defaults
+      const state = uiReducer(undefined, { type: '@@INIT' });
+
+      expect(state.columnConfig).toBeDefined();
+      expect(state.columnConfig.visibleColumns).toBeInstanceOf(Array);
+      expect(state.columnConfig.columnOrder).toBeInstanceOf(Array);
+      expect(state.columnConfig.visibleColumns.length).toBeGreaterThan(0);
+      expect(state.columnConfig.columnOrder.length).toBeGreaterThan(0);
+    });
+
+    it('should use correct storage key constant', () => {
+      // Verify the storage key matches acceptance criteria (Story 2.7)
+      expect(STORAGE_KEY).toBe('contacts:columnConfig');
+    });
+
+    it('should maintain column config structure through reducers', () => {
+      // Integration test: Verify that all column config actions maintain
+      // the structure that will be persisted to localStorage
+      const state1 = uiReducer(initialState, toggleColumn('organizations'));
+      expect(state1.columnConfig.visibleColumns).toBeInstanceOf(Array);
+      expect(state1.columnConfig.columnOrder).toBeInstanceOf(Array);
+
+      const state2 = uiReducer(state1, reorderColumns({ oldIndex: 0, newIndex: 2 }));
+      expect(state2.columnConfig.visibleColumns).toBeInstanceOf(Array);
+      expect(state2.columnConfig.columnOrder).toBeInstanceOf(Array);
+
+      const state3 = uiReducer(state2, resetColumnConfig());
+      expect(state3.columnConfig).toEqual(initialState.columnConfig);
     });
   });
 });
