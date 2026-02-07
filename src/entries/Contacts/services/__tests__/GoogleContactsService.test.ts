@@ -1,227 +1,243 @@
 /**
- * @fileoverview Google Contacts Service tests
- * @module Contacts/services/__tests__/GoogleContactsService
+ * @fileoverview Tests for GoogleContactsService
+ * Story: 3.1 - Service Layer for Google Contacts API Operations
+ * Updated for BackendApiClient architecture (2026-02-06)
  */
 
 import { jest } from '@jest/globals';
-
-// Mock logger first
-jest.mock('../../../../shared/logger', () => ({
-  logger: {
-    info: jest.fn(),
-    error: jest.fn(),
-    warn: jest.fn(),
-    debug: jest.fn(),
-  },
-}));
-
-// Mock googleapis to prevent initialization errors
-jest.mock('googleapis', () => ({
-  google: {
-    auth: {
-      OAuth2: jest.fn().mockImplementation(() => ({
-        setCredentials: jest.fn(),
-      })),
-    },
-    people: jest.fn(() => ({
-      people: {
-        connections: {
-          list: jest.fn(),
-        },
-        get: jest.fn(),
-        updateContact: jest.fn(),
-      },
-    })),
-  },
-}));
-
-// Now import
 import { GoogleContactsService } from '../GoogleContactsService';
-import { PeopleAPIClient } from '../api/PeopleAPIClient';
-import { GoogleAPIError } from '../../errors/GoogleAPIError';
+import { backendApiClient } from '../../../../services/api/BackendApiClient';
+import { logger } from '../../../../shared/logger';
 import type { Contact } from '../../types/Contact';
 
 describe('GoogleContactsService', () => {
-  const mockAccessToken = 'test-access-token-123';
+  let updateContactFieldSpy: jest.SpiedFunction<typeof backendApiClient.updateContactField>;
+  let loggerInfoSpy: jest.SpiedFunction<typeof logger.info>;
+  let loggerWarnSpy: jest.SpiedFunction<typeof logger.warn>;
+  let loggerErrorSpy: jest.SpiedFunction<typeof logger.error>;
+
+  const mockContact: Contact = {
+    resourceName: 'people/c12345',
+    names: [
+      {
+        givenName: 'Jane',
+        familyName: 'Doe',
+        displayName: 'Jane Doe',
+      },
+    ],
+  };
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    // Mock backendApiClient.updateContactField
+    updateContactFieldSpy = jest
+      .spyOn(backendApiClient, 'updateContactField')
+      .mockResolvedValue(mockContact);
+
+    // Mock logger methods
+    loggerInfoSpy = jest.spyOn(logger, 'info').mockImplementation(() => {});
+    loggerWarnSpy = jest.spyOn(logger, 'warn').mockImplementation(() => {});
+    loggerErrorSpy = jest.spyOn(logger, 'error').mockImplementation(() => {});
   });
 
-  describe('fetchAllContacts', () => {
-    it('fetchAllContacts_Should_ReturnAPIResponse_When_Successful', async () => {
-      const mockContacts: Contact[] = [
-        {
-          resourceName: 'people/123',
-          names: [{ givenName: 'John', familyName: 'Doe', displayName: 'John Doe' }],
-          emailAddresses: [{ value: 'john@example.com', type: 'work' }],
-        },
-      ];
-
-      const spy = jest
-        .spyOn(PeopleAPIClient.prototype, 'fetchAllContacts')
-        .mockResolvedValue(mockContacts);
-
-      const result = await GoogleContactsService.fetchAllContacts(mockAccessToken);
-
-      expect(result.success).toBe(true);
-      expect(result.data).toEqual(mockContacts);
-      expect(result.error).toBeUndefined();
-      expect(spy).toHaveBeenCalled();
-
-      spy.mockRestore();
-    });
-
-    it('fetchAllContacts_Should_ReturnAPIResponseError_When_PeopleAPIClientFails', async () => {
-      const mockError = new GoogleAPIError('Failed to fetch contacts', 'FETCH_CONTACTS_FAILED');
-      const spy = jest
-        .spyOn(PeopleAPIClient.prototype, 'fetchAllContacts')
-        .mockRejectedValue(mockError);
-
-      const result = await GoogleContactsService.fetchAllContacts(mockAccessToken);
-
-      expect(result.success).toBe(false);
-      expect(result.data).toBeUndefined();
-      expect(result.error).toEqual({
-        code: 'FETCH_CONTACTS_FAILED',
-        message: 'Failed to fetch contacts from Google People API',
-        details: mockError,
-      });
-
-      spy.mockRestore();
-    });
-
-    it('fetchAllContacts_Should_HandleUnexpectedErrors_When_NonGoogleAPIError', async () => {
-      const unexpectedError = new Error('Unexpected error');
-      const spy = jest
-        .spyOn(PeopleAPIClient.prototype, 'fetchAllContacts')
-        .mockRejectedValue(unexpectedError);
-
-      const result = await GoogleContactsService.fetchAllContacts(mockAccessToken);
-
-      expect(result.success).toBe(false);
-      expect(result.error?.code).toBe('UNKNOWN_ERROR');
-      expect(result.error?.message).toContain('unexpected error');
-
-      spy.mockRestore();
-    });
-
-    it('fetchAllContacts_Should_LogStructuredJSON_When_Called', async () => {
-      const spy = jest.spyOn(PeopleAPIClient.prototype, 'fetchAllContacts').mockResolvedValue([]);
-
-      await GoogleContactsService.fetchAllContacts(mockAccessToken);
-
-      // Verify service was called successfully (logger verification skipped due to ESM mock limitations)
-      expect(spy).toHaveBeenCalled();
-
-      spy.mockRestore();
-    });
+  afterEach(() => {
+    updateContactFieldSpy.mockRestore();
+    loggerInfoSpy.mockRestore();
+    loggerWarnSpy.mockRestore();
+    loggerErrorSpy.mockRestore();
   });
 
-  describe('getContact', () => {
-    it('getContact_Should_ReturnAPIResponse_When_Successful', async () => {
-      const mockContact: Contact = {
-        resourceName: 'people/123',
-        names: [{ displayName: 'John Doe' }],
-      };
-
-      const spy = jest
-        .spyOn(PeopleAPIClient.prototype, 'getContact')
-        .mockResolvedValue(mockContact);
-
-      const result = await GoogleContactsService.getContact(mockAccessToken, 'people/123');
-
-      expect(result.success).toBe(true);
-      expect(result.data).toEqual(mockContact);
-      expect(result.error).toBeUndefined();
-      expect(spy).toHaveBeenCalledWith('people/123');
-
-      spy.mockRestore();
-    });
-
-    it('getContact_Should_ReturnAPIResponseError_When_ContactNotFound', async () => {
-      const mockError = new GoogleAPIError('Contact not found', 'GET_CONTACT_FAILED');
-      const spy = jest.spyOn(PeopleAPIClient.prototype, 'getContact').mockRejectedValue(mockError);
-
-      const result = await GoogleContactsService.getContact(mockAccessToken, 'people/invalid');
-
-      expect(result.success).toBe(false);
-      expect(result.error?.code).toBe('GET_CONTACT_FAILED');
-
-      spy.mockRestore();
-    });
-  });
-
-  describe('updateContact', () => {
-    it('updateContact_Should_ReturnAPIResponse_When_Successful', async () => {
-      const resourceName = 'people/123';
-      const updates = { names: [{ givenName: 'Jane' }] };
-      const mockUpdatedContact: Contact = {
-        resourceName,
-        names: [{ givenName: 'Jane' }],
-      };
-
-      const spy = jest
-        .spyOn(PeopleAPIClient.prototype, 'updateContact')
-        .mockResolvedValue(mockUpdatedContact);
-
-      const result = await GoogleContactsService.updateContact(
-        mockAccessToken,
-        resourceName,
-        updates,
+  describe('updateContactField', () => {
+    it('updateContactField_Should_UpdateField_When_Successful', async () => {
+      const result = await GoogleContactsService.updateContactField(
+        'people/c12345',
+        'names',
+        { givenName: 'Jane', familyName: 'Doe', displayName: 'Jane Doe' }
       );
 
       expect(result.success).toBe(true);
-      expect(result.data).toEqual(mockUpdatedContact);
-      expect(spy).toHaveBeenCalledWith(resourceName, updates);
-
-      spy.mockRestore();
+      expect(result.data).toEqual(mockContact);
+      expect(updateContactFieldSpy).toHaveBeenCalledWith(
+        'people/c12345',
+        'names',
+        { givenName: 'Jane', familyName: 'Doe', displayName: 'Jane Doe' }
+      );
     });
 
-    it('updateContact_Should_ReturnAPIResponseError_When_UpdateFails', async () => {
-      const mockError = new GoogleAPIError('Update failed', 'UPDATE_CONTACT_FAILED');
-      const spy = jest
-        .spyOn(PeopleAPIClient.prototype, 'updateContact')
-        .mockRejectedValue(mockError);
-
-      const result = await GoogleContactsService.updateContact(mockAccessToken, 'people/123', {});
+    it('updateContactField_Should_ReturnValidationError_When_InvalidResourceName', async () => {
+      const result = await GoogleContactsService.updateContactField(
+        'invalid-format',
+        'names',
+        { givenName: 'Jane' }
+      );
 
       expect(result.success).toBe(false);
-      expect(result.error?.code).toBe('UPDATE_CONTACT_FAILED');
-
-      spy.mockRestore();
+      expect(result.error?.code).toBe('VALIDATION_ERROR');
+      expect(result.error?.message).toBe('Invalid input parameters');
+      expect(updateContactFieldSpy).not.toHaveBeenCalled();
     });
-  });
 
-  describe('error mapping', () => {
-    it('ErrorMapping_Should_PreserveGoogleAPIErrorCode_When_GoogleAPIError', async () => {
-      const googleError = new GoogleAPIError('API quota exceeded', 'QUOTA_EXCEEDED', undefined, {
-        retryAfter: 3600,
+    it('updateContactField_Should_ReturnValidationError_When_InvalidFieldPath', async () => {
+      const result = await GoogleContactsService.updateContactField(
+        'people/c12345',
+        'invalidField',
+        { value: 'test' }
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('VALIDATION_ERROR');
+      expect(updateContactFieldSpy).not.toHaveBeenCalled();
+    });
+
+    it('updateContactField_Should_HandleBackendError_When_UpdateFails', async () => {
+      updateContactFieldSpy.mockRejectedValueOnce(
+        new Error('CONTACT_NOT_FOUND: Contact not found')
+      );
+
+      const result = await GoogleContactsService.updateContactField(
+        'people/c12345',
+        'names',
+        { givenName: 'Jane' }
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('UPDATE_FIELD_FAILED');
+      expect(result.error?.message).toBe('Failed to update names');
+    });
+
+    it('updateContactField_Should_UpdatePhoneNumbers_When_Called', async () => {
+      const phoneValue = [{ value: '555-1234', type: 'mobile' }];
+      const updatedContact = {
+        ...mockContact,
+        phoneNumbers: phoneValue,
+      };
+      updateContactFieldSpy.mockResolvedValueOnce(updatedContact);
+
+      const result = await GoogleContactsService.updateContactField(
+        'people/c12345',
+        'phoneNumbers',
+        phoneValue
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.data?.phoneNumbers).toEqual(phoneValue);
+    });
+
+    it('updateContactField_Should_UpdateEmailAddresses_When_Called', async () => {
+      const emailValue = [{ value: 'jane@example.com', type: 'work' }];
+      const updatedContact = {
+        ...mockContact,
+        emailAddresses: emailValue,
+      };
+      updateContactFieldSpy.mockResolvedValueOnce(updatedContact);
+
+      const result = await GoogleContactsService.updateContactField(
+        'people/c12345',
+        'emailAddresses',
+        emailValue
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.data?.emailAddresses).toEqual(emailValue);
+    });
+
+    it('updateContactField_Should_LogValidationFailure_When_InvalidInput', async () => {
+      await GoogleContactsService.updateContactField(
+        'invalid-format',
+        'names',
+        {}
+      );
+
+      expect(loggerWarnSpy).toHaveBeenCalled();
+      expect(loggerWarnSpy.mock.calls[0][0]).toMatchObject({
+        context: 'GoogleContactsService/updateContactField',
       });
-      const spy = jest
-        .spyOn(PeopleAPIClient.prototype, 'fetchAllContacts')
-        .mockRejectedValue(googleError);
-
-      const result = await GoogleContactsService.fetchAllContacts(mockAccessToken);
-
-      expect(result.success).toBe(false);
-      expect(result.error?.code).toBe('QUOTA_EXCEEDED');
-      expect(result.error?.details).toBeDefined();
-
-      spy.mockRestore();
     });
 
-    it('ErrorMapping_Should_UseGenericCode_When_UnknownError', async () => {
-      const spy = jest
-        .spyOn(PeopleAPIClient.prototype, 'fetchAllContacts')
-        .mockRejectedValue('string error');
+    it('updateContactField_Should_LogOperationStartAndCompletion_When_Called', async () => {
+      await GoogleContactsService.updateContactField(
+        'people/c12345',
+        'names',
+        { givenName: 'Jane' }
+      );
 
-      const result = await GoogleContactsService.fetchAllContacts(mockAccessToken);
+      expect(loggerInfoSpy).toHaveBeenCalledTimes(2);
+      expect(loggerInfoSpy.mock.calls[0][0]).toMatchObject({
+        context: 'GoogleContactsService/updateContactField',
+        metadata: { resourceName: 'people/c12345', fieldPath: 'names' },
+      });
+      expect(loggerInfoSpy.mock.calls[0][1]).toBe('Updating contact field via backend');
+      expect(loggerInfoSpy.mock.calls[1][1]).toBe('Successfully updated contact field');
+    });
+
+    it('updateContactField_Should_LogError_When_UpdateFails', async () => {
+      const error = new Error('Backend error');
+      updateContactFieldSpy.mockRejectedValueOnce(error);
+
+      await GoogleContactsService.updateContactField(
+        'people/c12345',
+        'names',
+        {}
+      );
+
+      expect(loggerErrorSpy).toHaveBeenCalled();
+      expect(loggerErrorSpy.mock.calls[0][0]).toMatchObject({
+        context: 'GoogleContactsService/updateContactField',
+        metadata: {
+          resourceName: 'people/c12345',
+          fieldPath: 'names',
+          errorMessage: 'Backend error',
+        },
+      });
+      expect(loggerErrorSpy.mock.calls[0][1]).toBe('Failed to update contact field');
+      expect(loggerErrorSpy.mock.calls[0][2]).toBe(error);
+    });
+
+    it('updateContactField_Should_ValidateAllAllowedFieldPaths_When_Called', async () => {
+      const allowedFields = [
+        'names',
+        'phoneNumbers',
+        'emailAddresses',
+        'addresses',
+        'organizations',
+        'birthdays',
+        'urls',
+        'biographies',
+        'userDefined',
+        'relations',
+      ];
+
+      for (const fieldPath of allowedFields) {
+        updateContactFieldSpy.mockClear();
+        updateContactFieldSpy.mockResolvedValueOnce(mockContact);
+
+        const result = await GoogleContactsService.updateContactField(
+          'people/c12345',
+          fieldPath,
+          {}
+        );
+
+        expect(result.success).toBe(true);
+        expect(updateContactFieldSpy).toHaveBeenCalledWith(
+          'people/c12345',
+          fieldPath,
+          {}
+        );
+      }
+    });
+
+    it('updateContactField_Should_HandleNonErrorException_When_StringThrown', async () => {
+      updateContactFieldSpy.mockRejectedValueOnce('String error');
+
+      const result = await GoogleContactsService.updateContactField(
+        'people/c12345',
+        'names',
+        {}
+      );
 
       expect(result.success).toBe(false);
-      expect(result.error?.code).toBe('UNKNOWN_ERROR');
-
-      spy.mockRestore();
+      expect(result.error?.code).toBe('UPDATE_FIELD_FAILED');
+      expect(loggerErrorSpy).toHaveBeenCalled();
+      expect(loggerErrorSpy.mock.calls[0][2]).toBeInstanceOf(Error);
     });
   });
 });
