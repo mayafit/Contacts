@@ -9,6 +9,7 @@
 import { logger } from '../../../shared/logger';
 import { backendApiClient } from '../../../services/api/BackendApiClient';
 import type { Contact, APIResponse } from '../types/Contact';
+import { UpdateContactFieldParamsSchema } from './schemas/updateContactFieldSchema';
 
 /**
  * Google Contacts Service
@@ -221,6 +222,101 @@ export class GoogleContactsService {
         error: {
           code: 'UPDATE_CONTACT_FAILED',
           message: `Failed to update contact: ${resourceName}`,
+          details: error,
+        },
+      };
+    }
+  }
+
+  /**
+   * Updates a specific field of a contact (field-level update for inline editing)
+   * Story 3.1 - Service Layer for Google Contacts API Operations
+   * @param resourceName - Contact resource name (e.g., "people/c123")
+   * @param fieldPath - Field to update (e.g., "names", "phoneNumbers")
+   * @param newValue - New value for the field
+   * @returns Promise resolving to APIResponse with updated Contact
+   */
+  static async updateContactField(
+    resourceName: string,
+    fieldPath: string,
+    newValue: unknown,
+  ): Promise<APIResponse<Contact>> {
+    // Validate inputs using Zod schema
+    const validationResult = UpdateContactFieldParamsSchema.safeParse({
+      resourceName,
+      fieldPath,
+      newValue,
+    });
+
+    if (!validationResult.success) {
+      logger.warn(
+        {
+          context: 'GoogleContactsService/updateContactField',
+          metadata: {
+            resourceName,
+            fieldPath,
+            validationErrors: validationResult.error.errors,
+          },
+        },
+        'Input validation failed',
+      );
+
+      return {
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Invalid input parameters',
+          details: validationResult.error,
+        },
+      };
+    }
+
+    try {
+      logger.info(
+        {
+          context: 'GoogleContactsService/updateContactField',
+          metadata: { resourceName, fieldPath },
+        },
+        'Updating contact field via backend',
+      );
+
+      const contact = await backendApiClient.updateContactField(
+        resourceName,
+        fieldPath,
+        newValue,
+      );
+
+      logger.info(
+        {
+          context: 'GoogleContactsService/updateContactField',
+          metadata: { resourceName, fieldPath },
+        },
+        'Successfully updated contact field',
+      );
+
+      return {
+        success: true,
+        data: contact,
+      };
+    } catch (error) {
+      logger.error(
+        {
+          context: 'GoogleContactsService/updateContactField',
+          metadata: {
+            resourceName,
+            fieldPath,
+            errorMessage: error instanceof Error ? error.message : String(error),
+          },
+        },
+        'Failed to update contact field',
+        error instanceof Error ? error : new Error(String(error)),
+      );
+
+      return {
+        success: false,
+        error: {
+          code: 'UPDATE_FIELD_FAILED',
+          message: `Failed to update ${fieldPath}`,
           details: error,
         },
       };

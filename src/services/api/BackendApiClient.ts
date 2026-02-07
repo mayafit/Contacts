@@ -327,6 +327,53 @@ export class BackendApiClient {
 
     return response.data;
   }
+
+  /**
+   * Update a specific field of a contact (field-level update for inline editing)
+   * Story 3.1 - Service Layer for Google Contacts API Operations
+   * @param resourceName - Contact resource name (e.g., "people/c123")
+   * @param fieldPath - Field to update (e.g., "names", "phoneNumbers")
+   * @param newValue - New value for the field
+   * @returns Promise resolving to updated Contact
+   */
+  async updateContactField(
+    resourceName: string,
+    fieldPath: string,
+    newValue: unknown
+  ): Promise<Contact> {
+    logger.info(
+      {
+        context: 'BackendApiClient/updateContactField',
+        metadata: { resourceName, fieldPath },
+      },
+      'Updating contact field'
+    );
+
+    // URL encode the resource name
+    const encodedResourceName = encodeURIComponent(resourceName);
+
+    const response = await this.request<Contact>(
+      `/contacts/${encodedResourceName}/fields`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ fieldPath, newValue }),
+      }
+    );
+
+    if (!response.success || !response.data) {
+      throw new Error(response.error?.message || 'Failed to update field');
+    }
+
+    logger.info(
+      {
+        context: 'BackendApiClient/updateContactField',
+        metadata: { resourceName, fieldPath },
+      },
+      'Contact field updated successfully'
+    );
+
+    return response.data;
+  }
 }
 
 // Export singleton instance
