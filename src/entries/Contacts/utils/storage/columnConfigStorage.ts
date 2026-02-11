@@ -33,8 +33,7 @@ export const saveColumnConfig = (config: ColumnConfig): void => {
     logger.warn(
       {
         context: 'columnConfigStorage/save',
-        error,
-        metadata: { config },
+        metadata: { config, error: error instanceof Error ? error.message : String(error) },
       },
       'Failed to save column config to localStorage'
     );
@@ -72,7 +71,7 @@ export const loadColumnConfig = (): ColumnConfig | null => {
     logger.warn(
       {
         context: 'columnConfigStorage/load',
-        error,
+        metadata: { error: error instanceof Error ? error.message : String(error) },
       },
       'Failed to load column config from localStorage, using defaults'
     );

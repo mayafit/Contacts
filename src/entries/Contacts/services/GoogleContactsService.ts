@@ -255,7 +255,7 @@ export class GoogleContactsService {
           metadata: {
             resourceName,
             fieldPath,
-            validationErrors: validationResult.error.errors,
+            validationErrors: validationResult.error.issues,
           },
         },
         'Input validation failed',
