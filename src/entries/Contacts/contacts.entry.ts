@@ -8,6 +8,7 @@ import { getGlobals } from '../../GLOBALS';
 import authReducer from './redux/slices/auth/authSlice';
 import contactsReducer from './redux/slices/contacts/contactsSlice';
 import uiReducer from './redux/slices/ui/uiSlice';
+import syncQueueReducer from './redux/slices/syncQueue/syncQueueSlice';
 
 /**
  * Initialize Contacts entry module
@@ -15,6 +16,7 @@ import uiReducer from './redux/slices/ui/uiSlice';
  * Updated for Story 2.2: Added normalized contacts state management
  * Updated for Story 2.6: Added UI slice for column configuration
  * Updated for Story 2.7: Added localStorage persistence for column configuration
+ * Updated for Story 3.2: Added sync queue slice for tracking pending/failed operations
  * Note: Column config persistence middleware is registered in PluginWrapper.tsx
  *       before store initialization to ensure it's active when the store is created
  */
@@ -26,6 +28,7 @@ export const initContactsEntry = () => {
       auth: authReducer,
       contacts: contactsReducer,
       ui: uiReducer,
+      syncQueue: syncQueueReducer,
     }),
   });
 };
