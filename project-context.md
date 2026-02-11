@@ -171,25 +171,171 @@ const handleFetch = async () => {
 }
 ```
 
-### 5. API & Service Layer Rules
+### 5. API & Service Layer Rules (ARCH-6)
 
-**Service Layer Abstraction**
+**Backend Proxy Architecture**
+
+The application uses a **C# ASP.NET Core backend** as a proxy to Google People API. All Google API calls go through the backend.
+
+**Architecture Decision (2026-02-02):**
+- Backend handles: OAuth, token management, rate limiting, error transformation
+- Frontend communicates only with backend API (never directly with Google)
+- Reference: `_bmad-output/planning-artifacts/epic-3-backend-architecture-plan.md`
+
+**3-Tier Service Layer Pattern**
 ```typescript
-// ✅ Components → Thunks → Services → API Clients
+// ✅ CORRECT: Components → Thunks → Services → BackendApiClient → Backend → Google API
 // Component:
 dispatch(fetchContacts())
 
-// Thunk (in slices/contacts/thunks.ts):
+// Thunk (in slices/contacts/contactsSlice.ts):
 const response = await GoogleContactsService.fetchAllContacts()
 
-// Service (GoogleContactsService.ts):
-const result = await PeopleAPIClient.listContacts()
+// Service (GoogleContactsService.ts):  ← Service Layer
+const { contacts, nextPageToken } = await backendApiClient.fetchContacts(1000)
 
-// API Client (PeopleAPIClient.ts):
-return await axiosInstance.get('/people/me/connections')
+// API Client (BackendApiClient.ts):  ← Backend API Client
+const response = await fetch(`${baseUrl}/api/contacts?pageSize=1000`, {
+  credentials: 'include',  // Sends auth cookies
+})
 
-// ❌ NEVER: Direct API calls from components
-const response = await axios.get('/api/contacts')  // Wrong
+// Backend API (C# ASP.NET Core):
+// → Calls Google People API with googleapis
+// → Returns transformed data
+
+// ❌ NEVER: Direct API calls from components or thunks
+const response = await fetch('/api/contacts')  // Wrong - use service layer
+const response = await axios.get('https://people.googleapis.com/v1/...')  // Wrong - no direct Google API
+```
+
+**Backend API Endpoints**
+```typescript
+// Authentication
+POST /api/auth/login       // Initiate OAuth flow (redirects)
+POST /api/auth/logout      // Clear session
+GET  /api/auth/status      // Check if authenticated
+POST /api/auth/refresh     // Refresh access token
+
+// Contacts Operations
+GET    /api/contacts                          // Fetch contacts (paginated)
+GET    /api/contacts/{resourceName}           // Get single contact
+PUT    /api/contacts/{resourceName}           // Batch update contact
+PATCH  /api/contacts/{resourceName}/fields    // Field-level update (Epic 3)
+```
+
+**Service Layer Methods**
+```typescript
+// ✅ GoogleContactsService wraps BackendApiClient
+export class GoogleContactsService {
+  // Fetch all contacts (handles pagination internally)
+  static async fetchAllContacts(): Promise<APIResponse<Contact[]>> {
+    try {
+      const allContacts: Contact[] = [];
+      let nextPageToken: string | undefined;
+
+      do {
+        const { contacts, nextPageToken: nextToken } =
+          await backendApiClient.fetchContacts(1000, nextPageToken);
+        allContacts.push(...contacts);
+        nextPageToken = nextToken;
+      } while (nextPageToken);
+
+      return { success: true, data: allContacts };
+    } catch (error) {
+      return {
+        success: false,
+        error: {
+          code: 'FETCH_CONTACTS_FAILED',
+          message: 'Failed to fetch contacts from backend API',
+          details: error
+        }
+      };
+    }
+  }
+
+  // Field-level update (Epic 3)
+  static async updateContactField(
+    resourceName: string,
+    fieldPath: string,
+    newValue: unknown
+  ): Promise<APIResponse<Contact>> {
+    try {
+      const contact = await backendApiClient.updateContactField(
+        resourceName,
+        fieldPath,
+        newValue
+      );
+      return { success: true, data: contact };
+    } catch (error) {
+      return {
+        success: false,
+        error: {
+          code: 'UPDATE_FIELD_FAILED',
+          message: `Failed to update ${fieldPath}`,
+          details: error
+        }
+      };
+    }
+  }
+}
+```
+
+**Backend API Client Pattern**
+```typescript
+// ✅ BackendApiClient handles all backend communication
+export class BackendApiClient {
+  private readonly baseUrl: string;
+
+  constructor(baseUrl: string = API_BASE_URL) {
+    this.baseUrl = baseUrl;
+  }
+
+  // Field-level update (Epic 3)
+  async updateContactField(
+    resourceName: string,
+    fieldPath: string,
+    newValue: unknown
+  ): Promise<Contact> {
+    const encodedResourceName = encodeURIComponent(resourceName);
+
+    const response = await this.request<Contact>(
+      `/contacts/${encodedResourceName}/fields`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ fieldPath, newValue }),
+      }
+    );
+
+    if (!response.success || !response.data) {
+      throw new Error(response.error?.message || 'Failed to update field');
+    }
+
+    return response.data;
+  }
+
+  // Private request method
+  private async request<T>(
+    endpoint: string,
+    options: RequestInit = {}
+  ): Promise<ApiResponse<T>> {
+    const url = `${this.baseUrl}${endpoint}`;
+
+    const config: RequestInit = {
+      ...options,
+      credentials: 'include',  // Send cookies with request
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+    };
+
+    const response = await fetch(url, config);
+    return await response.json();
+  }
+}
+
+// Singleton instance
+export const backendApiClient = new BackendApiClient();
 ```
 
 **API Response Format**
@@ -199,34 +345,88 @@ interface APIResponse<T> {
   success: boolean
   data?: T
   error?: {
-    code: string
-    message: string
-    details?: unknown
+    code: string      // e.g., 'INVALID_REQUEST', 'UNAUTHORIZED', 'CONTACT_NOT_FOUND'
+    message: string   // User-friendly message
+    details?: unknown // Technical details for debugging
   }
 }
 
+// Backend returns same format
+interface ApiResponse<T> {
+  success: boolean
+  data?: T
+  error?: {
+    code: string
+    message: string
+    details?: unknown
+    timestamp: string  // ISO 8601
+  }
+}
+
+// ❌ NEVER: Throw errors from services - always return APIResponse
+async function fetchAllContacts(): Promise<Contact[]> {
+  const response = await backendApiClient.fetchContacts()
+  return response.contacts  // Wrong - no error handling
+}
+
+// ✅ CORRECT: Catch errors and return APIResponse
 async function fetchAllContacts(): Promise<APIResponse<Contact[]>> {
   try {
-    const response = await peopleAPI.list()
-    return { success: true, data: transformContacts(response.data) }
-  } catch (err) {
+    const { contacts } = await backendApiClient.fetchContacts()
+    return { success: true, data: contacts }
+  } catch (error) {
     return {
       success: false,
       error: {
-        code: mapErrorCode(err),
-        message: 'Failed to load contacts',
-        details: err
+        code: 'FETCH_CONTACTS_FAILED',
+        message: 'Failed to fetch contacts from backend API',
+        details: error
       }
     }
   }
 }
-
-// ❌ NEVER: Throw errors from services
-async function fetchAllContacts(): Promise<Contact[]> {
-  const response = await peopleAPI.list()
-  return response.data  // Wrong - no error handling
-}
 ```
+
+**Backend Error Codes**
+```typescript
+// Backend transforms Google API errors into user-friendly codes
+const ERROR_CODES = {
+  // Client errors (4xx)
+  'INVALID_REQUEST': 'Invalid request parameters',
+  'UNAUTHORIZED': 'Your session has expired. Please log in again.',
+  'FORBIDDEN': 'You do not have permission to perform this action.',
+  'CONTACT_NOT_FOUND': 'Contact not found. It may have been deleted.',
+  'INVALID_FIELD_PATH': 'Invalid field path specified.',
+  'VALIDATION_ERROR': 'Invalid input parameters',
+
+  // Server errors (5xx)
+  'SERVER_ERROR': 'Google services are temporarily unavailable.',
+  'RATE_LIMIT_EXCEEDED': 'Too many requests. Please wait a moment.',
+
+  // Network errors
+  'NETWORK_ERROR': 'Network error. Please check your connection.',
+  'FETCH_CONTACTS_FAILED': 'Failed to fetch contacts.',
+  'UPDATE_CONTACT_FAILED': 'Failed to update contact.',
+  'UPDATE_FIELD_FAILED': 'Failed to update field.',
+} as const;
+```
+
+**Environment Configuration**
+```bash
+# .env
+REACT_APP_API_BASE_URL=http://localhost:5000/api  # Backend API (NOT Google directly)
+REACT_APP_GOOGLE_CLIENT_ID=<OAuth client ID>      # For OAuth flow
+```
+
+**Key Rules**
+- ✅ All API calls go through `GoogleContactsService`
+- ✅ Service layer calls `backendApiClient` (singleton)
+- ✅ Backend handles: auth, rate limiting, error transformation
+- ✅ Service methods return `Promise<APIResponse<T>>`
+- ✅ Service methods never throw to caller (catch and return error)
+- ❌ NO direct Google API calls from frontend
+- ❌ NO googleapis or axios in frontend (use fetch via BackendApiClient)
+- ❌ NO API calls directly from components or thunks
 
 ### 6. Performance Rules
 

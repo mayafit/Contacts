@@ -21,3 +21,9 @@ export type {
   ContactAddress,
   APIResponse,
 } from './Contact';
+
+export type {
+  SyncOperation,
+  SyncOperationStatus,
+  SyncQueueState,
+} from './SyncOperation';

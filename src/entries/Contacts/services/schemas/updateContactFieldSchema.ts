@@ -32,9 +32,7 @@ export const UpdateContactFieldParamsSchema = z.object({
     .string()
     .regex(/^people\/[a-zA-Z0-9]+$/, 'Invalid resourceName format. Expected: people/{id}'),
   fieldPath: z.enum(ALLOWED_FIELD_PATHS, {
-    errorMap: () => ({
-      message: `Invalid field path. Must be one of: ${ALLOWED_FIELD_PATHS.join(', ')}`,
-    }),
+    error: `Invalid field path. Must be one of: ${ALLOWED_FIELD_PATHS.join(', ')}`,
   }),
   newValue: z.unknown(), // Type varies by fieldPath, backend validates structure
 });
