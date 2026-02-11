@@ -48,8 +48,8 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
-      vault:
-        condition: service_healthy
+      vault-init:
+        condition: service_completed_successfully
 
     # Security: Read-only root filesystem (CIS 5.12)
     read_only: true
@@ -283,6 +283,48 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+
+    networks:
+      - contacts-network
+
+  # ===================================
+  # Vault Init (Auto-seed secrets)
+  # ===================================
+  # Runs once on every `docker compose up` to seed Vault (dev mode = in-memory).
+  # Reads GOOGLE_CLIENT_SECRET from .env and writes it to Vault KV v2.
+  vault-init:
+    image: alpine:3.20
+    container_name: contacts-vault-init
+    entrypoint: ["sh", "/scripts/vault-seed.sh"]
+
+    environment:
+      - VAULT_ADDR=http://vault:8200
+      - VAULT_TOKEN=dev-root-token
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+
+    volumes:
+      - ./scripts/vault-seed.sh:/scripts/vault-seed.sh:ro
+
+    depends_on:
+      vault:
+        condition: service_healthy
+
+    # Security: Drop all capabilities
+    cap_drop:
+      - ALL
+
+    security_opt:
+      - no-new-privileges:true
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 64M
+
+    # Run-once container, no restart
+    restart: "no"
 
     networks:
       - contacts-network
