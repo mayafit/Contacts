@@ -240,8 +240,9 @@ const VirtualizedContactsTable: React.FC = () => {
       <Box
         sx={{
           display: 'flex',
-          borderBottom: '2px solid #e0e0e0',
-          bgcolor: '#f5f5f5',
+          borderBottom: '2px solid #424242',
+          bgcolor: '#1e1e1e',
+          color: '#fff',
           fontWeight: 'bold',
         }}
       >
@@ -290,9 +291,9 @@ const VirtualizedContactsTable: React.FC = () => {
                   height: `${virtualRow.size}px`,
                   transform: `translateY(${virtualRow.start}px)`,
                   display: 'flex',
-                  borderBottom: '1px solid #e0e0e0',
+                  borderBottom: '1px solid #333',
                   '&:hover': {
-                    bgcolor: '#f5f5f5',
+                    bgcolor: 'rgba(255, 255, 255, 0.08)',
                   },
                 }}
               >
