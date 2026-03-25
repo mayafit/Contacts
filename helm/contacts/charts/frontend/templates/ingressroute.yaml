@@ -1,0 +1,30 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: {{ include "frontend.fullname" . }}
+  labels:
+    {{- include "frontend.labels" . | nindent 4 }}
+spec:
+  entryPoints:
+    {{- toYaml .Values.ingress.entryPoints | nindent 4 }}
+  routes:
+    # Backend API route (higher priority - must match first)
+    - match: Host(`{{ .Values.ingress.host }}`) && PathPrefix(`/api`)
+      kind: Rule
+      priority: 100
+      services:
+        - name: {{ .Release.Name }}-backend
+          port: 5000
+    # Frontend catch-all route
+    - match: Host(`{{ .Values.ingress.host }}`)
+      kind: Rule
+      priority: 1
+      services:
+        - name: {{ include "frontend.fullname" . }}
+          port: {{ .Values.service.port }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+{{- end }}

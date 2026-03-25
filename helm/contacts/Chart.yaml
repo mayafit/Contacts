@@ -1,0 +1,23 @@
+apiVersion: v2
+name: contacts
+description: Helm umbrella chart for Contacts - a Google Contacts management application
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+
+dependencies:
+  - name: frontend
+    version: "0.1.0"
+    repository: "file://charts/frontend"
+
+  - name: backend
+    version: "0.1.0"
+    repository: "file://charts/backend"
+
+  - name: postgresql
+    version: "16.4.1"
+    repository: ""
+
+  - name: redis
+    version: "25.3.9"
+    repository: ""

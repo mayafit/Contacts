@@ -4,12 +4,18 @@ import InitComp from '../src/InitComp';
 import App from '../src/App';
 import {
   addDynamicReducer,
+  addMiddleware,
   dispatch,
   getStore,
   getState,
   removeDynamicReducer,
 } from './configureStore';
+import { columnConfigPersistenceMiddleware } from '../src/entries/Contacts/redux/middleware/columnConfigPersistence';
 // import 'react-toastify/dist/ReactToastify.css';
+
+// Register middleware BEFORE store initialization (happens in bootstrap.jsx)
+// This ensures the middleware is active when the store is created
+addMiddleware(columnConfigPersistenceMiddleware);
 
 const globalStyles = {
   html: {
@@ -73,6 +79,7 @@ const PluginWrapper = () => {
         shared={{
           addDynamicReducer,
           removeDynamicReducer,
+          addMiddleware,
           addGlobalComponent,
           removeGlobalComponentById,
           addMFTheme: () => {},

@@ -1,0 +1,410 @@
+version: '3.8'
+
+# Hardened Docker Compose configuration for Contacts application
+# Multi-service architecture: Frontend (React) + Backend (C# ASP.NET) + Redis + PostgreSQL
+# Compliant with CIS Docker Benchmark and OWASP Docker Security
+# Stories: 1-7-set-up-docker-deployment-configuration, 2-1-backend-api
+
+services:
+  # ===================================
+  # Backend API (C# ASP.NET Core 9.0)
+  # ===================================
+  contacts-backend:
+    build:
+      context: ../ContactsApi
+      dockerfile: Dockerfile
+    container_name: contacts-backend
+
+    # Port mapping: host:container
+    ports:
+      - "5000:5000"
+
+    # Environment variables
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:5000
+      # Google OAuth configuration
+      - GoogleOAuth__ClientId=${GOOGLE_CLIENT_ID}
+      - GoogleOAuth__ClientSecret=${GOOGLE_CLIENT_SECRET}
+      - GoogleOAuth__RedirectUri=http://localhost:5000/api/auth/callback
+      # Redis configuration
+      - Redis__ConnectionString=redis:6379
+      # PostgreSQL configuration
+      - Database__ConnectionString=Host=postgres;Port=5432;Database=${POSTGRES_DB:-contactsdb};Username=${POSTGRES_USER:-contactsapi};Password=${POSTGRES_PASSWORD}
+      # CORS configuration
+      - Cors__AllowedOrigins__0=http://localhost:3002
+      # Vault configuration
+      - Vault__Address=http://vault:8200
+      - Vault__Token=dev-root-token
+      - Vault__SecretPath=secret/data/contacts
+
+    # Load sensitive configuration from .env file
+    env_file:
+      - .env
+
+    # Dependency on supporting services
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      vault-init:
+        condition: service_completed_successfully
+
+    # Security: Read-only root filesystem (CIS 5.12)
+    read_only: true
+
+    # Security: Temporary filesystems for writable directories
+    tmpfs:
+      - /tmp
+      - /app/logs
+
+    # Security: Drop all capabilities and add only required ones (CIS 5.25)
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+
+    # Security: Prevent privilege escalation (CIS 5.11)
+    security_opt:
+      - no-new-privileges:true
+
+    # Resource limits (CIS 5.10)
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+    # Restart policy
+    restart: unless-stopped
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    networks:
+      - contacts-network
+
+  # ===================================
+  # Frontend (React + Nginx)
+  # ===================================
+  contacts-frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        REACT_APP_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+        REACT_APP_API_BASE_URL: http://localhost:5000/api
+    container_name: contacts-frontend
+
+    # Port mapping: host:container
+    ports:
+      - "3002:8080"
+
+    # Environment variables
+    environment:
+      - NODE_ENV=production
+
+    # Load configuration from .env file
+    env_file:
+      - .env
+
+    # Dependency on backend
+    depends_on:
+      contacts-backend:
+        condition: service_healthy
+
+    # Security: Read-only root filesystem (CIS 5.12)
+    read_only: true
+
+    # Security: Temporary filesystems for writable directories
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+      - /var/run
+
+    # Security: Drop all capabilities and add only required ones (CIS 5.25)
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+      - NET_BIND_SERVICE
+
+    # Security: Prevent privilege escalation (CIS 5.11)
+    security_opt:
+      - no-new-privileges:true
+
+    # Resource limits (CIS 5.10)
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+    # Restart policy
+    restart: unless-stopped
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    networks:
+      - contacts-network
+
+  # ===================================
+  # Redis (Token Cache)
+  # ===================================
+  redis:
+    image: redis:7.4-alpine
+    container_name: contacts-redis
+
+    # Port mapping (for debugging, not required for inter-service communication)
+    ports:
+      - "6379:6379"
+
+    # Configuration
+    command: >
+      redis-server
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --save ""
+      --appendonly no
+
+    # Security: Read-only root filesystem
+    read_only: true
+
+    # Security: Temporary filesystems
+    tmpfs:
+      - /tmp
+      - /var/lib/redis
+
+    # Security: Drop all capabilities
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETGID
+      - SETUID
+
+    # Security: Prevent privilege escalation
+    security_opt:
+      - no-new-privileges:true
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+
+    # Restart policy
+    restart: unless-stopped
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+    networks:
+      - contacts-network
+
+  # ===================================
+  # HashiCorp Vault (Secret Management)
+  # ===================================
+  vault:
+    image: hashicorp/vault:1.21
+    container_name: contacts-vault
+
+    # Port mapping
+    ports:
+      - "8200:8200"
+
+    # Environment variables
+    environment:
+      - VAULT_ADDR=http://0.0.0.0:8200
+      - VAULT_API_ADDR=http://0.0.0.0:8200
+      - VAULT_DEV_ROOT_TOKEN_ID=dev-root-token
+      - VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200
+
+    # Run in dev mode for simplicity (file-based storage)
+    command: server -dev -dev-root-token-id=dev-root-token
+
+    # Volumes for persistent storage
+    volumes:
+      - vault-data:/vault/file
+      - vault-logs:/vault/logs
+
+    # Security: Add required capabilities
+    # Note: Vault requires IPC_LOCK in dev mode
+    cap_add:
+      - IPC_LOCK
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+
+    # Restart policy
+    restart: unless-stopped
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "sh", "-c", "wget --quiet --tries=1 --spider http://127.0.0.1:8200/v1/sys/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+    networks:
+      - contacts-network
+
+  # ===================================
+  # Vault Init (Auto-seed secrets)
+  # ===================================
+  # Runs once on every `docker compose up` to seed Vault (dev mode = in-memory).
+  # Reads GOOGLE_CLIENT_SECRET from .env and writes it to Vault KV v2.
+  vault-init:
+    image: alpine:3.20
+    container_name: contacts-vault-init
+    entrypoint: ["sh", "/scripts/vault-seed.sh"]
+
+    environment:
+      - VAULT_ADDR=http://vault:8200
+      - VAULT_TOKEN=dev-root-token
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+
+    volumes:
+      - ./scripts/vault-seed.sh:/scripts/vault-seed.sh:ro
+
+    depends_on:
+      vault:
+        condition: service_healthy
+
+    # Security: Drop all capabilities
+    cap_drop:
+      - ALL
+
+    security_opt:
+      - no-new-privileges:true
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 64M
+
+    # Run-once container, no restart
+    restart: "no"
+
+    networks:
+      - contacts-network
+
+  # ===================================
+  # PostgreSQL (Token Persistence)
+  # ===================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: contacts-postgres
+
+    # Port mapping
+    ports:
+      - "5432:5432"
+
+    # Environment variables
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-contactsapi}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB:-contactsdb}
+      - PGDATA=/var/lib/postgresql/data/pgdata
+
+    # Volumes for data persistence
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+    # Security: Drop unnecessary capabilities
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+      - DAC_OVERRIDE
+      - FOWNER
+
+    # Security: Prevent privilege escalation
+    security_opt:
+      - no-new-privileges:true
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+    # Restart policy
+    restart: unless-stopped
+
+    # Health check
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-contactsapi} -d ${POSTGRES_DB:-contactsdb}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+    networks:
+      - contacts-network
+
+# ===================================
+# Networks
+# ===================================
+networks:
+  contacts-network:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: br-contacts
+
+# ===================================
+# Volumes
+# ===================================
+volumes:
+  postgres-data:
+    driver: local
+  vault-data:
+    driver: local
+  vault-logs:
+    driver: local

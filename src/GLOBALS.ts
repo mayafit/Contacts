@@ -1,5 +1,6 @@
 let _globals: {
   addDynamicReducer?: any;
+  addMiddleware?: any;
   dispatch?: any;
   getStore?: any;
   getState?: any;
@@ -7,7 +8,7 @@ let _globals: {
   removeGlobalComponentById?: any;
 } = {};
 
-export const setGlobals = (globals) => {
+export const setGlobals = (globals: any) => {
   if (!globals) {
     return;
   }

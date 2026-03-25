@@ -26,8 +26,25 @@ module.exports = {
     ],
   ],
   collectCoverage: true,
-  coverageReporters: ['json', 'html', 'text', 'cobertura'],
-  collectCoverageFrom: ['src/**/*.{js,jsx,ts,tsx}'],
+  coverageReporters: ['json', 'html', 'text', 'lcov', 'cobertura'],
+  coverageDirectory: './coverage',
+  collectCoverageFrom: [
+    'src/entries/Contacts/**/*.{ts,tsx}',
+    '!src/entries/Contacts/**/*.stories.{ts,tsx}',
+    '!src/entries/Contacts/**/*.test.{ts,tsx}',
+    '!src/entries/Contacts/**/index.{ts,tsx}',
+    '!src/entries/Contacts/**/__tests__/**',
+    '!src/entries/Contacts/**/__mocks__/**',
+  ],
+  coverageThreshold: {
+    // Global thresholds - will be enforced when code exists
+    global: {
+      branches: 50,
+      functions: 50,
+      lines: 50,
+      statements: 50,
+    },
+  },
   moduleNameMapper: {
     '\\.(css|less|sass|scss)$': '<rootDir>/__mocks__/styleMock.js',
     '^bfSrc/(.*)$': '<rootDir>/blueFiberSrc/$1',
@@ -36,18 +53,24 @@ module.exports = {
   },
   moduleFileExtensions: ['js', 'jsx', 'ts', 'tsx'],
   transform: {
-    '^.+\\.(ts|tsx)$': ['ts-jest', { isolateModules: false }],
+    '^.+\\.(ts|tsx)$': [
+      'ts-jest',
+      {
+        isolatedModules: true,
+        useESM: true,
+        tsconfig: './tsconfig.json',
+      },
+    ],
     '^.+\\.(js|jsx)$': 'babel-jest',
   },
   extensionsToTreatAsEsm: ['.ts', '.tsx', '.jsx'],
   testEnvironment: 'jest-fixed-jsdom',
   preset: 'ts-jest/presets/default-esm',
   testRegex: '(/__tests__/.*|\\.(test|spec))\\.(js|jsx|ts|tsx)$',
-  // transformIgnorePatterns: ['<rootDir>/node_modules/(?!(geodesy/.*|@mui/material/.*))'],
+  transformIgnorePatterns: [
+    '/node_modules/(?!(@mui|@emotion|@reduxjs|@babel/runtime|@react-oauth)/)',
+  ],
   globals: {
     FEATURES_FLAGS: featuresFlags,
-    'ts-jest': {
-      useESM: true,
-    },
   },
 };

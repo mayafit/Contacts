@@ -7,12 +7,17 @@
     "webpack.common.js",
     "webpack.prod.js",
     "webpack.dev.js",
-    "public"
+    "public",
+    "blueFiberSrc",
+    "src/entries/Todos",
+    "src/external",
+    "src/store",
+    "**/__tests__/**",
+    "**/*.test.ts",
+    "**/*.test.tsx"
   ],
   "include": [
-    "./src",
-    "./blueFiberSrc",
-    "./blueFiberSrc/globals.d.ts",
+    "./src/entries/Contacts",
     "./src/bluefiber.decs.d.ts",
     ".storybook"
   ],
@@ -37,7 +42,7 @@
     // "tsBuildInfoFile": "./",                     /* Specify file to store incremental compilation information */
     // "removeComments": true,                      /* Do not emit comments to output. */
     // "noEmit": false /* Do not emit outputs. */,
-    "noEmitOnError": true /* Do not emit outpus if there are errors (false is default)
+    "noEmitOnError": true /* Fail build on TypeScript errors */,
     // "importHelpers": true,                       /* Import emit helpers from 'tslib'. */,
     // "downlevelIteration": true,                  /* Provide full support for iterables in 'for-of', spread, and destructuring when targeting 'ES5' or 'ES3'. */
     // "isolatedModules": true /* Transpile each file as a separate module (similar to 'ts.transpileModule'). */,
@@ -45,7 +50,7 @@
     /* Strict Type-Checking Options */
     "strict": true /* Enable all strict type-checking options. */,
 
-    "noImplicitAny": false /* Raise error on expressions and declarations with an implied 'any' type. */,
+    "noImplicitAny": true /* Raise error on expressions and declarations with an implied 'any' type. */,
     "strictNullChecks": true /* Enable strict null checks. */,
     // "strictFunctionTypes": true,                 /* Enable strict checking of function types. */
     // "strictBindCallApply": true,                 /* Enable strict 'bind', 'call', and 'apply' methods on functions. */

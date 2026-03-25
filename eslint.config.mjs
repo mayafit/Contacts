@@ -93,6 +93,9 @@ export default [
       },
     },
     settings: {
+      react: {
+        version: 'detect',
+      },
       'import/resolver': {
         jsconfig: {
           config: 'jsconfig.json',
@@ -101,16 +104,21 @@ export default [
     },
     rules: {
       curly: ['error', 'all'],
-      // 'import/extensions': [
-      //   'error',
-      //   'ignorePackages',
-      //   {
-      //     js: 'never',
-      //     jsx: 'never',
-      //     ts: 'never',
-      //     tsx: 'never',
-      //   },
-      // ],
+
+      // Enforce use of Logger class instead of console methods
+      'no-console': ['error', { allow: ['warn', 'error'] }],
+
+      // Prefer interfaces over type aliases for object types (Airbnb style)
+      '@typescript-eslint/consistent-type-definitions': ['error', 'interface'],
+
+      // Enforce strict equality
+      eqeqeq: ['error', 'always'],
+
+      // No unused variables (stricter than default)
+      '@typescript-eslint/no-unused-vars': ['error', {
+        argsIgnorePattern: '^_',
+        varsIgnorePattern: '^_',
+      }],
 
       'no-plusplus': 0,
       'linebreak-style': 0,
@@ -129,7 +137,7 @@ export default [
         'error',
         {
           selector: 'variable',
-          format: ['camelCase', 'PascalCase'],
+          format: ['camelCase', 'PascalCase', 'UPPER_CASE'],
           leadingUnderscore: 'allow',
         },
       ],
@@ -146,12 +154,11 @@ export default [
       'no-lonely-if': 0,
       'eslint-disable-next-line react/jsx-no-useless-fragment': 0,
 
-      // 'import/no-extraneous-dependencies': [
-      //   'error',
-      //   {
-      //     devDependencies: true,
-      //   },
-      // ],
+      // Disallow var (use const/let)
+      'no-var': 'error',
+
+      // Prefer const over let when variable is never reassigned
+      'prefer-const': 'error',
     },
   },
 ];

@@ -3,6 +3,7 @@ const path = require('path');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 const webpack = require('webpack');
 const CopyWebpackPlugin = require('copy-webpack-plugin');
+const Dotenv = require('dotenv-webpack');
 const featuresFlagsProd = require('../features-flags-prod.json');
 const featuresFlagsDev = require('../features-flags-dev.json');
 const ModulesExpose = require('../MODULES_EXPOSE.json');
@@ -182,8 +183,13 @@ module.exports = {
       template: './public/index.html',
       chunks: ['main'],
     }),
+    new Dotenv(),
     new DefinePlugin({
       FEATURES_FLAGS: JSON.stringify(mergedFeaturesFlag),
+      // Inject React environment variables for Docker builds
+      // These are available via build arguments (ARG) in Dockerfile
+      'process.env.REACT_APP_GOOGLE_CLIENT_ID': JSON.stringify(process.env.REACT_APP_GOOGLE_CLIENT_ID),
+      'process.env.REACT_APP_API_BASE_URL': JSON.stringify(process.env.REACT_APP_API_BASE_URL),
     }),
   ],
 
