@@ -20,8 +20,7 @@ spec:
   entryPoints:
     {{- toYaml .Values.ingress.entryPoints | nindent 4 }}
   routes:
-    # Backend API route (higher priority - must match first)
-    # Strips /api prefix so backend receives /health instead of /api/health
+    # Backend API route via hostname
     - match: Host(`{{ .Values.ingress.host }}`) && PathPrefix(`/api`)
       kind: Rule
       priority: 100
@@ -30,8 +29,24 @@ spec:
       services:
         - name: {{ .Release.Name }}-backend
           port: 5000
-    # Frontend catch-all route
+    # Backend API route via IP (catch-all)
+    - match: PathPrefix(`/api`)
+      kind: Rule
+      priority: 90
+      middlewares:
+        - name: {{ include "frontend.fullname" . }}-strip-api
+      services:
+        - name: {{ .Release.Name }}-backend
+          port: 5000
+    # Frontend via hostname
     - match: Host(`{{ .Values.ingress.host }}`)
+      kind: Rule
+      priority: 10
+      services:
+        - name: {{ include "frontend.fullname" . }}
+          port: {{ .Values.service.port }}
+    # Frontend via IP (catch-all)
+    - match: PathPrefix(`/`)
       kind: Rule
       priority: 1
       services:
