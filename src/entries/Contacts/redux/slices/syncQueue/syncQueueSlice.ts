@@ -23,7 +23,7 @@ const syncQueueAdapter = createEntityAdapter<SyncOperation, string>({
 const initialState: SyncQueueState = {
   ...syncQueueAdapter.getInitialState(),
   retryCount: {},
-  maxRetries: 3,
+  maxRetries: 5,
 };
 
 /**
@@ -87,6 +87,18 @@ const syncQueueSlice = createSlice({
     },
 
     /**
+     * Mark an operation as conflicted (412 Precondition Failed) and store the remote value
+     * Story 3.7: Conflict detection for concurrent edits
+     */
+    operationConflict(state, action: PayloadAction<{ id: string; remoteValue: unknown }>) {
+      const { id, remoteValue } = action.payload;
+      syncQueueAdapter.updateOne(state, {
+        id,
+        changes: { status: 'conflict', remoteValue },
+      });
+    },
+
+    /**
      * Clear all operations from the queue and reset retry counts
      */
     clearQueue(state) {
@@ -101,6 +113,7 @@ export const {
   operationStarted,
   operationSuccess,
   operationFailed,
+  operationConflict,
   retryOperation,
   clearQueue,
 } = syncQueueSlice.actions;

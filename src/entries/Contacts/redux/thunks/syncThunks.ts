@@ -4,6 +4,7 @@
  *
  * Story 3.3: Coordinates optimistic updates, sync queue operations,
  * and API calls with exponential backoff retry logic.
+ * Story 3.6: Extends retry to 5 levels, adds error classification and timer tracking.
  */
 
 import { createAsyncThunk } from '@reduxjs/toolkit';
@@ -14,36 +15,120 @@ import {
   operationStarted,
   operationSuccess,
   operationFailed,
+  operationConflict,
   retryOperation,
 } from '../slices/syncQueue/syncQueueSlice';
 import { contactUpdated } from '../slices/contacts/contactsSlice';
-import {
-  selectPendingOperations,
-  selectInProgressOperations,
-} from '../slices/syncQueue/selectors';
+import { selectPendingOperations, selectInProgressOperations } from '../slices/syncQueue/selectors';
 import type { AppDispatch, RootState } from '../../types/store';
 import type { SyncOperation } from '../../types/SyncOperation';
 import type { Contact } from '../../types/Contact';
 
-/** Base delay in ms for exponential backoff */
-const BACKOFF_BASE_MS = 1000;
+/** Exponential backoff delays in ms for retry attempts 1-5 */
+const BACKOFF_DELAYS_MS = [1000, 2000, 4000, 8000, 16000] as const;
 
-/** Max retries before permanent failure (matches syncQueueSlice maxRetries) */
-const MAX_RETRIES = 3;
+/** Pending retry timers tracked per operation ID for cleanup on success/failure/app-close */
+const pendingRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 /**
- * Calculate exponential backoff delay
- * @param retryCount - Current retry attempt (0-based)
- * @returns Delay in milliseconds: 1000, 2000, 4000
+ * Calculate exponential backoff delay for a given retry count (0-based).
+ * @param retryCount - Current retry attempt (0-based index into BACKOFF_DELAYS_MS)
+ * @returns Delay in milliseconds: 1000, 2000, 4000, 8000, 16000
  */
 export const calculateBackoff = (retryCount: number): number =>
-  BACKOFF_BASE_MS * Math.pow(2, retryCount);
+  BACKOFF_DELAYS_MS[retryCount] ?? BACKOFF_DELAYS_MS[BACKOFF_DELAYS_MS.length - 1];
 
 /**
- * Delay helper that returns a cancellable promise
+ * Determine whether an error is retryable based on its type and message content.
+ * Retryable: network errors, timeouts, 5xx, 429
+ * Non-retryable: 4xx (except 429) including 400, 401, 403, 404, 412, 422
+ * @param errorMessage - Error message string from the API response
+ * @param errorDetails - Optional error details object (may be an Error instance)
+ * @returns true if the error is transient and should be retried
  */
-const delay = (ms: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, ms));
+export function isRetryableError(errorMessage: string, errorDetails?: unknown): boolean {
+  // Network/fetch failures (TypeError thrown by fetch)
+  if (errorDetails instanceof TypeError) {
+    return true;
+  }
+
+  const msg = (errorMessage || '').toLowerCase();
+
+  // Explicit network/timeout indicators
+  if (msg.includes('timeout') || msg.includes('network')) {
+    return true;
+  }
+
+  // Check for HTTP status codes in the error message
+  const statusMatch = msg.match(/(\b|status[:\s]+)(\d{3})\b/);
+  if (statusMatch) {
+    const status = parseInt(statusMatch[2], 10);
+    if (status === 429) {
+      return true;
+    }
+    if (status >= 400 && status < 500) {
+      return false;
+    }
+    if (status >= 500) {
+      return true;
+    }
+  }
+
+  // Default: retry unknown errors (transient until proven otherwise)
+  return true;
+}
+
+/**
+ * Determine whether an error message indicates a 412 Precondition Failed (etag conflict).
+ * Story 3.7: Conflict detection for concurrent edits.
+ * @param errorMessage - Error message string from the API response
+ * @returns true if the error is a 412 conflict
+ */
+export function is412Error(errorMessage: string): boolean {
+  const msg = (errorMessage || '').toLowerCase();
+  return msg.includes('412') || msg.includes('precondition failed');
+}
+
+/**
+ * Extract a specific field value from a Contact object by field path.
+ * Story 3.7: Used to read the remote value on conflict resolution.
+ * @param contact - The contact object to extract from
+ * @param fieldPath - The field path (e.g., "names", "phoneNumbers")
+ * @returns The field value, or null if not found
+ */
+export function extractFieldValue(contact: Contact, fieldPath: string): unknown {
+  return (contact as Record<string, unknown>)[fieldPath] ?? null;
+}
+
+/**
+ * Cancel a pending retry timer for a specific operation.
+ * @param operationId - The sync operation ID whose timer should be cancelled
+ */
+export function cancelRetryTimer(operationId: string): void {
+  const timer = pendingRetryTimers.get(operationId);
+  if (timer !== undefined) {
+    clearTimeout(timer);
+    pendingRetryTimers.delete(operationId);
+  }
+}
+
+/**
+ * Cancel all pending retry timers (for app teardown / component unmount).
+ */
+export function cancelAllRetryTimers(): void {
+  for (const [operationId, timer] of pendingRetryTimers.entries()) {
+    clearTimeout(timer);
+    pendingRetryTimers.delete(operationId);
+  }
+}
+
+/**
+ * Get the pending retry timers map (for testing purposes only).
+ * @returns The internal pendingRetryTimers Map
+ */
+export function getPendingRetryTimers(): Map<string, ReturnType<typeof setTimeout>> {
+  return pendingRetryTimers;
+}
 
 /**
  * Execute a field-level contact update with optimistic UI and background sync.
@@ -102,7 +187,15 @@ export const executeFieldUpdate = createAsyncThunk<
     }
 
     // 3. Execute the API call
-    await executeApiCall(dispatch, getState, operationId, resourceName, fieldPath, newValue, oldValue);
+    await executeApiCall(
+      dispatch,
+      getState,
+      operationId,
+      resourceName,
+      fieldPath,
+      newValue,
+      oldValue,
+    );
   },
 );
 
@@ -121,14 +214,11 @@ async function executeApiCall(
 ): Promise<void> {
   dispatch(operationStarted(operationId));
 
-  const result = await GoogleContactsService.updateContactField(
-    resourceName,
-    fieldPath,
-    newValue,
-  );
+  const result = await GoogleContactsService.updateContactField(resourceName, fieldPath, newValue);
 
   if (result.success && result.data) {
     // Success: remove from queue, update contact with server-confirmed data
+    cancelRetryTimer(operationId);
     dispatch(operationSuccess(operationId));
     dispatch(contactUpdated(result.data));
 
@@ -140,9 +230,8 @@ async function executeApiCall(
       'Field update synced successfully',
     );
   } else {
-    // Failure: mark failed and attempt retry
+    // Failure path
     const errorMessage = result.error?.message || 'Unknown error';
-    dispatch(operationFailed({ id: operationId, error: errorMessage }));
 
     logger.warn(
       {
@@ -152,13 +241,69 @@ async function executeApiCall(
       'Field update failed',
     );
 
-    // Check retry eligibility
+    // Story 3.7: Check for 412 Precondition Failed (etag conflict) FIRST
+    // — do NOT dispatch operationFailed before this check to avoid incorrect retryCount increment
+    if (is412Error(errorMessage)) {
+      cancelRetryTimer(operationId);
+
+      logger.warn(
+        {
+          context: 'syncThunks/executeApiCall',
+          metadata: { operationId, resourceName, fieldPath },
+        },
+        'Conflict detected: 412 Precondition Failed',
+      );
+
+      // Fetch latest contact to get remote value for conflict resolution dialog
+      const remoteResult = await GoogleContactsService.getContact(resourceName);
+      let remoteValue: unknown = null;
+      if (remoteResult.success && remoteResult.data) {
+        remoteValue = extractFieldValue(remoteResult.data, fieldPath);
+      }
+
+      dispatch(operationConflict({ id: operationId, remoteValue }));
+      return;
+    }
+
+    // Now dispatch operationFailed for non-412 errors
+    dispatch(operationFailed({ id: operationId, error: errorMessage }));
+
+    // Classify error: non-retryable errors fail immediately
+    const retryable = isRetryableError(errorMessage, result.error?.details);
+
+    if (!retryable) {
+      // Non-retryable: permanent failure, rollback immediately
+      cancelRetryTimer(operationId);
+
+      logger.warn(
+        {
+          context: 'syncThunks/executeApiCall',
+          metadata: { operationId, errorMessage },
+        },
+        'Non-retryable error, marking as permanent failure',
+      );
+
+      const existingContact = getState().contacts?.contacts?.entities[resourceName];
+      if (existingContact) {
+        const rolledBackContact: Contact = {
+          ...existingContact,
+          [fieldPath]: oldValue,
+        };
+        dispatch(contactUpdated(rolledBackContact));
+      }
+      return;
+    }
+
+    // Check retry eligibility using maxRetries from state
     const currentState = getState();
     const syncQueueState = currentState.contacts?.syncQueue;
     const retryCount = syncQueueState?.retryCount[operationId] ?? 0;
+    const maxRetries = syncQueueState?.maxRetries ?? 5;
 
-    if (retryCount < MAX_RETRIES) {
-      const backoffMs = calculateBackoff(retryCount - 1);
+    if (retryCount < maxRetries) {
+      const delayIndex = Math.max(0, retryCount - 1);
+      const backoffMs =
+        BACKOFF_DELAYS_MS[delayIndex] ?? BACKOFF_DELAYS_MS[BACKOFF_DELAYS_MS.length - 1];
 
       logger.info(
         {
@@ -168,13 +313,30 @@ async function executeApiCall(
         'Scheduling retry with backoff',
       );
 
-      await delay(backoffMs);
+      // Schedule retry with tracked timer
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(() => {
+          pendingRetryTimers.delete(operationId);
+          resolve();
+        }, backoffMs);
+        pendingRetryTimers.set(operationId, timer);
+      });
 
       // Reset to pending and re-execute
       dispatch(retryOperation(operationId));
-      await executeApiCall(dispatch, getState, operationId, resourceName, fieldPath, newValue, oldValue);
+      await executeApiCall(
+        dispatch,
+        getState,
+        operationId,
+        resourceName,
+        fieldPath,
+        newValue,
+        oldValue,
+      );
     } else {
       // Max retries exceeded: rollback optimistic update
+      cancelRetryTimer(operationId);
+
       logger.error(
         {
           context: 'syncThunks/executeApiCall',
@@ -199,11 +361,7 @@ async function executeApiCall(
  * Process the next pending operation in the sync queue (FIFO order).
  * Skips if there's already an in-progress operation to prevent concurrent API calls.
  */
-export const processQueue = createAsyncThunk<
-  void,
-  void,
-  { state: RootState }
->(
+export const processQueue = createAsyncThunk<void, void, { state: RootState }>(
   'sync/processQueue',
   async (_, { dispatch, getState }) => {
     const state = getState();
