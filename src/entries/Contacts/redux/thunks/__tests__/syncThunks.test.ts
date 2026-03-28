@@ -2,15 +2,29 @@
  * @fileoverview Sync orchestrator thunks tests
  * @module Contacts/redux/thunks/__tests__/syncThunks.test
  * @jest-environment node
+ *
+ * Story 3.3: Original tests for sync orchestration
+ * Story 3.6: Extended tests for 5-level backoff, error classification, timer tracking
  */
 
-import { executeFieldUpdate, processQueue, calculateBackoff } from '../syncThunks';
+import {
+  executeFieldUpdate,
+  processQueue,
+  calculateBackoff,
+  isRetryableError,
+  is412Error,
+  extractFieldValue,
+  cancelRetryTimer,
+  cancelAllRetryTimers,
+  getPendingRetryTimers,
+} from '../syncThunks';
 import { GoogleContactsService } from '../../../services/GoogleContactsService';
 import {
   addToQueue,
   operationStarted,
   operationSuccess,
   operationFailed,
+  operationConflict,
   retryOperation,
 } from '../../slices/syncQueue/syncQueueSlice';
 import { contactUpdated } from '../../slices/contacts/contactsSlice';
@@ -64,7 +78,7 @@ const createMockState = (overrides?: {
       ids: [],
       entities: {},
       retryCount: {},
-      maxRetries: 3,
+      maxRetries: 5,
     },
   },
 });
@@ -75,6 +89,7 @@ describe('syncThunks', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    cancelAllRetryTimers();
     dispatch = jest.fn((action) => {
       if (typeof action === 'function') {
         return action(dispatch, getState, undefined);
@@ -95,6 +110,66 @@ describe('syncThunks', () => {
 
     it('calculateBackoff_Should_Return4000ms_When_RetryCount2', () => {
       expect(calculateBackoff(2)).toBe(4000);
+    });
+
+    it('calculateBackoff_Should_Return8000ms_When_RetryCount3', () => {
+      expect(calculateBackoff(3)).toBe(8000);
+    });
+
+    it('calculateBackoff_Should_Return16000ms_When_RetryCount4', () => {
+      expect(calculateBackoff(4)).toBe(16000);
+    });
+
+    it('calculateBackoff_Should_Return16000ms_When_RetryCountExceedsBounds', () => {
+      expect(calculateBackoff(10)).toBe(16000);
+    });
+  });
+
+  describe('isRetryableError', () => {
+    it('isRetryableError_Should_ReturnTrue_When_NetworkError', () => {
+      expect(isRetryableError('Network error occurred')).toBe(true);
+    });
+
+    it('isRetryableError_Should_ReturnTrue_When_TimeoutError', () => {
+      expect(isRetryableError('Request timeout')).toBe(true);
+    });
+
+    it('isRetryableError_Should_ReturnTrue_When_TypeError', () => {
+      expect(isRetryableError('Failed to fetch', new TypeError('Failed to fetch'))).toBe(true);
+    });
+
+    it('isRetryableError_Should_ReturnTrue_When_5xxError', () => {
+      expect(isRetryableError('Server returned status 500')).toBe(true);
+      expect(isRetryableError('Request failed with status: 502')).toBe(true);
+      expect(isRetryableError('HTTP 503 Service Unavailable')).toBe(true);
+    });
+
+    it('isRetryableError_Should_ReturnTrue_When_429Error', () => {
+      expect(isRetryableError('Rate limited: 429 Too Many Requests')).toBe(true);
+    });
+
+    it('isRetryableError_Should_ReturnFalse_When_400Error', () => {
+      expect(isRetryableError('Bad request: 400')).toBe(false);
+    });
+
+    it('isRetryableError_Should_ReturnFalse_When_401Error', () => {
+      expect(isRetryableError('Unauthorized: 401')).toBe(false);
+    });
+
+    it('isRetryableError_Should_ReturnFalse_When_403Error', () => {
+      expect(isRetryableError('Forbidden: 403')).toBe(false);
+    });
+
+    it('isRetryableError_Should_ReturnFalse_When_404Error', () => {
+      expect(isRetryableError('Not found: 404')).toBe(false);
+    });
+
+    it('isRetryableError_Should_ReturnFalse_When_422Error', () => {
+      expect(isRetryableError('Unprocessable entity: 422')).toBe(false);
+    });
+
+    it('isRetryableError_Should_ReturnTrue_When_UnknownError', () => {
+      expect(isRetryableError('Something went wrong')).toBe(true);
     });
   });
 
@@ -206,25 +281,27 @@ describe('syncThunks', () => {
       });
 
       // State with max retries already exceeded to prevent retry loop
-      getState.mockReturnValue(createMockState({
-        syncQueue: {
-          ids: [mockUUID],
-          entities: {
-            [mockUUID]: {
-              id: mockUUID,
-              resourceName: 'people/c123',
-              fieldPath: 'names',
-              newValue: [{ givenName: 'Jane' }],
-              oldValue: [{ givenName: 'John' }],
-              status: 'in-progress',
-              timestamp: new Date().toISOString(),
-              error: null,
+      getState.mockReturnValue(
+        createMockState({
+          syncQueue: {
+            ids: [mockUUID],
+            entities: {
+              [mockUUID]: {
+                id: mockUUID,
+                resourceName: 'people/c123',
+                fieldPath: 'names',
+                newValue: [{ givenName: 'Jane' }],
+                oldValue: [{ givenName: 'John' }],
+                status: 'in-progress',
+                timestamp: new Date().toISOString(),
+                error: null,
+              },
             },
+            retryCount: { [mockUUID]: 5 },
+            maxRetries: 5,
           },
-          retryCount: { [mockUUID]: 3 },
-          maxRetries: 3,
-        },
-      }));
+        }),
+      );
 
       const thunk = executeFieldUpdate({
         resourceName: 'people/c123',
@@ -249,26 +326,33 @@ describe('syncThunks', () => {
         error: { code: 'UPDATE_FIELD_FAILED', message: 'Server error' },
       });
 
-      getState.mockReturnValue(createMockState({
-        contacts: { 'people/c123': { ...mockContact, names: [{ givenName: 'Jane', familyName: 'Doe', displayName: 'Jane Doe' }] } },
-        syncQueue: {
-          ids: [mockUUID],
-          entities: {
-            [mockUUID]: {
-              id: mockUUID,
-              resourceName: 'people/c123',
-              fieldPath: 'names',
-              newValue: [{ givenName: 'Jane' }],
-              oldValue: [{ givenName: 'John' }],
-              status: 'failed',
-              timestamp: new Date().toISOString(),
-              error: 'Server error',
+      getState.mockReturnValue(
+        createMockState({
+          contacts: {
+            'people/c123': {
+              ...mockContact,
+              names: [{ givenName: 'Jane', familyName: 'Doe', displayName: 'Jane Doe' }],
             },
           },
-          retryCount: { [mockUUID]: 3 },
-          maxRetries: 3,
-        },
-      }));
+          syncQueue: {
+            ids: [mockUUID],
+            entities: {
+              [mockUUID]: {
+                id: mockUUID,
+                resourceName: 'people/c123',
+                fieldPath: 'names',
+                newValue: [{ givenName: 'Jane' }],
+                oldValue: [{ givenName: 'John' }],
+                status: 'failed',
+                timestamp: new Date().toISOString(),
+                error: 'Server error',
+              },
+            },
+            retryCount: { [mockUUID]: 5 },
+            maxRetries: 5,
+          },
+        }),
+      );
 
       const thunk = executeFieldUpdate({
         resourceName: 'people/c123',
@@ -320,7 +404,7 @@ describe('syncThunks', () => {
             },
           },
           retryCount: { [mockUUID]: 1 },
-          maxRetries: 3,
+          maxRetries: 5,
         },
       });
       getState.mockReturnValue(stateAfterFailure);
@@ -359,26 +443,28 @@ describe('syncThunks', () => {
         return Promise.resolve({ success: true, data: mockUpdatedContact });
       });
 
-      // State where retryCount has NO entry for this operation ID (undefined → fallback to 0)
-      getState.mockReturnValue(createMockState({
-        syncQueue: {
-          ids: [mockUUID],
-          entities: {
-            [mockUUID]: {
-              id: mockUUID,
-              resourceName: 'people/c123',
-              fieldPath: 'names',
-              newValue: [{ givenName: 'Jane' }],
-              oldValue: [{ givenName: 'John' }],
-              status: 'failed',
-              timestamp: new Date().toISOString(),
-              error: null,
+      // State where retryCount has NO entry for this operation ID (undefined -> fallback to 0)
+      getState.mockReturnValue(
+        createMockState({
+          syncQueue: {
+            ids: [mockUUID],
+            entities: {
+              [mockUUID]: {
+                id: mockUUID,
+                resourceName: 'people/c123',
+                fieldPath: 'names',
+                newValue: [{ givenName: 'Jane' }],
+                oldValue: [{ givenName: 'John' }],
+                status: 'failed',
+                timestamp: new Date().toISOString(),
+                error: null,
+              },
             },
+            retryCount: {}, // No entry for mockUUID -- hits the ?? 0 fallback
+            maxRetries: 5,
           },
-          retryCount: {}, // No entry for mockUUID — hits the ?? 0 fallback
-          maxRetries: 3,
-        },
-      }));
+        }),
+      );
 
       const thunkPromise = executeFieldUpdate({
         resourceName: 'people/c123',
@@ -390,7 +476,7 @@ describe('syncThunks', () => {
       await jest.advanceTimersByTimeAsync(5000);
       await thunkPromise;
 
-      // Should have retried (retryCount 0 < MAX_RETRIES 3)
+      // Should have retried (retryCount 0 < maxRetries 5)
       const retryCalls = dispatch.mock.calls.filter(
         (call: unknown[]) => call[0]?.type === retryOperation.type,
       );
@@ -404,25 +490,27 @@ describe('syncThunks', () => {
         // No error object at all
       });
 
-      getState.mockReturnValue(createMockState({
-        syncQueue: {
-          ids: [mockUUID],
-          entities: {
-            [mockUUID]: {
-              id: mockUUID,
-              resourceName: 'people/c123',
-              fieldPath: 'names',
-              newValue: [{ givenName: 'Jane' }],
-              oldValue: [{ givenName: 'John' }],
-              status: 'in-progress',
-              timestamp: new Date().toISOString(),
-              error: null,
+      getState.mockReturnValue(
+        createMockState({
+          syncQueue: {
+            ids: [mockUUID],
+            entities: {
+              [mockUUID]: {
+                id: mockUUID,
+                resourceName: 'people/c123',
+                fieldPath: 'names',
+                newValue: [{ givenName: 'Jane' }],
+                oldValue: [{ givenName: 'John' }],
+                status: 'in-progress',
+                timestamp: new Date().toISOString(),
+                error: null,
+              },
             },
+            retryCount: { [mockUUID]: 5 },
+            maxRetries: 5,
           },
-          retryCount: { [mockUUID]: 3 },
-          maxRetries: 3,
-        },
-      }));
+        }),
+      );
 
       const thunk = executeFieldUpdate({
         resourceName: 'people/c123',
@@ -470,6 +558,374 @@ describe('syncThunks', () => {
       );
       expect(contactUpdatedCalls.length).toBe(1); // Only server response
     });
+
+    it('executeFieldUpdate_Should_FailImmediately_When_NonRetryable400Error', async () => {
+      (GoogleContactsService.updateContactField as jest.Mock).mockResolvedValue({
+        success: false,
+        error: { code: 'UPDATE_FIELD_FAILED', message: 'Bad request: 400 Invalid data' },
+      });
+
+      getState.mockReturnValue(
+        createMockState({
+          syncQueue: {
+            ids: [mockUUID],
+            entities: {
+              [mockUUID]: {
+                id: mockUUID,
+                resourceName: 'people/c123',
+                fieldPath: 'names',
+                newValue: [{ givenName: 'Jane' }],
+                oldValue: [{ givenName: 'John' }],
+                status: 'in-progress',
+                timestamp: new Date().toISOString(),
+                error: null,
+              },
+            },
+            retryCount: { [mockUUID]: 1 },
+            maxRetries: 5,
+          },
+        }),
+      );
+
+      const thunk = executeFieldUpdate({
+        resourceName: 'people/c123',
+        fieldPath: 'names',
+        newValue: [{ givenName: 'Jane' }],
+        oldValue: [{ givenName: 'John' }],
+      });
+
+      await thunk(dispatch, getState, undefined);
+
+      // Should dispatch operationFailed but NOT retryOperation
+      const failedCall = dispatch.mock.calls.find(
+        (call: unknown[]) => call[0]?.type === operationFailed.type,
+      );
+      expect(failedCall).toBeDefined();
+
+      const retryCalls = dispatch.mock.calls.filter(
+        (call: unknown[]) => call[0]?.type === retryOperation.type,
+      );
+      expect(retryCalls).toHaveLength(0);
+
+      // Should rollback optimistic update immediately
+      const contactUpdatedCalls = dispatch.mock.calls.filter(
+        (call: unknown[]) => call[0]?.type === contactUpdated.type,
+      );
+      const rollbackCall = contactUpdatedCalls[contactUpdatedCalls.length - 1];
+      expect(rollbackCall[0].payload.names).toEqual([{ givenName: 'John' }]);
+
+      // API should only be called once (no retry)
+      expect(GoogleContactsService.updateContactField).toHaveBeenCalledTimes(1);
+    });
+
+    it('executeFieldUpdate_Should_Retry_When_429RateLimitError', async () => {
+      let callCount = 0;
+      (GoogleContactsService.updateContactField as jest.Mock).mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) {
+          return Promise.resolve({
+            success: false,
+            error: { code: 'UPDATE_FIELD_FAILED', message: 'Rate limited: 429 Too Many Requests' },
+          });
+        }
+        return Promise.resolve({
+          success: true,
+          data: mockUpdatedContact,
+        });
+      });
+
+      getState.mockReturnValue(
+        createMockState({
+          syncQueue: {
+            ids: [mockUUID],
+            entities: {
+              [mockUUID]: {
+                id: mockUUID,
+                resourceName: 'people/c123',
+                fieldPath: 'names',
+                newValue: [{ givenName: 'Jane' }],
+                oldValue: [{ givenName: 'John' }],
+                status: 'failed',
+                timestamp: new Date().toISOString(),
+                error: null,
+              },
+            },
+            retryCount: { [mockUUID]: 1 },
+            maxRetries: 5,
+          },
+        }),
+      );
+
+      const thunkPromise = executeFieldUpdate({
+        resourceName: 'people/c123',
+        fieldPath: 'names',
+        newValue: [{ givenName: 'Jane' }],
+        oldValue: [{ givenName: 'John' }],
+      })(dispatch, getState, undefined);
+
+      // Advance timers past backoff delay
+      await jest.advanceTimersByTimeAsync(5000);
+      await thunkPromise;
+
+      // Should have retried (429 is retryable)
+      const retryCalls = dispatch.mock.calls.filter(
+        (call: unknown[]) => call[0]?.type === retryOperation.type,
+      );
+      expect(retryCalls.length).toBeGreaterThanOrEqual(1);
+
+      // API called at least twice (initial + retry)
+      expect(GoogleContactsService.updateContactField).toHaveBeenCalledTimes(2);
+    });
+
+    it('executeFieldUpdate_Should_DispatchOperationSuccess_When_RetrySucceeds', async () => {
+      let callCount = 0;
+      (GoogleContactsService.updateContactField as jest.Mock).mockImplementation(() => {
+        callCount++;
+        if (callCount <= 2) {
+          return Promise.resolve({
+            success: false,
+            error: { code: 'UPDATE_FIELD_FAILED', message: 'Temporary server error' },
+          });
+        }
+        return Promise.resolve({
+          success: true,
+          data: mockUpdatedContact,
+        });
+      });
+
+      // Simulate state after 2 failures (retryCount=2), still under max 5
+      getState.mockReturnValue(
+        createMockState({
+          syncQueue: {
+            ids: [mockUUID],
+            entities: {
+              [mockUUID]: {
+                id: mockUUID,
+                resourceName: 'people/c123',
+                fieldPath: 'names',
+                newValue: [{ givenName: 'Jane' }],
+                oldValue: [{ givenName: 'John' }],
+                status: 'failed',
+                timestamp: new Date().toISOString(),
+                error: 'Temporary server error',
+              },
+            },
+            retryCount: { [mockUUID]: 2 },
+            maxRetries: 5,
+          },
+        }),
+      );
+
+      const thunkPromise = executeFieldUpdate({
+        resourceName: 'people/c123',
+        fieldPath: 'names',
+        newValue: [{ givenName: 'Jane' }],
+        oldValue: [{ givenName: 'John' }],
+      })(dispatch, getState, undefined);
+
+      // Advance timers enough for multiple retry backoffs
+      await jest.advanceTimersByTimeAsync(30000);
+      await thunkPromise;
+
+      // Should dispatch operationSuccess at some point
+      const successCalls = dispatch.mock.calls.filter(
+        (call: unknown[]) => call[0]?.type === operationSuccess.type,
+      );
+      expect(successCalls.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('executeFieldUpdate_Should_EnforceMaxRetries5_When_AllRetriesExhausted', async () => {
+      (GoogleContactsService.updateContactField as jest.Mock).mockResolvedValue({
+        success: false,
+        error: { code: 'UPDATE_FIELD_FAILED', message: 'Persistent server error' },
+      });
+
+      getState.mockReturnValue(
+        createMockState({
+          contacts: { 'people/c123': mockContact },
+          syncQueue: {
+            ids: [mockUUID],
+            entities: {
+              [mockUUID]: {
+                id: mockUUID,
+                resourceName: 'people/c123',
+                fieldPath: 'names',
+                newValue: [{ givenName: 'Jane' }],
+                oldValue: [{ givenName: 'John' }],
+                status: 'failed',
+                timestamp: new Date().toISOString(),
+                error: 'Persistent server error',
+              },
+            },
+            retryCount: { [mockUUID]: 5 },
+            maxRetries: 5,
+          },
+        }),
+      );
+
+      const thunk = executeFieldUpdate({
+        resourceName: 'people/c123',
+        fieldPath: 'names',
+        newValue: [{ givenName: 'Jane' }],
+        oldValue: [{ givenName: 'John' }],
+      });
+
+      await thunk(dispatch, getState, undefined);
+
+      // Should NOT dispatch retryOperation (max reached)
+      const retryCalls = dispatch.mock.calls.filter(
+        (call: unknown[]) => call[0]?.type === retryOperation.type,
+      );
+      expect(retryCalls).toHaveLength(0);
+
+      // Should rollback
+      const contactUpdatedCalls = dispatch.mock.calls.filter(
+        (call: unknown[]) => call[0]?.type === contactUpdated.type,
+      );
+      const lastUpdate = contactUpdatedCalls[contactUpdatedCalls.length - 1];
+      expect(lastUpdate[0].payload.names).toEqual([{ givenName: 'John' }]);
+
+      // API called only once (no retry after max exceeded)
+      expect(GoogleContactsService.updateContactField).toHaveBeenCalledTimes(1);
+    });
+
+    it('executeFieldUpdate_Should_Apply5LevelBackoffDelays_When_Retrying', async () => {
+      // Track setTimeout calls to verify backoff delays
+      const setTimeoutSpy = jest.spyOn(globalThis, 'setTimeout');
+
+      let callCount = 0;
+      (GoogleContactsService.updateContactField as jest.Mock).mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) {
+          return Promise.resolve({
+            success: false,
+            error: { code: 'UPDATE_FIELD_FAILED', message: 'Temporary error' },
+          });
+        }
+        return Promise.resolve({
+          success: true,
+          data: mockUpdatedContact,
+        });
+      });
+
+      // retryCount = 1 means first retry, which uses BACKOFF_DELAYS_MS[0] = 1000ms
+      getState.mockReturnValue(
+        createMockState({
+          syncQueue: {
+            ids: [mockUUID],
+            entities: {
+              [mockUUID]: {
+                id: mockUUID,
+                resourceName: 'people/c123',
+                fieldPath: 'names',
+                newValue: [{ givenName: 'Jane' }],
+                oldValue: [{ givenName: 'John' }],
+                status: 'failed',
+                timestamp: new Date().toISOString(),
+                error: 'Temporary error',
+              },
+            },
+            retryCount: { [mockUUID]: 1 },
+            maxRetries: 5,
+          },
+        }),
+      );
+
+      const thunkPromise = executeFieldUpdate({
+        resourceName: 'people/c123',
+        fieldPath: 'names',
+        newValue: [{ givenName: 'Jane' }],
+        oldValue: [{ givenName: 'John' }],
+      })(dispatch, getState, undefined);
+
+      await jest.advanceTimersByTimeAsync(5000);
+      await thunkPromise;
+
+      // Verify setTimeout was called with correct backoff delay (1000ms for retryCount=1)
+      const backoffCall = setTimeoutSpy.mock.calls.find((call) => call[1] === 1000);
+      expect(backoffCall).toBeDefined();
+
+      setTimeoutSpy.mockRestore();
+    });
+  });
+
+  describe('timer tracking', () => {
+    it('cancelRetryTimer_Should_ClearTimer_When_TimerExists', () => {
+      const timers = getPendingRetryTimers();
+      const timer = setTimeout(() => {
+        // noop
+      }, 10000);
+      timers.set('op-1', timer);
+
+      expect(timers.has('op-1')).toBe(true);
+
+      cancelRetryTimer('op-1');
+
+      expect(timers.has('op-1')).toBe(false);
+    });
+
+    it('cancelRetryTimer_Should_DoNothing_When_NoTimerExists', () => {
+      // Should not throw
+      cancelRetryTimer('nonexistent-op');
+      expect(getPendingRetryTimers().has('nonexistent-op')).toBe(false);
+    });
+
+    it('cancelAllRetryTimers_Should_ClearAllTimers_When_MultipleExist', () => {
+      const timers = getPendingRetryTimers();
+      timers.set(
+        'op-1',
+        setTimeout(() => {
+          /* noop */
+        }, 10000),
+      );
+      timers.set(
+        'op-2',
+        setTimeout(() => {
+          /* noop */
+        }, 10000),
+      );
+      timers.set(
+        'op-3',
+        setTimeout(() => {
+          /* noop */
+        }, 10000),
+      );
+
+      expect(timers.size).toBe(3);
+
+      cancelAllRetryTimers();
+
+      expect(timers.size).toBe(0);
+    });
+
+    it('executeFieldUpdate_Should_ClearTimer_When_ApiSucceeds', async () => {
+      (GoogleContactsService.updateContactField as jest.Mock).mockResolvedValue({
+        success: true,
+        data: mockUpdatedContact,
+      });
+
+      // Pre-set a timer for this operation
+      const timers = getPendingRetryTimers();
+      timers.set(
+        mockUUID,
+        setTimeout(() => {
+          /* noop */
+        }, 10000),
+      );
+      expect(timers.has(mockUUID)).toBe(true);
+
+      const thunk = executeFieldUpdate({
+        resourceName: 'people/c123',
+        fieldPath: 'names',
+        newValue: [{ givenName: 'Jane' }],
+        oldValue: [{ givenName: 'John' }],
+      });
+
+      await thunk(dispatch, getState, undefined);
+
+      // Timer should be cleared on success
+      expect(timers.has(mockUUID)).toBe(false);
+    });
   });
 
   describe('processQueue', () => {
@@ -485,14 +941,16 @@ describe('syncThunks', () => {
         error: null,
       };
 
-      getState.mockReturnValue(createMockState({
-        syncQueue: {
-          ids: ['op-pending'],
-          entities: { 'op-pending': pendingOp },
-          retryCount: { 'op-pending': 3 },
-          maxRetries: 3,
-        },
-      }));
+      getState.mockReturnValue(
+        createMockState({
+          syncQueue: {
+            ids: ['op-pending'],
+            entities: { 'op-pending': pendingOp },
+            retryCount: { 'op-pending': 5 },
+            maxRetries: 5,
+          },
+        }),
+      );
 
       (GoogleContactsService.updateContactField as jest.Mock).mockResolvedValue({
         success: true,
@@ -522,14 +980,16 @@ describe('syncThunks', () => {
         error: null,
       };
 
-      getState.mockReturnValue(createMockState({
-        syncQueue: {
-          ids: ['op-in-progress'],
-          entities: { 'op-in-progress': inProgressOp },
-          retryCount: {},
-          maxRetries: 3,
-        },
-      }));
+      getState.mockReturnValue(
+        createMockState({
+          syncQueue: {
+            ids: ['op-in-progress'],
+            entities: { 'op-in-progress': inProgressOp },
+            retryCount: {},
+            maxRetries: 5,
+          },
+        }),
+      );
 
       const thunk = processQueue();
       await thunk(dispatch, getState, undefined);
@@ -576,14 +1036,16 @@ describe('syncThunks', () => {
         error: null,
       };
 
-      getState.mockReturnValue(createMockState({
-        syncQueue: {
-          ids: ['op-1', 'op-2'],
-          entities: { 'op-1': op1, 'op-2': op2 },
-          retryCount: { 'op-1': 3, 'op-2': 3 },
-          maxRetries: 3,
-        },
-      }));
+      getState.mockReturnValue(
+        createMockState({
+          syncQueue: {
+            ids: ['op-1', 'op-2'],
+            entities: { 'op-1': op1, 'op-2': op2 },
+            retryCount: { 'op-1': 5, 'op-2': 5 },
+            maxRetries: 5,
+          },
+        }),
+      );
 
       (GoogleContactsService.updateContactField as jest.Mock).mockResolvedValue({
         success: true,
@@ -605,6 +1067,283 @@ describe('syncThunks', () => {
         'names',
         'new1',
       );
+    });
+  });
+
+  describe('is412Error', () => {
+    it('is412Error_Should_ReturnTrue_When_MessageContains412', () => {
+      expect(is412Error('HTTP 412 Precondition Failed')).toBe(true);
+    });
+
+    it('is412Error_Should_ReturnTrue_When_MessageContainsPreconditionFailed', () => {
+      expect(is412Error('Request failed: precondition failed')).toBe(true);
+    });
+
+    it('is412Error_Should_ReturnFalse_When_MessageDoesNotContain412', () => {
+      expect(is412Error('Bad request: 400')).toBe(false);
+    });
+
+    it('is412Error_Should_ReturnFalse_When_EmptyMessage', () => {
+      expect(is412Error('')).toBe(false);
+    });
+  });
+
+  describe('extractFieldValue', () => {
+    it('extractFieldValue_Should_ReturnFieldValue_When_FieldExists', () => {
+      const contact = {
+        resourceName: 'people/c123',
+        names: [{ givenName: 'John' }],
+      };
+      expect(extractFieldValue(contact, 'names')).toEqual([{ givenName: 'John' }]);
+    });
+
+    it('extractFieldValue_Should_ReturnNull_When_FieldDoesNotExist', () => {
+      const contact = {
+        resourceName: 'people/c123',
+      };
+      expect(extractFieldValue(contact, 'phoneNumbers')).toBeNull();
+    });
+  });
+
+  describe('conflict detection (Story 3.7)', () => {
+    it('executeFieldUpdate_Should_DispatchOperationConflict_When_412Error', async () => {
+      const remoteContact: Contact = {
+        ...mockContact,
+        names: [{ givenName: 'Remote', familyName: 'Doe', displayName: 'Remote Doe' }],
+      };
+
+      (GoogleContactsService.updateContactField as jest.Mock).mockResolvedValue({
+        success: false,
+        error: {
+          code: 'UPDATE_FIELD_FAILED',
+          message: 'HTTP 412 Precondition Failed',
+        },
+      });
+
+      (GoogleContactsService.getContact as jest.Mock).mockResolvedValue({
+        success: true,
+        data: remoteContact,
+      });
+
+      const thunk = executeFieldUpdate({
+        resourceName: 'people/c123',
+        fieldPath: 'names',
+        newValue: [{ givenName: 'Jane' }],
+        oldValue: [{ givenName: 'John' }],
+      });
+
+      await thunk(dispatch, getState, undefined);
+
+      // Should dispatch operationConflict (not retryOperation)
+      const conflictCall = dispatch.mock.calls.find(
+        (call: unknown[]) => call[0]?.type === operationConflict.type,
+      );
+      expect(conflictCall).toBeDefined();
+      expect(conflictCall[0].payload.id).toBe(mockUUID);
+      expect(conflictCall[0].payload.remoteValue).toEqual([
+        { givenName: 'Remote', familyName: 'Doe', displayName: 'Remote Doe' },
+      ]);
+
+      // Should NOT dispatch retryOperation
+      const retryCalls = dispatch.mock.calls.filter(
+        (call: unknown[]) => call[0]?.type === retryOperation.type,
+      );
+      expect(retryCalls).toHaveLength(0);
+    });
+
+    it('executeFieldUpdate_Should_DispatchOperationConflict_When_PreconditionFailedMessage', async () => {
+      const remoteContact: Contact = {
+        ...mockContact,
+        emailAddresses: [{ value: 'remote@example.com' }],
+      };
+
+      (GoogleContactsService.updateContactField as jest.Mock).mockResolvedValue({
+        success: false,
+        error: {
+          code: 'UPDATE_FIELD_FAILED',
+          message: 'Request failed: precondition failed',
+        },
+      });
+
+      (GoogleContactsService.getContact as jest.Mock).mockResolvedValue({
+        success: true,
+        data: remoteContact,
+      });
+
+      const thunk = executeFieldUpdate({
+        resourceName: 'people/c123',
+        fieldPath: 'emailAddresses',
+        newValue: [{ value: 'new@example.com' }],
+        oldValue: [{ value: 'old@example.com' }],
+      });
+
+      await thunk(dispatch, getState, undefined);
+
+      const conflictCall = dispatch.mock.calls.find(
+        (call: unknown[]) => call[0]?.type === operationConflict.type,
+      );
+      expect(conflictCall).toBeDefined();
+      expect(conflictCall[0].payload.remoteValue).toEqual([{ value: 'remote@example.com' }]);
+    });
+
+    it('executeFieldUpdate_Should_SetRemoteValueNull_When_GetContactFails', async () => {
+      (GoogleContactsService.updateContactField as jest.Mock).mockResolvedValue({
+        success: false,
+        error: {
+          code: 'UPDATE_FIELD_FAILED',
+          message: 'HTTP 412 Precondition Failed',
+        },
+      });
+
+      (GoogleContactsService.getContact as jest.Mock).mockResolvedValue({
+        success: false,
+        error: { code: 'GET_CONTACT_FAILED', message: 'Network error' },
+      });
+
+      const thunk = executeFieldUpdate({
+        resourceName: 'people/c123',
+        fieldPath: 'names',
+        newValue: [{ givenName: 'Jane' }],
+        oldValue: [{ givenName: 'John' }],
+      });
+
+      await thunk(dispatch, getState, undefined);
+
+      const conflictCall = dispatch.mock.calls.find(
+        (call: unknown[]) => call[0]?.type === operationConflict.type,
+      );
+      expect(conflictCall).toBeDefined();
+      expect(conflictCall[0].payload.remoteValue).toBeNull();
+    });
+
+    it('executeFieldUpdate_Should_NotRetry_When_412ConflictDetected', async () => {
+      (GoogleContactsService.updateContactField as jest.Mock).mockResolvedValue({
+        success: false,
+        error: {
+          code: 'UPDATE_FIELD_FAILED',
+          message: 'HTTP 412 Precondition Failed',
+        },
+      });
+
+      (GoogleContactsService.getContact as jest.Mock).mockResolvedValue({
+        success: true,
+        data: mockContact,
+      });
+
+      // State with retries remaining — should still NOT retry on 412
+      getState.mockReturnValue(
+        createMockState({
+          syncQueue: {
+            ids: [mockUUID],
+            entities: {
+              [mockUUID]: {
+                id: mockUUID,
+                resourceName: 'people/c123',
+                fieldPath: 'names',
+                newValue: [{ givenName: 'Jane' }],
+                oldValue: [{ givenName: 'John' }],
+                status: 'in-progress',
+                timestamp: new Date().toISOString(),
+                error: null,
+              },
+            },
+            retryCount: { [mockUUID]: 0 },
+            maxRetries: 5,
+          },
+        }),
+      );
+
+      const thunk = executeFieldUpdate({
+        resourceName: 'people/c123',
+        fieldPath: 'names',
+        newValue: [{ givenName: 'Jane' }],
+        oldValue: [{ givenName: 'John' }],
+      });
+
+      await thunk(dispatch, getState, undefined);
+
+      // API should only be called once (no retry)
+      expect(GoogleContactsService.updateContactField).toHaveBeenCalledTimes(1);
+
+      // Should dispatch operationConflict, not retryOperation
+      const conflictCall = dispatch.mock.calls.find(
+        (call: unknown[]) => call[0]?.type === operationConflict.type,
+      );
+      expect(conflictCall).toBeDefined();
+
+      const retryCalls = dispatch.mock.calls.filter(
+        (call: unknown[]) => call[0]?.type === retryOperation.type,
+      );
+      expect(retryCalls).toHaveLength(0);
+    });
+
+    it('executeFieldUpdate_Should_NotRollback_When_412ConflictDetected', async () => {
+      (GoogleContactsService.updateContactField as jest.Mock).mockResolvedValue({
+        success: false,
+        error: {
+          code: 'UPDATE_FIELD_FAILED',
+          message: 'HTTP 412 Precondition Failed',
+        },
+      });
+
+      (GoogleContactsService.getContact as jest.Mock).mockResolvedValue({
+        success: true,
+        data: mockContact,
+      });
+
+      const thunk = executeFieldUpdate({
+        resourceName: 'people/c123',
+        fieldPath: 'names',
+        newValue: [{ givenName: 'Jane' }],
+        oldValue: [{ givenName: 'John' }],
+      });
+
+      await thunk(dispatch, getState, undefined);
+
+      // Should NOT rollback (user decides via dialog)
+      // contactUpdated calls: 1 for optimistic update only (not a rollback)
+      const contactUpdatedCalls = dispatch.mock.calls.filter(
+        (call: unknown[]) => call[0]?.type === contactUpdated.type,
+      );
+      // Only the optimistic update, no rollback
+      expect(contactUpdatedCalls.length).toBe(1);
+    });
+
+    it('executeFieldUpdate_Should_ClearRetryTimer_When_412ConflictDetected', async () => {
+      (GoogleContactsService.updateContactField as jest.Mock).mockResolvedValue({
+        success: false,
+        error: {
+          code: 'UPDATE_FIELD_FAILED',
+          message: 'HTTP 412 Precondition Failed',
+        },
+      });
+
+      (GoogleContactsService.getContact as jest.Mock).mockResolvedValue({
+        success: true,
+        data: mockContact,
+      });
+
+      // Pre-set a timer for this operation
+      const timers = getPendingRetryTimers();
+      timers.set(
+        mockUUID,
+        setTimeout(() => {
+          /* noop */
+        }, 10000),
+      );
+      expect(timers.has(mockUUID)).toBe(true);
+
+      const thunk = executeFieldUpdate({
+        resourceName: 'people/c123',
+        fieldPath: 'names',
+        newValue: [{ givenName: 'Jane' }],
+        oldValue: [{ givenName: 'John' }],
+      });
+
+      await thunk(dispatch, getState, undefined);
+
+      // Timer should be cleared on conflict
+      expect(timers.has(mockUUID)).toBe(false);
     });
   });
 });

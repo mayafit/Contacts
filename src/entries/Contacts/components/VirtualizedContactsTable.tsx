@@ -6,9 +6,15 @@
  * Uses TanStack Table v8 for table features and TanStack Virtual for row virtualization
  */
 
-import React, { useRef, useMemo, useEffect } from 'react';
+import React, { useRef, useMemo, useEffect, useState, useCallback } from 'react';
 import { useSelector } from 'react-redux';
-import { useReactTable, getCoreRowModel, ColumnDef, CellContext, flexRender } from '@tanstack/react-table';
+import {
+  useReactTable,
+  getCoreRowModel,
+  ColumnDef,
+  CellContext,
+  flexRender,
+} from '@tanstack/react-table';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Box, CircularProgress, Typography, Paper } from '@mui/material';
 import {
@@ -20,8 +26,26 @@ import { selectColumnConfig } from '../redux/slices/ui/uiSlice';
 import { fetchContacts } from '../redux/slices/contacts/contactsSlice';
 import { useAppDispatch } from '../types/hooks';
 import { AVAILABLE_COLUMNS } from '../features/columnConfig/columnDefinitions';
+import { EditableCell } from './EditableCell';
 import { logger } from '../../../shared/logger';
 import type { Contact } from '../types/Contact';
+
+/**
+ * Mapping from column ID to the field path used by executeFieldUpdate
+ * and the human-readable label for accessibility.
+ * Only columns present here render as EditableCell.
+ */
+interface TableMeta {
+  focusedCell: { rowIndex: number; colIndex: number } | null;
+  handleCellNavigate: (rowIndex: number, colIndex: number, direction: 'right' | 'down') => void;
+  handleAutoEditConsumed: () => void;
+}
+
+const EDITABLE_COLUMN_MAP: Record<string, { fieldPath: string; fieldLabel: string }> = {
+  displayName: { fieldPath: 'names', fieldLabel: 'Name' },
+  phoneNumbers: { fieldPath: 'phoneNumbers', fieldLabel: 'Phone' },
+  emailAddresses: { fieldPath: 'emailAddresses', fieldLabel: 'Email' },
+};
 
 /**
  * Extract display name from contact
@@ -95,11 +119,31 @@ const VirtualizedContactsTable: React.FC = () => {
   const error = useSelector(selectContactsError);
   const columnConfig = useSelector(selectColumnConfig);
 
+  // Track focused cell for keyboard navigation (AC#5)
+  const [focusedCell, setFocusedCell] = useState<{ rowIndex: number; colIndex: number } | null>(
+    null,
+  );
+
+  const handleCellNavigate = useCallback(
+    (rowIndex: number, colIndex: number, direction: 'right' | 'down') => {
+      if (direction === 'down') {
+        setFocusedCell({ rowIndex: rowIndex + 1, colIndex });
+      } else {
+        setFocusedCell({ rowIndex, colIndex: colIndex + 1 });
+      }
+    },
+    [],
+  );
+
+  const handleAutoEditConsumed = useCallback(() => {
+    setFocusedCell(null);
+  }, []);
+
   // Fetch contacts on component mount
   useEffect(() => {
     logger.info(
       { context: 'VirtualizedContactsTable/mount' },
-      'Component mounted, dispatching fetchContacts action'
+      'Component mounted, dispatching fetchContacts action',
     );
     dispatch(fetchContacts());
   }, [dispatch]);
@@ -125,23 +169,40 @@ const VirtualizedContactsTable: React.FC = () => {
     if (!visibleColumns || visibleColumns.length === 0) {
       logger.warn(
         { context: 'VirtualizedContactsTable/columns' },
-        'No visible columns configured, using defaults'
+        'No visible columns configured, using defaults',
       );
       // Return default columns if config is invalid
-      return AVAILABLE_COLUMNS.filter((col) => col.isDefault).map((colDef) => ({
+      return AVAILABLE_COLUMNS.filter((col) => col.isDefault).map((colDef, colIndex) => ({
         id: colDef.id,
         header: colDef.label,
         accessorFn: (row: Contact) => colDef.accessor(row),
-        cell: (info: CellContext<Contact, unknown>) => (
-          <div style={{ padding: '12px' }}>{info.getValue() as string}</div>
-        ),
+        cell: (info: CellContext<Contact, unknown>) => {
+          const editableConfig = EDITABLE_COLUMN_MAP[colDef.id];
+          if (editableConfig) {
+            const meta = info.table.options.meta as TableMeta;
+            const isFocused =
+              meta.focusedCell?.rowIndex === info.row.index &&
+              meta.focusedCell?.colIndex === colIndex;
+            return (
+              <EditableCell
+                resourceName={info.row.original.resourceName}
+                fieldPath={editableConfig.fieldPath}
+                value={(info.getValue() as string) ?? ''}
+                fieldLabel={editableConfig.fieldLabel}
+                contactName={getDisplayName(info.row.original)}
+                onNavigate={(dir) => meta.handleCellNavigate(info.row.index, colIndex, dir)}
+                autoEdit={isFocused}
+                onAutoEditConsumed={meta.handleAutoEditConsumed}
+              />
+            );
+          }
+          return <div style={{ padding: '12px' }}>{info.getValue() as string}</div>;
+        },
       }));
     }
 
     // Get visible column definitions
-    const visibleColumnDefs = AVAILABLE_COLUMNS.filter((col) =>
-      visibleColumns.includes(col.id)
-    );
+    const visibleColumnDefs = AVAILABLE_COLUMNS.filter((col) => visibleColumns.includes(col.id));
 
     // Sort columns according to columnOrder
     const orderedColumns = visibleColumnDefs.sort((a, b) => {
@@ -151,21 +212,45 @@ const VirtualizedContactsTable: React.FC = () => {
     });
 
     // Convert to TanStack Table column definitions
-    return orderedColumns.map((colDef) => ({
+    return orderedColumns.map((colDef, colIndex) => ({
       id: colDef.id,
       header: colDef.label,
       accessorFn: (row: Contact) => colDef.accessor(row),
-      cell: (info: CellContext<Contact, unknown>) => (
-        <div style={{ padding: '12px' }}>{info.getValue() as string}</div>
-      ),
+      cell: (info: CellContext<Contact, unknown>) => {
+        const editableConfig = EDITABLE_COLUMN_MAP[colDef.id];
+        if (editableConfig) {
+          const meta = info.table.options.meta as TableMeta;
+          const isFocused =
+            meta.focusedCell?.rowIndex === info.row.index &&
+            meta.focusedCell?.colIndex === colIndex;
+          return (
+            <EditableCell
+              resourceName={info.row.original.resourceName}
+              fieldPath={editableConfig.fieldPath}
+              value={(info.getValue() as string) ?? ''}
+              fieldLabel={editableConfig.fieldLabel}
+              contactName={getDisplayName(info.row.original)}
+              onNavigate={(dir) => meta.handleCellNavigate(info.row.index, colIndex, dir)}
+              autoEdit={isFocused}
+              onAutoEditConsumed={meta.handleAutoEditConsumed}
+            />
+          );
+        }
+        return <div style={{ padding: '12px' }}>{info.getValue() as string}</div>;
+      },
     }));
   }, [columnConfig]);
 
-  // Initialize TanStack Table
+  // Initialize TanStack Table with navigation meta for EditableCell
   const table = useReactTable({
     data: contacts,
     columns,
     getCoreRowModel: getCoreRowModel(),
+    meta: {
+      focusedCell,
+      handleCellNavigate,
+      handleAutoEditConsumed,
+    } as TableMeta,
   });
 
   const { rows } = table.getRowModel();

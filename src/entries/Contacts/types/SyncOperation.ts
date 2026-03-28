@@ -9,8 +9,9 @@ import type { EntityState } from '@reduxjs/toolkit';
 
 /**
  * Possible statuses for a sync operation
+ * Story 3.7: Added 'conflict' status for 412 Precondition Failed handling
  */
-export type SyncOperationStatus = 'pending' | 'in-progress' | 'success' | 'failed';
+export type SyncOperationStatus = 'pending' | 'in-progress' | 'success' | 'failed' | 'conflict';
 
 /**
  * Represents a single contact field update operation in the sync queue
@@ -32,6 +33,8 @@ export interface SyncOperation {
   timestamp: string;
   /** Error message if operation failed */
   error: string | null;
+  /** Remote value fetched on conflict (412) for display in resolution dialog */
+  remoteValue?: unknown;
 }
 
 /**

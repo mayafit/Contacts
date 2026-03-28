@@ -19,36 +19,38 @@ export const selectSyncQueueState = (state: RootState): SyncQueueState | undefin
 /**
  * Select all sync operations as denormalized array
  */
-export const selectAllSyncOperations = createSelector(
-  [selectSyncQueueState],
-  (syncQueueState) => {
-    if (!syncQueueState) return [];
-    return syncQueueAdapterSelectors.selectAll(syncQueueState);
-  },
-);
+export const selectAllSyncOperations = createSelector([selectSyncQueueState], (syncQueueState) => {
+  if (!syncQueueState) return [];
+  return syncQueueAdapterSelectors.selectAll(syncQueueState);
+});
 
 /**
  * Select operations with status "pending"
  */
-export const selectPendingOperations = createSelector(
-  [selectAllSyncOperations],
-  (operations) => operations.filter((op) => op.status === 'pending'),
+export const selectPendingOperations = createSelector([selectAllSyncOperations], (operations) =>
+  operations.filter((op) => op.status === 'pending'),
 );
 
 /**
  * Select operations with status "failed"
  */
-export const selectFailedOperations = createSelector(
-  [selectAllSyncOperations],
-  (operations) => operations.filter((op) => op.status === 'failed'),
+export const selectFailedOperations = createSelector([selectAllSyncOperations], (operations) =>
+  operations.filter((op) => op.status === 'failed'),
 );
 
 /**
  * Select operations with status "in-progress"
  */
-export const selectInProgressOperations = createSelector(
-  [selectAllSyncOperations],
-  (operations) => operations.filter((op) => op.status === 'in-progress'),
+export const selectInProgressOperations = createSelector([selectAllSyncOperations], (operations) =>
+  operations.filter((op) => op.status === 'in-progress'),
+);
+
+/**
+ * Select operations with status "conflict" (412 Precondition Failed)
+ * Story 3.7: Used to drive the ConflictResolutionDialog
+ */
+export const selectConflictedOperations = createSelector([selectAllSyncOperations], (operations) =>
+  operations.filter((op) => op.status === 'conflict'),
 );
 
 /**
@@ -67,8 +69,7 @@ export const selectOperationById = createSelector(
  */
 export const selectOperationsByContact = createSelector(
   [selectAllSyncOperations, (_state: RootState, resourceName: string) => resourceName],
-  (operations, resourceName) =>
-    operations.filter((op) => op.resourceName === resourceName),
+  (operations, resourceName) => operations.filter((op) => op.resourceName === resourceName),
 );
 
 /**
@@ -95,12 +96,22 @@ export const selectHasMaxRetriesExceeded = createSelector(
 );
 
 /**
+ * Select maxRetries value from sync queue state
+ */
+export const selectMaxRetries = createSelector(
+  [selectSyncQueueState],
+  (syncQueueState) => syncQueueState?.maxRetries ?? 5,
+);
+
+/**
+ * Alias for selectOperationsByContact — matches Story 3.5 selector naming convention
+ */
+export const selectOperationByContact = selectOperationsByContact;
+
+/**
  * Select total number of operations in queue
  */
-export const selectQueueSize = createSelector(
-  [selectSyncQueueState],
-  (syncQueueState) => {
-    if (!syncQueueState) return 0;
-    return syncQueueState.ids.length;
-  },
-);
+export const selectQueueSize = createSelector([selectSyncQueueState], (syncQueueState) => {
+  if (!syncQueueState) return 0;
+  return syncQueueState.ids.length;
+});
