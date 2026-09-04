@@ -42,8 +42,34 @@ builder.Services.Configure<GoogleOAuthOptions>(options =>
 builder.Services.AddHostedService<VaultConfigurationService>();
 
 // Configure Redis connection
+//
+// AbortOnConnectFail=false is the whole point of this block, and it is the
+// difference between a pod that rides out a slow Redis and a pod that needs
+// hundreds of restarts to get lucky.
+//
+// StackExchange.Redis defaults that flag to TRUE, which makes the synchronous
+// Connect() below throw if Redis is not already accepting connections at the
+// instant this process starts. Nothing catches it, and this runs before the
+// host is even built, so the throw takes the container down -- straight into
+// CrashLoopBackOff, where the only thing that resolves it is Redis happening
+// to win the next startup race.
+//
+// That is not hypothetical. In the 2026-08-31 power outage every workload came
+// back at once; contacts-redis-master-0 was still starting, and this line had
+// restarted contacts-backend 755 times by the time anyone looked. The
+// surfaced error was a RedisConnectionException, which pointed here and hid
+// the actual trigger (a sealed Vault upstream) completely.
+//
+// With the flag off, Connect() returns immediately with a multiplexer that
+// reconnects in the background. A cold or briefly absent Redis then costs a
+// few seconds of degraded sessions instead of an outage.
 var redisConnectionString = builder.Configuration["Redis:ConnectionString"] ?? "localhost:6379";
-var redis = StackExchange.Redis.ConnectionMultiplexer.Connect(redisConnectionString);
+var redisOptions = ConfigurationOptions.Parse(redisConnectionString);
+redisOptions.AbortOnConnectFail = false;
+redisOptions.ConnectRetry = 5;
+redisOptions.ConnectTimeout = 5000;
+
+var redis = ConnectionMultiplexer.Connect(redisOptions);
 
 // Configure Data Protection to persist keys to Redis
 builder.Services.AddDataProtection()
@@ -53,7 +79,13 @@ builder.Services.AddDataProtection()
 // Configure session management with Redis
 builder.Services.AddStackExchangeRedisCache(options =>
 {
-    options.Configuration = redisConnectionString;
+    // Built from the same options, NOT from the raw string. The cache opens
+    // its own multiplexer, and passing the string here would parse it fresh
+    // with AbortOnConnectFail back at its default -- reintroducing the exact
+    // failure this block exists to remove, one connection over.
+    // Clone() because a multiplexer takes ownership of the instance it is
+    // given, and these are two separate connections.
+    options.ConfigurationOptions = redisOptions.Clone();
     options.InstanceName = "ContactsApi_";
 });
 
