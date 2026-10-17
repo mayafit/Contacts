@@ -33,6 +33,14 @@ public class VaultConfigurationService : IHostedService
     /// </summary>
     public async Task StartAsync(CancellationToken cancellationToken)
     {
+        if (!string.IsNullOrEmpty(_oauthOptions.ClientSecret))
+        {
+            // Already provided through configuration (Vault Agent sidecar env
+            // in the cluster), so there is nothing to fetch.
+            _logger.LogInformation("Google OAuth client secret provided by configuration; skipping direct Vault lookup");
+            return;
+        }
+
         try
         {
             _logger.LogInformation("Loading secrets from Vault...");
