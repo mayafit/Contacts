@@ -214,7 +214,10 @@ describe('syncQueueSlice', () => {
 
     it('operationFailed_Should_HandleGracefully_When_OperationNotInQueue', () => {
       // operationFailed on a nonexistent operation should not crash
-      const state = syncQueueReducer(initialState, operationFailed({ id: 'nonexistent', error: 'Error' }));
+      const state = syncQueueReducer(
+        initialState,
+        operationFailed({ id: 'nonexistent', error: 'Error' }),
+      );
 
       // retryCount incremented even though entity doesn't exist (defensive)
       expect(state.retryCount['nonexistent']).toBe(1);

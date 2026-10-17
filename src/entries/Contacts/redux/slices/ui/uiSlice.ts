@@ -7,6 +7,7 @@ import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 import { loadColumnConfig } from '../../../utils/storage';
 import { logger } from '../../../../../shared/logger';
 import type { ColumnConfig } from '../../../features/columnConfig/types';
+import { getColumnById, getDefaultColumns } from '../../../features/columnConfig/columnDefinitions';
 import type { RootState } from '../../../types/store';
 
 /**
@@ -22,8 +23,8 @@ export interface UIState {
  * Matches the default columns from Story 2.5: Name, Phone, Email
  */
 const defaultColumnConfig: ColumnConfig = {
-  visibleColumns: ['displayName', 'phoneNumbers', 'emailAddresses'],
-  columnOrder: ['displayName', 'phoneNumbers', 'emailAddresses'],
+  visibleColumns: getDefaultColumns().map((c) => c.id),
+  columnOrder: getDefaultColumns().map((c) => c.id),
 };
 
 /**
@@ -39,14 +40,14 @@ const loadPersistedColumnConfig = (): ColumnConfig => {
         context: 'uiSlice/loadPersistedColumnConfig',
         metadata: { persisted },
       },
-      'Loaded persisted column configuration from localStorage'
+      'Loaded persisted column configuration from localStorage',
     );
     return persisted;
   }
 
   logger.info(
     { context: 'uiSlice/loadPersistedColumnConfig' },
-    'No persisted column configuration found, using defaults'
+    'No persisted column configuration found, using defaults',
   );
   return defaultColumnConfig;
 };
@@ -75,26 +76,21 @@ const uiSlice = createSlice({
 
     /**
      * Toggle column visibility (add or remove)
-     * Default columns (displayName, phoneNumbers, emailAddresses) cannot be removed
+     * Locked columns (Name) cannot be removed
      */
     toggleColumn(state, action: PayloadAction<string>) {
       const columnId = action.payload;
       const { visibleColumns, columnOrder } = state.columnConfig;
 
-      // Prevent removal of default columns
-      const defaultColumns = ['displayName', 'phoneNumbers', 'emailAddresses'];
-      const isDefaultColumn = defaultColumns.includes(columnId);
+      // Prevent removal of locked columns (isDefault)
+      const isDefaultColumn = !!getColumnById(columnId)?.isDefault;
       const isCurrentlyVisible = visibleColumns.includes(columnId);
 
       if (isCurrentlyVisible) {
         // Remove column (only if not a default column)
         if (!isDefaultColumn) {
-          state.columnConfig.visibleColumns = visibleColumns.filter(
-            (id) => id !== columnId
-          );
-          state.columnConfig.columnOrder = columnOrder.filter(
-            (id) => id !== columnId
-          );
+          state.columnConfig.visibleColumns = visibleColumns.filter((id) => id !== columnId);
+          state.columnConfig.columnOrder = columnOrder.filter((id) => id !== columnId);
         }
       } else {
         // Add column
@@ -106,10 +102,7 @@ const uiSlice = createSlice({
     /**
      * Reorder columns by moving from oldIndex to newIndex
      */
-    reorderColumns(
-      state,
-      action: PayloadAction<{ oldIndex: number; newIndex: number }>
-    ) {
+    reorderColumns(state, action: PayloadAction<{ oldIndex: number; newIndex: number }>) {
       const { oldIndex, newIndex } = action.payload;
       const newOrder = [...state.columnConfig.columnOrder];
 
@@ -133,12 +126,7 @@ const uiSlice = createSlice({
 });
 
 // Export actions
-export const {
-  setColumnConfig,
-  toggleColumn,
-  reorderColumns,
-  resetColumnConfig,
-} = uiSlice.actions;
+export const { setColumnConfig, toggleColumn, reorderColumns, resetColumnConfig } = uiSlice.actions;
 
 // Selectors
 export const selectColumnConfig = (state: RootState): ColumnConfig =>

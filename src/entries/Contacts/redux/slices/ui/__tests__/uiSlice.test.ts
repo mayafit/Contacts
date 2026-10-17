@@ -16,7 +16,19 @@ import uiReducer, {
 import type { RootState } from '../../../../types/store';
 import { STORAGE_KEY } from '../../../../utils/storage/columnConfigStorage';
 
+/** Columns a new user sees (Epic 4: phonetic name, organization and labels added) */
+const DEFAULT_COLUMNS = [
+  'displayName',
+  'phoneticName',
+  'phoneNumbers',
+  'emailAddresses',
+  'organizations',
+  'labels',
+];
+const defaultConfig = { visibleColumns: DEFAULT_COLUMNS, columnOrder: DEFAULT_COLUMNS };
+
 describe('uiSlice', () => {
+  // A small 3-column layout used as the starting point for reducer tests
   const initialState: UIState = {
     columnConfig: {
       visibleColumns: ['displayName', 'phoneNumbers', 'emailAddresses'],
@@ -26,7 +38,7 @@ describe('uiSlice', () => {
 
   describe('reducers', () => {
     it('should return initial state', () => {
-      expect(uiReducer(undefined, { type: 'unknown' })).toEqual(initialState);
+      expect(uiReducer(undefined, { type: 'unknown' })).toEqual({ columnConfig: defaultConfig });
     });
 
     describe('setColumnConfig', () => {
@@ -74,29 +86,17 @@ describe('uiSlice', () => {
         expect(actual.columnConfig).toEqual(initialState.columnConfig);
       });
 
-      it('should NOT remove default column (phoneNumbers)', () => {
+      it('should remove columns that are shown by default but not locked (phoneNumbers)', () => {
         const actual = uiReducer(initialState, toggleColumn('phoneNumbers'));
 
-        expect(actual.columnConfig.visibleColumns).toContain('phoneNumbers');
-        expect(actual.columnConfig.columnOrder).toContain('phoneNumbers');
-        expect(actual.columnConfig).toEqual(initialState.columnConfig);
-      });
-
-      it('should NOT remove default column (emailAddresses)', () => {
-        const actual = uiReducer(initialState, toggleColumn('emailAddresses'));
-
-        expect(actual.columnConfig.visibleColumns).toContain('emailAddresses');
-        expect(actual.columnConfig.columnOrder).toContain('emailAddresses');
-        expect(actual.columnConfig).toEqual(initialState.columnConfig);
+        expect(actual.columnConfig.visibleColumns).toEqual(['displayName', 'emailAddresses']);
+        expect(actual.columnConfig.columnOrder).toEqual(['displayName', 'emailAddresses']);
       });
     });
 
     describe('reorderColumns', () => {
       it('should reorder columns from oldIndex to newIndex', () => {
-        const actual = uiReducer(
-          initialState,
-          reorderColumns({ oldIndex: 0, newIndex: 2 })
-        );
+        const actual = uiReducer(initialState, reorderColumns({ oldIndex: 0, newIndex: 2 }));
 
         expect(actual.columnConfig.columnOrder).toEqual([
           'phoneNumbers',
@@ -106,19 +106,13 @@ describe('uiSlice', () => {
       });
 
       it('should handle reordering to same position', () => {
-        const actual = uiReducer(
-          initialState,
-          reorderColumns({ oldIndex: 1, newIndex: 1 })
-        );
+        const actual = uiReducer(initialState, reorderColumns({ oldIndex: 1, newIndex: 1 }));
 
         expect(actual.columnConfig.columnOrder).toEqual(initialState.columnConfig.columnOrder);
       });
 
       it('should reorder from end to start', () => {
-        const actual = uiReducer(
-          initialState,
-          reorderColumns({ oldIndex: 2, newIndex: 0 })
-        );
+        const actual = uiReducer(initialState, reorderColumns({ oldIndex: 2, newIndex: 0 }));
 
         expect(actual.columnConfig.columnOrder).toEqual([
           'emailAddresses',
@@ -139,7 +133,7 @@ describe('uiSlice', () => {
 
         const actual = uiReducer(modifiedState, resetColumnConfig());
 
-        expect(actual.columnConfig).toEqual(initialState.columnConfig);
+        expect(actual.columnConfig).toEqual(defaultConfig);
       });
     });
   });
@@ -191,7 +185,8 @@ describe('uiSlice', () => {
 
     it('should use correct storage key constant', () => {
       // Verify the storage key matches acceptance criteria (Story 2.7)
-      expect(STORAGE_KEY).toBe('contacts:columnConfig');
+      // v2: saved 3-column layouts from before Epic 4 are replaced by the new defaults once
+      expect(STORAGE_KEY).toBe('contacts:columnConfig:v2');
     });
 
     it('should maintain column config structure through reducers', () => {
@@ -206,7 +201,7 @@ describe('uiSlice', () => {
       expect(state2.columnConfig.columnOrder).toBeInstanceOf(Array);
 
       const state3 = uiReducer(state2, resetColumnConfig());
-      expect(state3.columnConfig).toEqual(initialState.columnConfig);
+      expect(state3.columnConfig).toEqual(defaultConfig);
     });
   });
 });

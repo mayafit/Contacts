@@ -11,7 +11,9 @@ import type { ColumnConfig } from '../../features/columnConfig/types';
  * Storage key for column configuration in localStorage
  * Namespaced to avoid conflicts with other applications
  */
-export const STORAGE_KEY = 'contacts:columnConfig';
+// v2: Epic 4 added Phonetic name, Organization and Labels as default columns.
+// Bumping the key shows saved 3-column layouts the new defaults once.
+export const STORAGE_KEY = 'contacts:columnConfig:v2';
 
 /**
  * Save column configuration to browser localStorage
@@ -35,7 +37,7 @@ export const saveColumnConfig = (config: ColumnConfig): void => {
         context: 'columnConfigStorage/save',
         metadata: { config, error: error instanceof Error ? error.message : String(error) },
       },
-      'Failed to save column config to localStorage'
+      'Failed to save column config to localStorage',
     );
   }
 };
@@ -73,7 +75,7 @@ export const loadColumnConfig = (): ColumnConfig | null => {
         context: 'columnConfigStorage/load',
         metadata: { error: error instanceof Error ? error.message : String(error) },
       },
-      'Failed to load column config from localStorage, using defaults'
+      'Failed to load column config from localStorage, using defaults',
     );
     return null;
   }

@@ -1061,12 +1061,72 @@ describe('syncThunks', () => {
       );
       expect(startedCall[0].payload).toBe('op-1');
 
-      // API called with op-1's data
+      // API called with op-1's data and the contact's current etag
       expect(GoogleContactsService.updateContactField).toHaveBeenCalledWith(
         'people/c123',
         'names',
         'new1',
+        'etag-1',
       );
+    });
+  });
+
+  describe('executeFieldUpdate serialization', () => {
+    it('executeFieldUpdate_Should_SendEtagFromPreviousSave_When_TwoEditsHitSameContact', async () => {
+      // A live store stand-in: contactUpdated replaces the entity, like the real reducer
+      const state = createMockState();
+      const getState = () => state;
+      const dispatch = jest.fn((action: unknown) => {
+        const a = action as { type?: string; payload?: Contact };
+        if (a?.type === contactUpdated.type && a.payload) {
+          state.contacts!.contacts!.entities[a.payload.resourceName] = a.payload;
+        }
+        return action;
+      });
+
+      let releaseFirst: () => void = () => undefined;
+      (GoogleContactsService.updateContactField as jest.Mock)
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              releaseFirst = () =>
+                resolve({ success: true, data: { ...mockContact, etag: 'etag-2' } });
+            }),
+        )
+        .mockResolvedValueOnce({ success: true, data: { ...mockContact, etag: 'etag-3' } });
+
+      const first = executeFieldUpdate({
+        resourceName: 'people/c123',
+        fieldPath: 'names',
+        newValue: [{ givenName: 'A' }],
+        oldValue: mockContact.names,
+      })(dispatch, getState, undefined);
+      const second = executeFieldUpdate({
+        resourceName: 'people/c123',
+        fieldPath: 'phoneNumbers',
+        newValue: [{ value: '1' }],
+        oldValue: mockContact.phoneNumbers,
+      })(dispatch, getState, undefined);
+
+      const flush = async () => {
+        for (let i = 0; i < 20; i += 1) {
+          // eslint-disable-next-line no-await-in-loop -- drain the microtask queue
+          await Promise.resolve();
+        }
+      };
+      try {
+        // The second save waits for the first instead of racing it with the old etag
+        await flush();
+        expect(GoogleContactsService.updateContactField).toHaveBeenCalledTimes(1);
+      } finally {
+        releaseFirst();
+        await first;
+        await second;
+      }
+
+      const calls = (GoogleContactsService.updateContactField as jest.Mock).mock.calls;
+      expect(calls[0][3]).toBe('etag-1');
+      expect(calls[1][3]).toBe('etag-2');
     });
   });
 

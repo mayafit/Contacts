@@ -145,7 +145,11 @@ const createMockOperation = (overrides: Partial<SyncOperation> = {}): SyncOperat
  *   2nd: selectRetryCount → retry count number
  *   3rd: selectMaxRetries → max retries number
  */
-const setupSelector = (operations: SyncOperation[], retryCount: number = 0, maxRetries: number = 5): void => {
+const setupSelector = (
+  operations: SyncOperation[],
+  retryCount: number = 0,
+  maxRetries: number = 5,
+): void => {
   let callCount = 0;
   mockUseAppSelector.mockImplementation(() => {
     callCount += 1;

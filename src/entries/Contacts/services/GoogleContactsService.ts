@@ -8,7 +8,8 @@
 
 import { logger } from '../../../shared/logger';
 import { backendApiClient } from '../../../services/api/BackendApiClient';
-import type { Contact, APIResponse } from '../types/Contact';
+import type { Contact, ContactGroup, ContactPatch, APIResponse } from '../types/Contact';
+import { ApiRequestError } from '../../../services/api/BackendApiClient';
 import { UpdateContactFieldParamsSchema } from './schemas/updateContactFieldSchema';
 
 /**
@@ -18,6 +19,18 @@ import { UpdateContactFieldParamsSchema } from './schemas/updateContactFieldSche
  *
  * Note: No longer requires access token parameters - backend handles auth via cookies
  */
+/**
+ * Message and status of a failed call, keeping the "[HTTP nnn]" suffix that
+ * retry and conflict handling classify on.
+ * @param error - Caught error
+ * @param fallback - Message for non-Error throws
+ * @returns Message and optional status
+ */
+const describeError = (error: unknown, fallback: string): { message: string; status?: number } => ({
+  message: error instanceof Error ? error.message : fallback,
+  status: error instanceof ApiRequestError ? error.status : undefined,
+});
+
 export class GoogleContactsService {
   /**
    * Fetches all contacts from backend API
@@ -51,8 +64,10 @@ export class GoogleContactsService {
           `Fetching page ${pageCount}`,
         );
 
-        const { contacts, nextPageToken: nextToken } =
-          await backendApiClient.fetchContacts(1000, nextPageToken);
+        const { contacts, nextPageToken: nextToken } = await backendApiClient.fetchContacts(
+          1000,
+          nextPageToken,
+        );
 
         allContacts.push(...contacts);
         nextPageToken = nextToken;
@@ -103,9 +118,31 @@ export class GoogleContactsService {
         success: false,
         error: {
           code: 'FETCH_CONTACTS_FAILED',
-          message: 'Failed to fetch contacts from backend API',
+          ...describeError(error, 'Failed to fetch contacts from backend API'),
           details: error,
         },
+      };
+    }
+  }
+
+  /**
+   * Fetches the user's labels
+   * @returns Promise resolving to APIResponse with the groups
+   */
+  static async fetchContactGroups(): Promise<APIResponse<ContactGroup[]>> {
+    try {
+      return { success: true, data: await backendApiClient.fetchContactGroups() };
+    } catch (error) {
+      logger.warn(
+        {
+          context: 'GoogleContactsService/fetchContactGroups',
+          metadata: { errorMessage: error instanceof Error ? error.message : String(error) },
+        },
+        'Failed to fetch labels',
+      );
+      return {
+        success: false,
+        error: { code: 'FETCH_GROUPS_FAILED', ...describeError(error, 'Failed to fetch labels') },
       };
     }
   }
@@ -115,9 +152,7 @@ export class GoogleContactsService {
    * @param resourceName - Contact resource name (e.g., "people/123")
    * @returns Promise resolving to APIResponse with Contact
    */
-  static async getContact(
-    resourceName: string,
-  ): Promise<APIResponse<Contact>> {
+  static async getContact(resourceName: string): Promise<APIResponse<Contact>> {
     try {
       logger.info(
         {
@@ -173,7 +208,7 @@ export class GoogleContactsService {
    */
   static async updateContact(
     resourceName: string,
-    updates: Partial<Contact>,
+    updates: ContactPatch,
   ): Promise<APIResponse<Contact>> {
     try {
       logger.info(
@@ -187,10 +222,7 @@ export class GoogleContactsService {
         'Updating contact via backend',
       );
 
-      const updatedContact = await backendApiClient.updateContact(
-        resourceName,
-        updates as Contact, // Backend expects full Contact object
-      );
+      const updatedContact = await backendApiClient.updateContact(resourceName, updates);
 
       logger.info(
         {
@@ -221,7 +253,7 @@ export class GoogleContactsService {
         success: false,
         error: {
           code: 'UPDATE_CONTACT_FAILED',
-          message: `Failed to update contact: ${resourceName}`,
+          ...describeError(error, `Failed to update contact: ${resourceName}`),
           details: error,
         },
       };
@@ -234,12 +266,14 @@ export class GoogleContactsService {
    * @param resourceName - Contact resource name (e.g., "people/c123")
    * @param fieldPath - Field to update (e.g., "names", "phoneNumbers")
    * @param newValue - New value for the field
+   * @param etag - Etag the contact was last read with
    * @returns Promise resolving to APIResponse with updated Contact
    */
   static async updateContactField(
     resourceName: string,
     fieldPath: string,
     newValue: unknown,
+    etag?: string | null,
   ): Promise<APIResponse<Contact>> {
     // Validate inputs using Zod schema
     const validationResult = UpdateContactFieldParamsSchema.safeParse({
@@ -284,6 +318,7 @@ export class GoogleContactsService {
         resourceName,
         fieldPath,
         newValue,
+        etag,
       );
 
       logger.info(
@@ -316,7 +351,7 @@ export class GoogleContactsService {
         success: false,
         error: {
           code: 'UPDATE_FIELD_FAILED',
-          message: `Failed to update ${fieldPath}`,
+          ...describeError(error, `Failed to update ${fieldPath}`),
           details: error,
         },
       };
