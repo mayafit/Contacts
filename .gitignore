@@ -12,7 +12,6 @@ eslint-report.html
 /.factory/
 /.crush
 junit.xml
-package-lock.json
 
 # Environment variables
 .env

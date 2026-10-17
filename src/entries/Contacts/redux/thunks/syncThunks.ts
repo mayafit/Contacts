@@ -97,7 +97,7 @@ export function is412Error(errorMessage: string): boolean {
  * @returns The field value, or null if not found
  */
 export function extractFieldValue(contact: Contact, fieldPath: string): unknown {
-  return (contact as Record<string, unknown>)[fieldPath] ?? null;
+  return (contact as unknown as Record<string, unknown>)[fieldPath] ?? null;
 }
 
 /**
