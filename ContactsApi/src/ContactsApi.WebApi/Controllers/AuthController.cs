@@ -102,7 +102,7 @@ public class AuthController : ControllerBase
             if (!string.IsNullOrEmpty(error))
             {
                 _logger.LogWarning("OAuth error: {Error}", error);
-                return Redirect($"http://localhost:3002/login?error={Uri.EscapeDataString(error)}");
+                return RedirectToFrontend($"/login?error={Uri.EscapeDataString(error)}");
             }
 
             // Validate state parameter (CSRF protection)
@@ -110,7 +110,7 @@ public class AuthController : ControllerBase
             if (string.IsNullOrEmpty(expectedState) || expectedState != state)
             {
                 _logger.LogWarning("Invalid state parameter");
-                return Redirect("http://localhost:3002/login?error=invalid_state");
+                return RedirectToFrontend("/login?error=invalid_state");
             }
 
             // Clear state from session
@@ -119,7 +119,7 @@ public class AuthController : ControllerBase
             if (string.IsNullOrEmpty(code))
             {
                 _logger.LogWarning("No authorization code received");
-                return Redirect("http://localhost:3002/login?error=no_code");
+                return RedirectToFrontend("/login?error=no_code");
             }
 
             _logger.LogInformation("Exchanging authorization code for tokens");
@@ -132,7 +132,7 @@ public class AuthController : ControllerBase
             if (string.IsNullOrEmpty(clientSecret))
             {
                 _logger.LogError("Client secret not configured or not loaded from Vault");
-                return Redirect("http://localhost:3002/login?error=config_error");
+                return RedirectToFrontend("/login?error=config_error");
             }
 
             // Create OAuth flow
@@ -176,12 +176,12 @@ public class AuthController : ControllerBase
             _logger.LogInformation("OAuth flow completed successfully");
 
             // Redirect to frontend
-            return Redirect("http://localhost:3002/");
+            return RedirectToFrontend("/");
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error in OAuth callback");
-            return Redirect($"http://localhost:3002/login?error={Uri.EscapeDataString("auth_failed")}");
+            return RedirectToFrontend("/login?error=auth_failed");
         }
     }
 
@@ -340,6 +340,19 @@ public class AuthController : ControllerBase
                 "REFRESH_FAILED",
                 "Token refresh failed. Please sign in again."));
         }
+    }
+
+    /// <summary>
+    /// Redirect the browser to a path in the frontend app.
+    /// The base URL comes from Frontend:BaseUrl so the same build works locally
+    /// (http://localhost:3002) and behind the cluster's public hostname.
+    /// </summary>
+    /// <param name="pathAndQuery">Path starting with "/", optionally with a query string</param>
+    /// <returns>Redirect result to the frontend</returns>
+    private RedirectResult RedirectToFrontend(string pathAndQuery)
+    {
+        var baseUrl = (_configuration["Frontend:BaseUrl"] ?? "http://localhost:3002").TrimEnd('/');
+        return Redirect(baseUrl + pathAndQuery);
     }
 
     /// <summary>

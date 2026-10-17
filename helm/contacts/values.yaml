@@ -3,6 +3,9 @@
 # =============================================================================
 
 global:
+  # The URL users open in the browser. Drives the OAuth redirect URI, the
+  # post-login redirect and the CORS origin. Override per environment.
+  publicUrl: "http://contacts.lan"
   postgresql:
     port: 5432
     database: contactsdb
@@ -91,7 +94,6 @@ backend:
     ASPNETCORE_ENVIRONMENT: Production
     ASPNETCORE_URLS: "http://+:5000"
     DOTNET_RUNNING_IN_CONTAINER: "true"
-    Cors__AllowedOrigins__0: "http://contacts.lan"
     OTEL_EXPORTER_OTLP_ENDPOINT: "http://glutenguardian-seq.glutguard.svc.cluster.local:4317"
     JAEGER_ENDPOINT: "http://glutenguardian-jaeger-all-in-one.glutguard.svc.cluster.local:14268/api/traces"
 
