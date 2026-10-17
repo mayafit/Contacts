@@ -4,9 +4,12 @@
 # Story: 1-7-set-up-docker-deployment-configuration
 
 ###############################
-# Stage 1: Builder
+# Stage 1: Builder (runs on the build host's native arch)
 ###############################
-FROM node:18.20.4-alpine3.20 AS builder
+# The output is static JS/CSS, identical for every target platform, so there is
+# no reason to run npm under QEMU when cross-building for arm64 -- emulated
+# `npm ci` alone takes well over 20 minutes.
+FROM --platform=$BUILDPLATFORM node:18.20.4-alpine3.20 AS builder
 
 # Build arguments for React environment variables
 # These are baked into the bundle at build time
