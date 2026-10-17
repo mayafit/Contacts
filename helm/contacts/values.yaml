@@ -1,0 +1,168 @@
+# =============================================================================
+# Contacts Umbrella Chart - Default Values
+# =============================================================================
+
+global:
+  postgresql:
+    port: 5432
+    database: contactsdb
+    username: contactsapi
+  redis:
+    port: 6379
+
+# =============================================================================
+# Frontend subchart (React + Nginx)
+# =============================================================================
+frontend:
+  replicaCount: 1
+
+  image:
+    repository: ghcr.io/mayafit/contacts-frontend
+    tag: latest
+    pullPolicy: IfNotPresent
+    pullSecret: ""
+
+  service:
+    type: ClusterIP
+    port: 8080
+
+  ingress:
+    enabled: true
+    host: contacts.lan
+    entryPoints:
+      - web
+    tls:
+      enabled: false
+      secretName: ""
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+  nginx:
+    cspConnectSrc: "'self' https://accounts.google.com https://people.googleapis.com https://www.googleapis.com"
+
+  probes:
+    liveness:
+      path: /health
+      port: 8080
+      initialDelaySeconds: 10
+      periodSeconds: 30
+      timeoutSeconds: 3
+      failureThreshold: 3
+    readiness:
+      path: /health
+      port: 8080
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
+
+# =============================================================================
+# Backend subchart (C# ASP.NET Core)
+# =============================================================================
+backend:
+  replicaCount: 1
+
+  image:
+    repository: ghcr.io/mayafit/contacts-backend
+    tag: latest
+    pullPolicy: IfNotPresent
+    pullSecret: ""
+
+  service:
+    type: ClusterIP
+    port: 5000
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  # Non-secret environment variables (go into ConfigMap)
+  config:
+    ASPNETCORE_ENVIRONMENT: Production
+    ASPNETCORE_URLS: "http://+:5000"
+    DOTNET_RUNNING_IN_CONTAINER: "true"
+    Cors__AllowedOrigins__0: "http://contacts.lan"
+    OTEL_EXPORTER_OTLP_ENDPOINT: "http://glutenguardian-seq.glutguard.svc.cluster.local:4317"
+    JAEGER_ENDPOINT: "http://glutenguardian-jaeger-all-in-one.glutguard.svc.cluster.local:14268/api/traces"
+
+  # Secret values - override at install time via --set or Vault
+  secrets:
+    existingSecret: ""
+    googleClientId: "CHANGE_ME"
+    googleClientSecret: "CHANGE_ME"
+    dbPassword: "CHANGE_ME"
+
+  # Vault Agent Injector settings
+  vault:
+    enabled: false
+    kvPath: "secret/data/contacts"
+    role: "contacts"
+    authPath: "auth/kubernetes"
+
+  probes:
+    liveness:
+      path: /health
+      port: 5000
+      initialDelaySeconds: 15
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 3
+    readiness:
+      path: /health
+      port: 5000
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
+
+# =============================================================================
+# Bitnami PostgreSQL
+# =============================================================================
+postgresql:
+  auth:
+    username: contactsapi
+    password: contactspassword
+    database: contactsdb
+  primary:
+    persistence:
+      enabled: true
+      size: 5Gi
+      storageClass: local-path
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+# =============================================================================
+# Bitnami Redis
+# =============================================================================
+redis:
+  auth:
+    enabled: false
+  master:
+    persistence:
+      enabled: true
+      size: 1Gi
+      storageClass: local-path
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
+  replica:
+    replicaCount: 0

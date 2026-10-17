@@ -1,0 +1,9 @@
+replicaCount: 1
+image:
+  repository: ghcr.io/mayafit/contacts-frontend
+  tag: latest
+  pullPolicy: IfNotPresent
+  pullSecret: ""
+service:
+  type: ClusterIP
+  port: 8080

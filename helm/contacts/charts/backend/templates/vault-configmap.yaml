@@ -1,0 +1,15 @@
+{{- if .Values.vault.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "backend.fullname" . }}-vault-config
+  labels:
+    {{- include "backend.labels" . | nindent 4 }}
+data:
+  env.tmpl: |
+    {{`{{ with secret "`}}{{ .Values.vault.kvPath }}{{`" }}`}}
+    export GoogleOAuth__ClientId="{{ `{{ .Data.data.GoogleOAuth__ClientId }}` }}"
+    export GoogleOAuth__ClientSecret="{{ `{{ .Data.data.GoogleOAuth__ClientSecret }}` }}"
+    export Database__ConnectionString="{{ `{{ .Data.data.Database__ConnectionString }}` }}"
+    {{`{{ end }}`}}
+{{- end }}
