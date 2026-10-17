@@ -29,13 +29,16 @@ builder.Services.AddControllers();
 // Register Vault client for secret management
 builder.Services.AddSingleton<IVaultClient, VaultClient>();
 
-// Configure Google OAuth options (secret loaded from Vault at startup)
+// Configure Google OAuth options
 builder.Services.Configure<GoogleOAuthOptions>(options =>
 {
     options.ClientId = builder.Configuration["GoogleOAuth:ClientId"] ?? string.Empty;
     options.RedirectUri = builder.Configuration["GoogleOAuth:RedirectUri"] ?? string.Empty;
     options.Scopes = builder.Configuration.GetSection("GoogleOAuth:Scopes").Get<string[]>() ?? Array.Empty<string>();
-    // ClientSecret will be loaded from Vault by VaultConfigurationService
+    // In the cluster the Vault Agent sidecar delivers the secret as the
+    // GoogleOAuth__ClientSecret env var, so read it from configuration first.
+    // VaultConfigurationService only fills it in (local dev) when it is empty.
+    options.ClientSecret = builder.Configuration["GoogleOAuth:ClientSecret"] ?? string.Empty;
 });
 
 // Register hosted service to load secrets from Vault at startup
@@ -97,7 +100,9 @@ builder.Services.AddSession(options =>
     options.Cookie.SameSite = SameSiteMode.Lax; // Allow OAuth redirects while maintaining CSRF protection
     options.Cookie.IsEssential = true; // Required for GDPR compliance
     options.Cookie.Name = ".ContactsApi.Session";
-    options.Cookie.Domain = "localhost"; // Allow cookie to work across different ports on localhost
+    // No Cookie.Domain: a host-only cookie works on whichever host serves the
+    // app (cookies ignore ports, so localhost:3002 -> :5000 still works), while
+    // a hardcoded "localhost" made browsers drop the cookie everywhere else.
     options.Cookie.Path = "/"; // Cookie available for all paths
 });
 

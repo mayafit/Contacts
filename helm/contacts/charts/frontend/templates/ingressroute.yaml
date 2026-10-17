@@ -1,15 +1,8 @@
 {{- if .Values.ingress.enabled }}
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  name: {{ include "frontend.fullname" . }}-strip-api
-  labels:
-    {{- include "frontend.labels" . | nindent 4 }}
-spec:
-  stripPrefix:
-    prefixes:
-      - /api
----
+# Everything goes to the frontend nginx, which serves the SPA and proxies /api/
+# to the backend itself (see configmap.yaml). Routing /api here as well used to
+# strip the prefix the backend's routes depend on, and the Cloudflare tunnel
+# reaches nginx directly anyway, so nginx is the one place /api is handled.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -20,24 +13,6 @@ spec:
   entryPoints:
     {{- toYaml .Values.ingress.entryPoints | nindent 4 }}
   routes:
-    # Backend API route via hostname
-    - match: Host(`{{ .Values.ingress.host }}`) && PathPrefix(`/api`)
-      kind: Rule
-      priority: 100
-      middlewares:
-        - name: {{ include "frontend.fullname" . }}-strip-api
-      services:
-        - name: {{ .Release.Name }}-backend
-          port: 5000
-    # Backend API route via IP (catch-all)
-    - match: PathPrefix(`/api`)
-      kind: Rule
-      priority: 90
-      middlewares:
-        - name: {{ include "frontend.fullname" . }}-strip-api
-      services:
-        - name: {{ .Release.Name }}-backend
-          port: 5000
     # Frontend via hostname
     - match: Host(`{{ .Values.ingress.host }}`)
       kind: Rule

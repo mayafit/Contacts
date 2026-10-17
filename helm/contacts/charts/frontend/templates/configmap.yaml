@@ -92,6 +92,21 @@ data:
                 }
             }
 
+            # Backend API, same origin as the SPA: the session cookie stays
+            # first-party and no CORS is involved. Without this block nginx's
+            # SPA fallback answered /api/* with index.html (blank page on
+            # login). No URI on proxy_pass, so the /api prefix the backend's
+            # routes need is passed through unchanged.
+            location /api/ {
+                proxy_pass http://{{ .Release.Name }}-backend:5000;
+                proxy_http_version 1.1;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+                proxy_redirect off;
+            }
+
             location /health {
                 access_log off;
                 return 200 "healthy\n";
