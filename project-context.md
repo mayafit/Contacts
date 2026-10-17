@@ -32,6 +32,32 @@ async function fetchContacts() {  // Missing return type
 }
 ```
 
+**TypeScript Scope & Configuration**
+- Only `src/entries/Contacts` is in TS compilation scope (tsconfig excludes `Todos`, `external`, `src/store`)
+- Path aliases: `src/*` → `./src/*`, `bfSrc/*` → `./blueFiberSrc/*`
+- Target: ES2021, Module: es2020, JSX: react-jsx
+
+**Zod Validation at Service Layer**
+```typescript
+// ✅ ALWAYS: Validate inputs at service boundaries using Zod schemas
+// Schema files go in services/schemas/
+import { updateContactFieldSchema } from '../schemas/updateContactFieldSchema'
+
+const validated = updateContactFieldSchema.parse(input)
+// Then pass validated data to BackendApiClient
+```
+
+**Logging - Shared Logger**
+```typescript
+// ✅ ALWAYS: Import from shared logger
+import { logger } from '../../shared/logger'
+
+logger.info({ context: 'Contacts/ModuleName', metadata: { ... } }, 'Message')
+
+// ❌ NEVER: console.log, console.error, or raw Pino
+console.log('debug')  // Wrong
+```
+
 **React 18.3.1 Patterns**
 ```typescript
 // ✅ ALWAYS: Use hooks for state management
@@ -59,6 +85,39 @@ const contactsSlice = createSlice({
 const ADD_CONTACT = 'ADD_CONTACT'  // Don't use string constants
 ```
 
+**BlueFiber/WebKit Module Federation Pattern**
+```typescript
+// ✅ Dynamic reducer registration (BlueFiber micro-frontend pattern)
+import { getGlobals } from '../../GLOBALS'
+
+export const initContactsEntry = () => {
+  getGlobals().addDynamicReducer({
+    reducerName: 'contacts',
+    reducer: combineReducers({
+      auth: authReducer,
+      contacts: contactsReducer,
+      ui: uiReducer,
+      syncQueue: syncQueueReducer,
+    }),
+  })
+}
+
+// ❌ NEVER: Static store configuration — this is a micro-frontend
+// ❌ NEVER: Modify MODULES_EXPOSE.json without coordination
+// Only ./Init and ./ExternalAction are exposed via Module Federation
+```
+
+**Sync Orchestrator Pattern (Story 3.3)**
+```typescript
+// ✅ Sync flow: Component → dispatch(syncThunk) → SyncOrchestrator → Service → API
+// syncQueueSlice tracks pending/failed operations
+// syncThunks.ts coordinates the async sync flow
+// Exponential backoff retries: [100, 200, 400, 800, 1600]ms
+
+// ❌ NEVER: Bypass sync orchestrator for direct API mutations
+// ❌ NEVER: Manually manage retry logic in components
+```
+
 ### 2. Project Structure Rules
 
 **Feature-Based Organization**
@@ -74,7 +133,7 @@ src/entries/Contacts/
 **File Organization Rules**
 - ✅ Component files: `PascalCase.tsx` (e.g., `EditableContactGrid.tsx`)
 - ✅ Service files: `camelCase.ts` (e.g., `googleContactsService.ts`)
-- ✅ Test files: Colocated with source (e.g., `Component.test.tsx` next to `Component.tsx`)
+- ✅ Test files: In `__tests__/` folders colocated with source (e.g., `components/__tests__/Component.test.tsx`)
 - ❌ NEVER: kebab-case or snake_case for TypeScript files
 
 **Import Rules**
@@ -501,15 +560,45 @@ const MAX_RETRIES = 5
 
 ### 8. Testing Rules
 
-**Test Colocating**
-```typescript
-// ✅ ALWAYS: Colocate tests with source files
-EditableContactGrid.tsx
-EditableContactGrid.test.tsx      // Unit tests
-EditableContactGrid.stories.tsx   // Storybook stories
+**Test Organization — `__tests__/` Subdirectories**
+```
+// ✅ CORRECT: Tests in __tests__/ folders colocated with source
+components/
+├── ContactsHome.tsx
+├── ContactsTable.tsx
+└── __tests__/
+    ├── ContactsHome.a11y.test.tsx    // Accessibility test
+    ├── ContactsTable.test.tsx        // Unit test
+    └── VirtualizedContactsTable.test.tsx
 
-// ❌ NEVER: Separate test directories (except integration/e2e)
-tests/components/EditableContactGrid.test.tsx  // Wrong
+redux/slices/contacts/
+├── contactsSlice.ts
+├── selectors.ts
+└── __tests__/
+    └── contactsSlice.test.ts
+
+services/
+├── GoogleContactsService.ts
+└── __tests__/
+    └── GoogleContactsService.test.ts
+
+// ❌ WRONG: Flat test files next to source
+components/ContactsTable.test.tsx           // Wrong
+// ❌ WRONG: Centralized test directories
+tests/components/ContactsTable.test.tsx     // Wrong
+```
+
+**Accessibility Testing (jest-axe)**
+```typescript
+// ✅ Components should include .a11y.test.tsx for accessibility checks
+import { axe, toHaveNoViolations } from 'jest-axe'
+expect.extend(toHaveNoViolations)
+
+test('ContactsHome has no accessibility violations', async () => {
+  const { container } = render(<ContactsHome />)
+  const results = await axe(container)
+  expect(results).toHaveNoViolations()
+})
 ```
 
 **Testing Library Patterns**
@@ -530,29 +619,78 @@ test('sets state correctly', () => {
 })
 ```
 
+**Test Runner Configuration**
+- Run: `npm run test:jest` (Jest with `--maxWorkers=5 --experimental-vm-modules`)
+- Coverage: `npm run test:coverage`
+- lint-staged scope: Only `src/entries/Contacts/**/*.{ts,tsx}` files are linted/formatted on commit
+
 ---
 
 ## Technology Stack
 
 ### Core Dependencies (EXACT VERSIONS)
-```json
-{
-  "react": "18.3.1",
-  "typescript": "5.7.2",
-  "redux-toolkit": "2.4.0",
-  "@mui/material": "6.1.10",
-  "@tanstack/react-table": "8.22.2",
-  "@tanstack/react-virtual": "3.10.8",
-  "react-router": "7.12.0",
-  "react-hook-form": "7.71.0",
-  "@dnd-kit/core": "6.3.1",
-  "@react-oauth/google": "0.13.4",
-  "googleapis": "170.0.0",
-  "axios": "1.13.2"
-}
+| Package | Version | Notes |
+|---|---|---|
+| react | 18.3.1 | |
+| react-dom | 18.3.1 | |
+| typescript | 5.7.2 | Strict mode enabled |
+| @reduxjs/toolkit | 2.4.0 | |
+| react-redux | 8.1.3 | |
+| @mui/material | 6.1.10 | With @emotion/react 11.14.0 |
+| @tanstack/react-table | 8.21.3 | |
+| @tanstack/react-virtual | 3.13.18 | |
+| react-router | 7.12.0 | |
+| react-hook-form | 7.71.0 | |
+| zod | 4.3.5 | Runtime validation |
+| @dnd-kit/core | 6.3.1 | |
+| @dnd-kit/sortable | 9.0.0 | Column reordering |
+| @react-oauth/google | 0.13.4 | |
+| axios | 1.13.2 | |
+| allotment | 1.19.3 | Split panes |
+| lodash-es | 4.17.21 | Tree-shakeable utils |
+| react-toastify | 11.0.5 | Toast notifications |
+
+### Build & Dev Tools
+| Tool | Version |
+|---|---|
+| webpack | 5.97.1 |
+| storybook | 8.4.6 |
+| jest | 29.7.0 |
+| eslint | 9.16.0 |
+| prettier | 3.4.2 |
+| husky | 9.1.7 |
+
+### Platform
+- **Framework**: WebKit/BlueFiber (Module Federation micro-frontend)
+- **Dev port**: 3002
+- **Version format**: CalVer `YYmDD-build.N` (current: `26a26-build.3`)
+
+**IMPORTANT**: Use EXACT versions as specified. Do not use `^` or `~` prefixes. `googleapis` is a backend-only dependency — do NOT add it to the frontend.
+
+---
+
+## Code Quality & Tooling
+
+### Linting & Formatting
+- **ESLint v9** with flat config — plugins: `react`, `react-hooks`, `react-redux`, `jsx-a11y`, `sonarjs`, `testing-library`, `jest-dom`, `storybook`
+- **Prettier v3.4.2** — configured via `.prettierrc.json`
+- **Husky v9 + lint-staged** — pre-commit enforcement on `src/entries/Contacts/**/*.{ts,tsx}` only
+- Run: `npm run lint` (ESLint), `npm run format` (Prettier)
+
+### Documentation Headers
+```typescript
+// ✅ ALWAYS: Include @fileoverview and @module on all files
+/**
+ * @fileoverview Description of what this file does
+ * @module Contacts/path/ModuleName
+ */
 ```
 
-**IMPORTANT**: Use EXACT versions as specified. Do not use `^` or `~` prefixes.
+### Storybook
+- Stories in `__stories__/` folders: `__stories__/Component.stories.tsx`
+- Storybook v8.4.6 with `addon-essentials`, `addon-themes`, performance addon
+- Run: `npm run storybook` (port 6006)
+- Includes `ProviderFN.tsx` wrapper for Redux/theme context in stories
 
 ---
 
@@ -612,6 +750,50 @@ import { LoginButton } from '../auth/LoginButton'  // Wrong
 // Use Redux for cross-feature communication
 ```
 
+**5. Direct Google API Calls from Frontend**
+```typescript
+// ❌ WRONG: Frontend calling Google People API directly
+await fetch('https://people.googleapis.com/v1/people/me/connections')
+import { google } from 'googleapis'  // Wrong — backend-only package
+
+// ✅ CORRECT: Always go through backend proxy via service layer
+const response = await GoogleContactsService.fetchAllContacts()
+```
+
+**6. Modifying BlueFiber/WebKit Framework Files**
+```typescript
+// ❌ WRONG: Editing files in blueFiberSrc/, MODULES_EXPOSE.json, or GLOBALS
+// ❌ WRONG: Working outside the Contacts entry scope
+src/entries/Todos/          // Not in scope
+src/external/               // Not in scope
+src/store/                  // Not in scope (legacy)
+
+// ✅ CORRECT: Only work within src/entries/Contacts/
+```
+
+**7. Using console.log Instead of Shared Logger**
+```typescript
+// ❌ WRONG:
+console.log('debug info')
+console.error('something failed', error)
+
+// ✅ CORRECT:
+import { logger } from '../../shared/logger'
+logger.info({ context: 'Contacts/Module', metadata: { ... } }, 'debug info')
+logger.error({ context: 'Contacts/Module', metadata: { error: err.message } }, 'something failed', err)
+```
+
+**8. Exposing Backend Secrets in Frontend**
+```typescript
+// ❌ NEVER: Reference database or server credentials in frontend code
+POSTGRES_USER, POSTGRES_PASSWORD, GOOGLE_CLIENT_SECRET  // Backend-only
+
+// ✅ Frontend only uses:
+REACT_APP_API_BASE_URL    // Backend proxy URL
+REACT_APP_GOOGLE_CLIENT_ID // OAuth client ID (public)
+// Backend handles all token/session management via httpOnly cookies
+```
+
 ---
 
 ## Environment Configuration
@@ -619,7 +801,7 @@ import { LoginButton } from '../auth/LoginButton'  // Wrong
 ```bash
 # .env.example
 REACT_APP_GOOGLE_CLIENT_ID=<OAuth client ID from Google Cloud Console>
-REACT_APP_API_BASE_URL=https://people.googleapis.com/v1
+REACT_APP_API_BASE_URL=http://localhost:5000/api    # Backend proxy — NOT Google API directly
 ```
 
 **SECURITY RULES**:
@@ -747,18 +929,23 @@ REACT_APP_API_BASE_URL=https://people.googleapis.com/v1
 
 **Development Commands**:
 ```bash
-npm run dev          # Start development server with HMR
-npm run test         # Run Jest tests in watch mode
-npm run lint         # Run ESLint
-npm run build        # Production build
-npm run storybook    # Start Storybook
+npm run dev            # Start dev server (BlueFiber webpack, port 3002)
+npm run test:jest      # Run Jest tests (--maxWorkers=5)
+npm run test:coverage  # Run tests with coverage report
+npm run lint           # Run ESLint
+npm run format         # Run Prettier on src/**
+npm run build:prod     # Production build
+npm run build:e2e      # E2E build
+npm run build:debug    # Debug build (DEV_BUILD=true)
+npm run storybook      # Start Storybook (port 6006)
+npm run serve          # Serve dist on port 3002
 ```
 
 **Code Quality Gates**:
 - ✅ All files must pass `npm run lint` (ESLint + Prettier)
-- ✅ All tests must pass `npm run test`
+- ✅ All tests must pass `npm run test:jest`
 - ✅ TypeScript must compile with zero errors (`tsc --noEmit`)
-- ✅ Components should have colocated `.test.tsx` and `.stories.tsx` files
+- ✅ Components should have colocated `__tests__/` and `__stories__/` directories
 
 ---
 
@@ -822,5 +1009,21 @@ If you encounter ambiguity:
 
 ---
 
-_Last Updated: 2026-01-14_
+## Usage Guidelines
+
+**For AI Agents:**
+- Read this file before implementing any code
+- Follow ALL rules exactly as documented
+- When in doubt, prefer the more restrictive option
+- Only work within `src/entries/Contacts/` — do not modify framework files
+
+**For Humans:**
+- Keep this file lean and focused on agent needs
+- Update when technology stack changes
+- Review quarterly for outdated rules
+- Remove rules that become obvious over time
+
+---
+
+_Last Updated: 2026-03-25_
 _Architecture Status: READY FOR IMPLEMENTATION ✅_

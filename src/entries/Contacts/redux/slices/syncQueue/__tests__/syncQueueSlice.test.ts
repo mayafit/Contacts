@@ -48,7 +48,7 @@ describe('syncQueueSlice', () => {
       expect(initialState.ids).toEqual([]);
       expect(initialState.entities).toEqual({});
       expect(initialState.retryCount).toEqual({});
-      expect(initialState.maxRetries).toBe(3);
+      expect(initialState.maxRetries).toBe(5);
     });
   });
 

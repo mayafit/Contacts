@@ -1,0 +1,16 @@
+replicaCount: 1
+image:
+  repository: ghcr.io/mayafit/contacts-backend
+  tag: latest
+  pullPolicy: IfNotPresent
+  pullSecret: ""
+service:
+  type: ClusterIP
+  port: 5000
+
+# Vault Agent Injector settings (overridden by umbrella chart)
+vault:
+  enabled: false
+  kvPath: "secret/data/contacts"
+  role: "contacts"
+  authPath: "auth/kubernetes"

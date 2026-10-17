@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "backend.fullname" . }}-config
+  labels:
+    {{- include "backend.labels" . | nindent 4 }}
+data:
+  ASPNETCORE_ENVIRONMENT: {{ .Values.config.ASPNETCORE_ENVIRONMENT | quote }}
+  ASPNETCORE_URLS: {{ .Values.config.ASPNETCORE_URLS | quote }}
+  DOTNET_RUNNING_IN_CONTAINER: {{ .Values.config.DOTNET_RUNNING_IN_CONTAINER | quote }}
+  Redis__ConnectionString: {{ printf "%s-redis-master:%v" .Release.Name (.Values.global.redis.port | int) | quote }}
+  Cors__AllowedOrigins__0: {{ .Values.config.Cors__AllowedOrigins__0 | quote }}
+  OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.config.OTEL_EXPORTER_OTLP_ENDPOINT | quote }}
+  JAEGER_ENDPOINT: {{ .Values.config.JAEGER_ENDPOINT | quote }}

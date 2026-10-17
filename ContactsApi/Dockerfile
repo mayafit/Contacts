@@ -2,11 +2,17 @@
 # Multi-stage Dockerfile for ContactsApi backend
 # Compliant with CIS Docker Benchmark v1.6.0
 # Story: 2-1-backend-api
+# Supports cross-compilation: build on amd64, target arm64
 
 ###############################
-# Stage 1: Build
+# Stage 1: Build (runs on build host's native arch)
 ###############################
-FROM mcr.microsoft.com/dotnet/sdk:9.0-alpine AS build
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:9.0-alpine AS build
+
+# Resolve dotnet RID from Docker TARGETARCH (amd64→x64, arm64→arm64)
+ARG TARGETARCH
+RUN if [ "$TARGETARCH" = "arm64" ]; then echo "linux-musl-arm64" > /tmp/rid; \
+    else echo "linux-musl-x64" > /tmp/rid; fi
 
 # Create non-root user for build (CIS 4.1)
 RUN addgroup -g 1001 -S dotnet && \
@@ -22,7 +28,7 @@ COPY --chown=dotnet:dotnet src/ContactsApi.Infrastructure/ContactsApi.Infrastruc
 
 # Restore dependencies as non-root user
 USER dotnet
-RUN dotnet restore --runtime linux-musl-x64
+RUN dotnet restore --runtime $(cat /tmp/rid)
 
 # Copy remaining source code
 COPY --chown=dotnet:dotnet . .
@@ -32,14 +38,14 @@ USER root
 RUN mkdir -p /app/publish && chown -R dotnet:dotnet /app
 USER dotnet
 
-# Build and publish
+# Build and publish (cross-compiles natively — no QEMU needed)
 WORKDIR /src/src/ContactsApi.WebApi
 RUN dotnet publish -c Release -o /app/publish \
-    --runtime linux-musl-x64 \
+    --runtime $(cat /tmp/rid) \
     --self-contained false
 
 ###############################
-# Stage 2: Runtime
+# Stage 2: Runtime (runs on target arch)
 ###############################
 FROM mcr.microsoft.com/dotnet/aspnet:9.0-alpine
 
