@@ -38,8 +38,14 @@ public class MergeRequest
     /// <summary>Labels of the deleted contacts to add to the kept one</summary>
     public List<string> AddLabels { get; set; } = new();
 
-    /// <summary>The user saw which unmerged data the deleted contacts hold and accepted losing it</summary>
-    public bool AcknowledgeDataLoss { get; set; }
+    /// <summary>
+    /// Contacts whose unmerged data (as reported in a previous 409) the user accepted
+    /// losing. The acknowledgement covers exactly these contacts and nothing else.
+    /// </summary>
+    public List<string> AcknowledgedResourceNames { get; set; } = new();
+
+    /// <summary>Etags of the contacts to delete, as the client planned the merge with</summary>
+    public Dictionary<string, string> DeleteEtags { get; set; } = new();
 }
 
 /// <summary>

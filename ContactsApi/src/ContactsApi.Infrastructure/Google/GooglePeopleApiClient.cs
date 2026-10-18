@@ -217,7 +217,7 @@ public class GooglePeopleApiClient
     /// </summary>
     private const string UnmergedPersonFields =
         "photos,events,imClients,sipAddresses,locations,occupations,interests,skills," +
-        "miscKeywords,externalIds,calendarUrls,genders";
+        "miscKeywords,externalIds,calendarUrls,genders,clientData,locales";
 
     /// <summary>
     /// Deletes one contact
@@ -344,11 +344,30 @@ public class GooglePeopleApiClient
             Check("external IDs", person.ExternalIds?.Count(x => FromContact(x.Metadata)) ?? 0);
             Check("calendar links", person.CalendarUrls?.Count(x => FromContact(x.Metadata)) ?? 0);
             Check("gender", person.Genders?.Count(x => FromContact(x.Metadata)) ?? 0);
+            Check("app data", person.ClientData?.Count(x => FromContact(x.Metadata)) ?? 0);
+            Check("languages", person.Locales?.Count(x => FromContact(x.Metadata)) ?? 0);
 
             if (fields.Count > 0)
             {
                 result[resourceName] = fields;
             }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Current etag of each contact, read with the same fields as the contact list
+    /// so it is comparable with the etag the client holds.
+    /// </summary>
+    /// <param name="resourceNames">Contacts</param>
+    /// <returns>Resource name to etag</returns>
+    public async Task<Dictionary<string, string?>> GetEtagsAsync(IEnumerable<string> resourceNames)
+    {
+        var result = new Dictionary<string, string?>();
+        foreach (var resourceName in resourceNames)
+        {
+            result[resourceName] = (await GetContactAsync(resourceName)).Etag;
         }
 
         return result;

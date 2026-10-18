@@ -24,6 +24,8 @@ import { CallMerge } from '@mui/icons-material';
 import type { Contact, ContactGroup } from '../../types/Contact';
 import { useAppDispatch } from '../../types/hooks';
 import { mergeContacts, type CleanupError } from '../../redux/thunks/cleanupThunks';
+import { contactUpdated } from '../../redux/slices/contacts/contactsSlice';
+import { GoogleContactsService } from '../../services/GoogleContactsService';
 import ContactAvatar from '../common/ContactAvatar';
 import { planMerge, suggestPrimary } from '../../model/merge';
 import {
@@ -84,16 +86,27 @@ const MergeDialog: React.FC<MergeDialogProps> = ({ contacts, groups, onClose, on
   const [included, setIncluded] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<CleanupError | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  // Fresh copies after a "changed since loaded" refusal; they replace the props
+  const [refreshed, setRefreshed] = useState<Record<string, Contact>>({});
 
   useEffect(() => {
     if (contacts && contacts.length > 0) {
       setPrimary(suggestPrimary(contacts));
       setIncluded(new Set(contacts.map((c) => c.resourceName)));
       setError(null);
+      setNotice(null);
+      setRefreshed({});
     }
   }, [contacts]);
 
-  const list = contacts ?? [];
+  // A warning or acknowledgement belongs to one exact set: any change voids it
+  useEffect(() => {
+    setError(null);
+  }, [primary, included]);
+
+  const list = (contacts ?? []).map((c) => refreshed[c.resourceName] ?? c);
+  const tooMany = included.size > 20;
   const main = list.find((c) => c.resourceName === primary);
   const others = list.filter((c) => c.resourceName !== primary && included.has(c.resourceName));
   const plan = useMemo(
@@ -112,12 +125,30 @@ const MergeDialog: React.FC<MergeDialogProps> = ({ contacts, groups, onClose, on
       return next;
     });
 
-  const merge = async (acknowledgeDataLoss: boolean) => {
+  /** Re-reads every member from Google after the server said they changed */
+  const reloadMembers = async () => {
+    const fresh: Record<string, Contact> = {};
+    await Promise.all(
+      (contacts ?? []).map(async (c) => {
+        const r = await GoogleContactsService.getContact(c.resourceName);
+        if (r.success && r.data) {
+          fresh[c.resourceName] = r.data;
+          dispatch(contactUpdated(r.data));
+        }
+      }),
+    );
+    setRefreshed(fresh);
+    setError(null);
+    setNotice('Reloaded the latest versions from Google. Review the result and merge again.');
+  };
+
+  const merge = async (acknowledged: string[]) => {
     if (!main || !plan) {
       return;
     }
     setBusy(true);
     setError(null);
+    setNotice(null);
     try {
       const kept = await dispatch(
         mergeContacts({
@@ -125,7 +156,10 @@ const MergeDialog: React.FC<MergeDialogProps> = ({ contacts, groups, onClose, on
           patch: plan.patch,
           deleteResourceNames: others.map((o) => o.resourceName),
           addLabels: plan.addLabels,
-          acknowledgeDataLoss,
+          acknowledgedResourceNames: acknowledged,
+          deleteEtags: Object.fromEntries(
+            others.filter((o) => o.etag).map((o) => [o.resourceName, o.etag as string]),
+          ),
         }),
       ).unwrap();
       onMerged(kept, others.length);
@@ -140,6 +174,7 @@ const MergeDialog: React.FC<MergeDialogProps> = ({ contacts, groups, onClose, on
     getDisplayName(list.find((c) => c.resourceName === rn) ?? { resourceName: rn });
   const m = plan?.merged;
   const lost = error?.code === 'MERGE_WOULD_LOSE_DATA' ? error.lostData : undefined;
+  const stale = error?.code === 'CONTACT_CONFLICT';
 
   return (
     <Dialog open={!!contacts} onClose={busy ? undefined : onClose} maxWidth="md" fullWidth>
@@ -310,16 +345,49 @@ const MergeDialog: React.FC<MergeDialogProps> = ({ contacts, groups, onClose, on
                 </Box>
                 Merge them in Google Contacts instead, or merge here and lose that data.
               </Alert>
+            ) : stale ? (
+              <Alert
+                severity="warning"
+                action={
+                  <Button color="inherit" size="small" onClick={reloadMembers}>
+                    Reload
+                  </Button>
+                }
+              >
+                Some of these contacts changed in Google since they were loaded (for example on your
+                phone). Nothing was changed. Reload them and review the merge again.
+              </Alert>
             ) : error ? (
               <Alert severity="error">{error.message}</Alert>
+            ) : tooMany ? (
+              <Alert severity="warning">Merge at most 20 contacts at a time.</Alert>
             ) : (
-              <Alert severity="info" icon={false} sx={{ bgcolor: tokens.page }}>
-                The kept contact is saved first; only then{' '}
-                {others.length === 1
-                  ? 'is the other contact'
-                  : `are the other ${others.length} contacts`}{' '}
-                deleted.
-              </Alert>
+              <>
+                {notice && (
+                  <Alert severity="success" sx={{ mb: 1 }}>
+                    {notice}
+                  </Alert>
+                )}
+                {plan && plan.dropped.length > 0 && (
+                  <Alert severity="warning" sx={{ mb: 1 }}>
+                    Not kept (a contact has one name and one birthday):
+                    <Box component="ul" sx={{ m: 0, mt: 0.5, pl: 2.5 }}>
+                      {plan.dropped.map((d) => (
+                        <li key={d} dir="auto">
+                          {d}
+                        </li>
+                      ))}
+                    </Box>
+                  </Alert>
+                )}
+                <Alert severity="info" icon={false} sx={{ bgcolor: tokens.page }}>
+                  The kept contact is saved first; only then{' '}
+                  {others.length === 1
+                    ? 'is the other contact'
+                    : `are the other ${others.length} contacts`}{' '}
+                  deleted.
+                </Alert>
+              </>
             )}
           </Box>
         )}
@@ -332,7 +400,7 @@ const MergeDialog: React.FC<MergeDialogProps> = ({ contacts, groups, onClose, on
           <Button
             variant="contained"
             color="warning"
-            onClick={() => merge(true)}
+            onClick={() => merge(Object.keys(lost))}
             disabled={busy || !plan}
           >
             {busy ? 'Merging…' : 'Merge anyway'}
@@ -340,8 +408,8 @@ const MergeDialog: React.FC<MergeDialogProps> = ({ contacts, groups, onClose, on
         ) : (
           <Button
             variant="contained"
-            onClick={() => merge(false)}
-            disabled={busy || !plan}
+            onClick={() => merge([])}
+            disabled={busy || !plan || tooMany || stale}
             startIcon={busy ? <CircularProgress size={16} color="inherit" /> : <CallMerge />}
           >
             {busy ? 'Merging…' : `Merge ${others.length + 1} into 1`}

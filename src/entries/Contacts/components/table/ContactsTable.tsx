@@ -89,7 +89,7 @@ const ContactsTable: React.FC<ContactsTableProps> = ({
   onCheckedChange,
 }) => {
   const dispatch = useAppDispatch();
-  const lastCheckedIndex = useRef<number | null>(null);
+  const lastChecked = useRef<string | null>(null);
   const columnConfig = useSelector(selectColumnConfig);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [sort, setSort] = useState<SortState>({ columnId: 'displayName', desc: false });
@@ -260,14 +260,14 @@ const ContactsTable: React.FC<ContactsTableProps> = ({
     }
     const next = new Set(checked);
     const target = !next.has(sorted[index].resourceName);
-    const from =
-      shift && lastCheckedIndex.current !== null
-        ? Math.min(lastCheckedIndex.current, index)
-        : index;
-    const to =
-      shift && lastCheckedIndex.current !== null
-        ? Math.max(lastCheckedIndex.current, index)
-        : index;
+    // The anchor is remembered by identity: an index would point at a different
+    // row after the list is searched, filtered or re-sorted.
+    const anchor =
+      shift && lastChecked.current
+        ? sorted.findIndex((c) => c.resourceName === lastChecked.current)
+        : -1;
+    const from = anchor >= 0 ? Math.min(anchor, index) : index;
+    const to = anchor >= 0 ? Math.max(anchor, index) : index;
     for (let i = from; i <= to; i += 1) {
       if (target) {
         next.add(sorted[i].resourceName);
@@ -275,7 +275,7 @@ const ContactsTable: React.FC<ContactsTableProps> = ({
         next.delete(sorted[i].resourceName);
       }
     }
-    lastCheckedIndex.current = index;
+    lastChecked.current = sorted[index].resourceName;
     onCheckedChange!(next);
   };
 

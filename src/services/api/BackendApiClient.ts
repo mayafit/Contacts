@@ -79,8 +79,10 @@ export interface MergeRequest {
   deleteResourceNames: string[];
   /** Labels to add to the kept contact */
   addLabels: string[];
-  /** The user accepted losing data the app cannot merge */
-  acknowledgeDataLoss: boolean;
+  /** Contacts whose unmerged data (reported by a previous 409) the user accepted losing */
+  acknowledgedResourceNames: string[];
+  /** Etags of the contacts to delete as the merge was planned; changed ones are refused */
+  deleteEtags: Record<string, string>;
 }
 
 /**

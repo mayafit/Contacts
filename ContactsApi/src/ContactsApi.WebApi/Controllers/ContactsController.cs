@@ -125,7 +125,8 @@ public class ContactsController : ControllerBase
             return Unauthorized(ApiResponse<object>.ErrorResponse("UNAUTHORIZED", "Not authenticated. Please sign in."));
         }
 
-        var names = request.ResourceNames.Where(n => !string.IsNullOrWhiteSpace(n)).Distinct().ToList();
+        var names = (request.ResourceNames ?? new List<string>())
+            .Where(n => !string.IsNullOrWhiteSpace(n)).Distinct().ToList();
         if (names.Count is 0 or > 500)
         {
             return BadRequest(ApiResponse<object>.ErrorResponse("INVALID_REQUEST", "Delete between 1 and 500 contacts at a time"));
@@ -153,7 +154,11 @@ public class ContactsController : ControllerBase
             return Unauthorized(ApiResponse<MergeResult>.ErrorResponse("UNAUTHORIZED", "Not authenticated. Please sign in."));
         }
 
-        var deletes = request.DeleteResourceNames.Where(n => !string.IsNullOrWhiteSpace(n)).Distinct().ToList();
+        var deletes = (request.DeleteResourceNames ?? new List<string>())
+            .Where(n => !string.IsNullOrWhiteSpace(n)).Distinct().ToList();
+        var addLabels = (request.AddLabels ?? new List<string>()).Distinct().ToList();
+        var acknowledged = new HashSet<string>(request.AcknowledgedResourceNames ?? new List<string>());
+        var deleteEtags = request.DeleteEtags ?? new Dictionary<string, string>();
         if (string.IsNullOrWhiteSpace(request.PrimaryResourceName) || deletes.Count is 0 or > 50
             || deletes.Contains(request.PrimaryResourceName))
         {
@@ -163,18 +168,34 @@ public class ContactsController : ControllerBase
 
         var apiClient = new GooglePeopleApiClient(accessToken, _loggerFactory.CreateLogger<GooglePeopleApiClient>());
 
-        // 1. Refuse to lose data the merge cannot carry over, unless the user accepted it
-        if (!request.AcknowledgeDataLoss)
+        // 1a. The merge was planned from the client's copies; refuse if any contact
+        // to delete changed since (e.g. edited on a phone), or it would be deleted
+        // with data the plan never saw.
+        var current = await apiClient.GetEtagsAsync(deletes);
+        var changed = deletes
+            .Where(rn => deleteEtags.TryGetValue(rn, out var known) && known != current[rn])
+            .ToList();
+        if (changed.Count > 0)
         {
-            var unmerged = await apiClient.FindUnmergedDataAsync(deletes);
-            if (unmerged.Count > 0)
-            {
-                throw new GoogleApiException(
-                    GoogleApiErrorCodes.MergeWouldLoseData,
-                    "Some contacts to delete hold data this app cannot merge",
-                    context: unmerged.ToDictionary(kv => kv.Key, kv => (object)kv.Value),
-                    statusCode: StatusCodes.Status409Conflict);
-            }
+            throw new GoogleApiException(
+                GoogleApiErrorCodes.ContactConflict,
+                "Some contacts changed since they were loaded. Reload them and review the merge again. (Precondition Failed 412)",
+                context: changed.ToDictionary(rn => rn, _ => (object)"changed"),
+                statusCode: StatusCodes.Status412PreconditionFailed);
+        }
+
+        // 1b. Refuse to lose data the merge cannot carry over. An acknowledgement
+        // only covers the contacts it was given for; anything else is reported again.
+        var unmerged = await apiClient.FindUnmergedDataAsync(deletes);
+        var unacknowledged = unmerged.Where(kv => !acknowledged.Contains(kv.Key))
+            .ToDictionary(kv => kv.Key, kv => (object)kv.Value);
+        if (unacknowledged.Count > 0)
+        {
+            throw new GoogleApiException(
+                GoogleApiErrorCodes.MergeWouldLoseData,
+                "Some contacts to delete hold data this app cannot merge",
+                context: unacknowledged,
+                statusCode: StatusCodes.Status409Conflict);
         }
 
         // 2. Save the kept contact first; if this fails nothing has been deleted
@@ -184,8 +205,7 @@ public class ContactsController : ControllerBase
 
         // 3. Carry over labels
         var existing = new HashSet<string>(kept.Labels ?? new List<string>());
-        foreach (var label in request.AddLabels.Distinct().Where(l => !existing.Contains(l)
-                     && l is not "contactGroups/myContacts" and not "contactGroups/all"))
+        foreach (var label in addLabels.Where(l => !existing.Contains(l) && IsAssignableLabel(l)))
         {
             await apiClient.AddToGroupAsync(label, request.PrimaryResourceName);
         }
@@ -194,13 +214,36 @@ public class ContactsController : ControllerBase
         _logger.LogWarning("Merge into {Primary}: deleting {Count} contacts", request.PrimaryResourceName, deletes.Count);
         await apiClient.BatchDeleteContactsAsync(deletes);
 
-        if (request.AddLabels.Count > 0)
+        if (addLabels.Count > 0)
         {
-            kept = await apiClient.GetContactAsync(request.PrimaryResourceName);
+            // The merge itself is done; a failed refresh must not report it as failed.
+            try
+            {
+                kept = await apiClient.GetContactAsync(request.PrimaryResourceName);
+            }
+            catch (GoogleApiException ex)
+            {
+                _logger.LogWarning(ex, "Merged, but could not re-read {Primary}", request.PrimaryResourceName);
+            }
         }
 
         return Ok(ApiResponse<MergeResult>.SuccessResponse(new MergeResult { Contact = kept, Deleted = deletes }));
     }
+
+    /// <summary>
+    /// Labels a contact can be added to: user labels and "starred". Google rejects
+    /// adding members to the other system groups (friends, family, coworkers, ...).
+    /// </summary>
+    private static bool IsAssignableLabel(string label) =>
+        label == "contactGroups/starred"
+        || (label.StartsWith("contactGroups/", StringComparison.Ordinal)
+            && !SystemGroups.Contains(label));
+
+    private static readonly HashSet<string> SystemGroups = new()
+    {
+        "contactGroups/myContacts", "contactGroups/all", "contactGroups/starred", "contactGroups/friends",
+        "contactGroups/family", "contactGroups/coworkers", "contactGroups/chatBuddies", "contactGroups/blocked"
+    };
 
     /// <summary>True when a patch carries at least one field group</summary>
     private static bool HasGroups(Contact p) =>

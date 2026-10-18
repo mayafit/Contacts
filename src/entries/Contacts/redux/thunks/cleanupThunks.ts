@@ -43,16 +43,26 @@ const toCleanupError = (error: unknown): CleanupError => {
 export const deleteContacts = createAsyncThunk<number, string[], { rejectValue: CleanupError }>(
   'contacts/deleteContacts',
   async (resourceNames, { dispatch, rejectWithValue }) => {
+    let deleted = 0;
     try {
-      const deleted = await backendApiClient.deleteContacts(resourceNames);
-      dispatch(contactsRemoved(resourceNames));
+      // One request per 500; each successful chunk leaves the store at once, so a
+      // later failure never leaves deleted contacts on screen.
+      for (let i = 0; i < resourceNames.length; i += 500) {
+        const chunk = resourceNames.slice(i, i + 500);
+
+        deleted += await backendApiClient.deleteContacts(chunk);
+        dispatch(contactsRemoved(chunk));
+      }
       logger.info(
         { context: 'cleanupThunks/deleteContacts', metadata: { deleted } },
         'Contacts deleted',
       );
       return deleted;
     } catch (error) {
-      return rejectWithValue(toCleanupError(error));
+      const failure = toCleanupError(error);
+      return rejectWithValue(
+        deleted ? { ...failure, message: `${deleted} deleted, then: ${failure.message}` } : failure,
+      );
     }
   },
 );

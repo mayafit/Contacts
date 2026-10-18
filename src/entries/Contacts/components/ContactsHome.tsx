@@ -277,6 +277,12 @@ const ContactsHome: React.FC = () => {
     [checked, byResourceName],
   );
 
+  // Checks apply to what is on screen: a new search or filter starts a new
+  // selection, so a delete can never include rows the user cannot see.
+  useEffect(() => {
+    setChecked(new Set());
+  }, [filter, label, deferredQuery]);
+
   /** Forget removed contacts everywhere they may still be referenced */
   const forget = (removed: string[]) => {
     setChecked((prev) => {
@@ -299,7 +305,7 @@ const ContactsHome: React.FC = () => {
   const handleMerged = (kept: Contact, removed: number) => {
     const removedNames = (mergeTargets ?? [])
       .map((c) => c.resourceName)
-      .filter((rn) => rn !== kept.resourceName && !byResourceName.has(rn));
+      .filter((rn) => rn !== kept.resourceName);
     setMergeTargets(null);
     forget(removedNames);
     setChecked(new Set());
