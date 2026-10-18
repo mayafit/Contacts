@@ -53,6 +53,26 @@ public class PersonActivity
     public Dictionary<string, int> MeetingMonths { get; set; } = new();
 }
 
+/// <summary>
+/// Someone seen in mail headers or as a meeting guest, with the names they appeared
+/// under. Lets the assistant find an address by name, contact or not.
+/// </summary>
+public class DirectoryEntry
+{
+    /// <summary>Display names seen for the address (at most 3)</summary>
+    public List<string> Names { get; set; } = new();
+    /// <summary>Emails the user sent them</summary>
+    public int Sent { get; set; }
+    /// <summary>Emails received from them</summary>
+    public int Received { get; set; }
+    /// <summary>Emails where both were recipients (e.g. cc'd together)</summary>
+    public int CopiedTogether { get; set; }
+    /// <summary>Past meetings together</summary>
+    public int Meetings { get; set; }
+    /// <summary>Last time seen in any of these</summary>
+    public DateTime? LastSeen { get; set; }
+}
+
 /// <summary>Everything known about a user's activity, kept per Google account</summary>
 public class ActivitySnapshot
 {
@@ -78,4 +98,10 @@ public class ActivitySnapshot
     public int MessagesScanned { get; set; }
     /// <summary>Activity per lower-case email address</summary>
     public Dictionary<string, PersonActivity> People { get; set; } = new();
+
+    /// <summary>
+    /// Names and addresses from mail headers and meeting guests. Null in snapshots
+    /// made before it existed (a full scan builds it).
+    /// </summary>
+    public Dictionary<string, DirectoryEntry>? Directory { get; set; }
 }

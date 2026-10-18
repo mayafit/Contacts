@@ -100,6 +100,19 @@ export interface ActivityStatusResponse {
   updatedAt?: string | null;
   since?: string | null;
   peopleCount: number;
+  /** The name directory (find a person by name in mail/meetings) exists */
+  hasDirectory?: boolean;
+}
+
+/** Someone seen in mail headers or as a meeting guest */
+export interface DirectoryMatch {
+  email: string;
+  names: string[];
+  sent: number;
+  received: number;
+  copiedTogether: number;
+  meetings: number;
+  lastSeen?: string | null;
 }
 
 /** Activity snapshot with the data */
@@ -582,6 +595,25 @@ export class BackendApiClient {
    */
   async getActivity(): Promise<ActivityResponse> {
     return unwrap(await this.request<ActivityResponse>('/activity'), 'Failed to read activity');
+  }
+
+  /**
+   * People seen in mail or meetings whose name or address matches
+   * @param queries - Name variants (e.g. Hebrew and English spellings)
+   * @param limit - Most matches
+   * @returns Whether the directory exists, and the matches
+   */
+  async findInDirectory(
+    queries: string[],
+    limit = 10,
+  ): Promise<{ available: boolean; matches: DirectoryMatch[] }> {
+    const q = encodeURIComponent(queries.map((x) => x.replace(/\|/g, ' ')).join('|'));
+    return unwrap(
+      await this.request<{ available: boolean; matches: DirectoryMatch[] }>(
+        `/activity/directory?q=${q}&limit=${limit}`,
+      ),
+      'Failed to search mail and calendar',
+    );
   }
 
   /**

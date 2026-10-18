@@ -144,6 +144,21 @@ const SET_FIELDS = {
 /** Gemini function declarations */
 export const TOOL_DECLARATIONS = [
   {
+    name: 'find_person',
+    description:
+      "Find a person by name: in the contacts AND in everyone seen in Gmail headers and calendar meetings (with the email addresses they used). Use this first whenever the user names someone, or asks for someone's email. Pass several spellings: the name in Hebrew and in English, a nickname, the family name alone.",
+    parameters: {
+      type: 'object',
+      properties: {
+        names: ARR(
+          { type: 'string' },
+          'Name variants, e.g. ["מוטי גת", "Motti Gat", "Moti Gat", "Gat"]',
+        ),
+      },
+      required: ['names'],
+    },
+  },
+  {
     name: 'get_overview',
     description:
       'Statistics about the whole address book: totals, field completeness, phone origins, name scripts, labels with counts, duplicates, organizations, activity availability.',
@@ -512,6 +527,15 @@ const search = (args: Record<string, unknown>, ctx: AssistantContext, memory: Se
   }
 
   const limit = Math.min(Math.max(Number(args.limit) || 25, 1), 100);
+  if (matches.length === 0 && text) {
+    // Nothing matched every word: offer contacts matching some of them
+    return {
+      total: 0,
+      contacts: [],
+      closeMatches: closeMatches(pool, [text]).map((c) => summarize(c, ctx)),
+      hint: 'No exact match. Try find_person with other spellings (Hebrew/English).',
+    };
+  }
   const searchId = `S${memory.size + 1}`;
   memory.set(
     searchId,
@@ -522,6 +546,105 @@ const search = (args: Record<string, unknown>, ctx: AssistantContext, memory: Se
     total: matches.length,
     returned: Math.min(limit, matches.length),
     contacts: matches.slice(0, limit).map((c) => summarize(c, ctx)),
+  };
+};
+
+/** Lower-case words of a name, without punctuation */
+const wordsOf = (text: string): string[] =>
+  text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}@.\s]/gu, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length >= 2);
+
+/** Name fields of a contact as one lower-case string */
+const nameTextOf = (c: Contact): string =>
+  [
+    getDisplayName(c),
+    getPhoneticName(c),
+    ...(c.nicknames ?? []).map((n) => n.value),
+    ...(c.emailAddresses ?? []).map((e) => e.value),
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+/**
+ * Contacts matching most words of any of the names (at least one), best first.
+ * @param pool - Contacts to search
+ * @param names - Name variants
+ * @param limit - How many
+ * @returns Contacts
+ */
+export const closeMatches = (pool: Contact[], names: string[], limit = 8): Contact[] => {
+  const variants = names.map(wordsOf).filter((w) => w.length > 0);
+  return pool
+    .map((c) => {
+      const text = nameTextOf(c);
+      const score = Math.max(
+        0,
+        ...variants.map((ws) => ws.filter((w) => text.includes(w)).length / ws.length),
+      );
+      return { c, score };
+    })
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map((x) => x.c);
+};
+
+/** find_person: contacts plus people seen in mail and meetings */
+const findPerson = async (args: Record<string, unknown>, ctx: AssistantContext) => {
+  const names = (Array.isArray(args.names) ? args.names : [args.names])
+    .map((n) => clean(String(n ?? '')))
+    .filter(Boolean)
+    .slice(0, 6);
+  if (!names.length) {
+    return { error: 'Give at least one name' };
+  }
+  const all = [...ctx.contacts, ...ctx.trashed];
+  const exact = all.filter((c) => names.some((n) => matchesQuery(c, n, searchTextOf(c))));
+  const contacts = (exact.length ? exact : closeMatches(all, names)).slice(0, 10);
+  const byEmail = new Map<string, Contact>();
+  all.forEach((c) =>
+    (c.emailAddresses ?? []).forEach(
+      (e) => e.value && byEmail.set(e.value.trim().toLowerCase(), c),
+    ),
+  );
+
+  let mailAndCalendar: unknown =
+    'Gmail & Calendar are not connected (Insights tab → Connect Gmail & Calendar).';
+  if (ctx.activityReady) {
+    const found = await backendApiClient.findInDirectory(names, 10);
+    mailAndCalendar = !found.available
+      ? 'Names from mail are still being collected (a scan is running); try again in a few minutes.'
+      : found.matches.map((m) => ({
+          email: m.email,
+          namesSeen: m.names,
+          emailsSent: m.sent,
+          emailsReceived: m.received,
+          copiedTogether: m.copiedTogether || undefined,
+          meetings: m.meetings || undefined,
+          lastSeen: m.lastSeen?.slice(0, 10),
+          contact: byEmail.get(m.email)
+            ? {
+                id: byEmail.get(m.email)!.resourceName,
+                name: getDisplayName(byEmail.get(m.email)!),
+              }
+            : 'not in contacts',
+        }));
+  }
+  return {
+    contacts: contacts.map((c) => ({
+      ...summarize(c, ctx),
+      inTrash: ctx.trashed.includes(c) || undefined,
+    })),
+    contactMatch: exact.length
+      ? 'exact'
+      : contacts.length
+        ? 'partial (some words matched)'
+        : 'none',
+    mailAndCalendar,
   };
 };
 
@@ -595,6 +718,8 @@ export const executeTool = async (
           : 'not connected (Insights tab → Connect Gmail & Calendar)',
       };
     }
+    case 'find_person':
+      return findPerson(args, ctx);
     case 'search_contacts':
       return search(args, ctx, memory);
     case 'get_contact': {

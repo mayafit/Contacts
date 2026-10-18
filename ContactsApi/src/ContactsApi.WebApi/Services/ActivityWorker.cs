@@ -157,6 +157,7 @@ public class ActivityWorker : BackgroundService
 
             var full = !job.Gmail
                 || job.Full
+                || snapshot.Directory == null
                 || snapshot.GmailHistoryId == null
                 || snapshot.FullScanAt == null
                 || now - snapshot.FullScanAt > FullScanEvery;
@@ -167,7 +168,9 @@ public class ActivityWorker : BackgroundService
                 // data partly updated, or the retry would count those messages twice
                 var copy = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, PersonActivity>>(
                     System.Text.Json.JsonSerializer.Serialize(snapshot.People))!;
-                aggregator = new ActivityAggregator(contactEmails, mine, copy);
+                var directoryCopy = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, DirectoryEntry>>(
+                    System.Text.Json.JsonSerializer.Serialize(snapshot.Directory))!;
+                aggregator = new ActivityAggregator(contactEmails, mine, copy, directoryCopy);
                 var read = await client.ScanMailChangesAsync(
                     aggregator, snapshot.GmailHistoryId!.Value, historyId, n => Beat("gmail", n), ct);
                 full = read == null;
@@ -201,7 +204,9 @@ public class ActivityWorker : BackgroundService
                 await client.ScanCalendarAsync(aggregator, now - Window, now.AddDays(60), n => Beat("calendar", n), ct);
             }
 
+            aggregator.PruneDirectory();
             snapshot.People = aggregator.People;
+            snapshot.Directory = aggregator.Directory;
             snapshot.GmailHistoryId = historyId;
             snapshot.Status = ActivityStatus.Ready;
             snapshot.UpdatedAt = DateTime.UtcNow;

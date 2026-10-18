@@ -220,7 +220,7 @@ public class GoogleActivityClient
             req.ShowDeleted = false;
             req.MaxResults = 2500;
             req.PageToken = pageToken;
-            req.Fields = "items(status,summary,start,attendees(email,self,responseStatus,resource)),nextPageToken";
+            req.Fields = "items(status,summary,start,attendees(email,displayName,self,responseStatus,resource)),nextPageToken";
             var page = await Run(() => req.ExecuteAsync(ct), "calendar");
             foreach (var ev in page.Items ?? new List<CalendarEvent>())
             {
@@ -243,7 +243,7 @@ public class GoogleActivityClient
                     start.Value,
                     ev.Summary,
                     attendees.Where(a => a.Self != true && a.Resource != true && a.ResponseStatus != "declined")
-                        .Select(a => a.Email ?? string.Empty),
+                        .Select(a => (a.Email ?? string.Empty, (string?)a.DisplayName)),
                     now);
             }
 
