@@ -26,6 +26,9 @@ interface ApiResponse<T> {
   status?: number;
 }
 
+/** Window event raised when an API call reports the Google session has ended */
+export const SESSION_EXPIRED_EVENT = 'contacts:session-expired';
+
 /**
  * Error thrown for a failed backend call. The message ends with "[HTTP <status>]"
  * so status-based classification (retryable, 412 conflict) works on the text alone.
@@ -79,6 +82,8 @@ export interface MergeRequest {
   deleteResourceNames: string[];
   /** Labels to add to the kept contact */
   addLabels: string[];
+  /** Move the merged-away contacts to the app's Trash instead of deleting them */
+  moveToTrash: boolean;
   /** Contacts whose unmerged data (reported by a previous 409) the user accepted losing */
   acknowledgedResourceNames: string[];
   /** Etags of the contacts to delete as the merge was planned; changed ones are refused */
@@ -152,6 +157,12 @@ export class BackendApiClient {
         },
       }))) as ApiResponse<T>;
       data.status = response.status;
+      // The Google session ended (refresh token expired or revoked). The app
+      // listens for this and sends the user to sign in; the status check is
+      // excluded because "not signed in" is its normal answer.
+      if (response.status === 401 && !endpoint.startsWith('/auth/')) {
+        window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT));
+      }
 
       if (!response.ok) {
         logger.error(
@@ -385,6 +396,30 @@ export class BackendApiClient {
   }
 
   /**
+   * Move contacts to the app's Trash label, or back out of it
+   * @param resourceNames - Contacts (sent 1000 per request)
+   * @param restore - True to take them out of Trash
+   * @returns The Trash label's resource name
+   */
+  async trashContacts(resourceNames: string[], restore = false): Promise<string> {
+    let label = '';
+    for (let i = 0; i < resourceNames.length; i += 1000) {
+      const response = await this.request<{ trashLabel: string }>(
+        `/contacts/trash${restore ? '?restore=true' : ''}`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ resourceNames: resourceNames.slice(i, i + 1000) }),
+        },
+      );
+      label = unwrap(
+        response,
+        restore ? 'Failed to restore contacts' : 'Failed to move contacts to Trash',
+      ).trashLabel;
+    }
+    return label;
+  }
+
+  /**
    * Merge contacts: the server saves the kept contact, then deletes the others.
    * Throws ApiRequestError with code MERGE_WOULD_LOSE_DATA (409) and details
    * { resourceName: fieldNames[] } when deleting would lose data the app does
@@ -392,7 +427,9 @@ export class BackendApiClient {
    * @param request - Merge request
    * @returns The kept contact and the deleted names
    */
-  async mergeContacts(request: MergeRequest): Promise<{ contact: Contact; deleted: string[] }> {
+  async mergeContacts(
+    request: MergeRequest,
+  ): Promise<{ contact: Contact; deleted: string[]; trashLabel?: string | null }> {
     logger.warn(
       {
         context: 'BackendApiClient',
@@ -403,13 +440,14 @@ export class BackendApiClient {
       },
       'Merging contacts',
     );
-    const response = await this.request<{ contact: Contact; deleted: string[] }>(
-      '/contacts/merge',
-      {
-        method: 'POST',
-        body: JSON.stringify(request),
-      },
-    );
+    const response = await this.request<{
+      contact: Contact;
+      deleted: string[];
+      trashLabel?: string | null;
+    }>('/contacts/merge', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    });
     return unwrap(response, 'Failed to merge contacts');
   }
 

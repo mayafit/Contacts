@@ -27,6 +27,8 @@ const LoginPage: React.FC = () => {
     no_code: 'Authentication failed: no authorization code received',
     config_error: 'Server configuration error. Please contact support.',
     auth_failed: 'Authentication failed. Please try again.',
+    session_expired:
+      'Your Google session ended. Sign in again; you will not need to approve access again.',
     missing_scope:
       'Google did not grant access to your contacts. Sign in again and make sure the "See, edit, download, and permanently delete your contacts" box is ticked.',
   };

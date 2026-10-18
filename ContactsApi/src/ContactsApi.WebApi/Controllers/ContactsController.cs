@@ -2,6 +2,7 @@ using ContactsApi.Core.Entities;
 using ContactsApi.Core.Exceptions;
 using ContactsApi.Infrastructure.Google;
 using ContactsApi.WebApi.Models.Responses;
+using ContactsApi.WebApi.Services;
 using Microsoft.AspNetCore.Mvc;
 
 namespace ContactsApi.WebApi.Controllers;
@@ -16,14 +17,20 @@ public class ContactsController : ControllerBase
 {
     private readonly ILogger<ContactsController> _logger;
     private readonly ILoggerFactory _loggerFactory;
+    private readonly GoogleTokenService _tokens;
 
     public ContactsController(
         ILogger<ContactsController> logger,
-        ILoggerFactory loggerFactory)
+        ILoggerFactory loggerFactory,
+        GoogleTokenService tokens)
     {
         _logger = logger;
         _loggerFactory = loggerFactory;
+        _tokens = tokens;
     }
+
+    /// <summary>Name of the label that serves as this app's Trash</summary>
+    public const string TrashLabelName = "Contacts app – Trash";
 
     /// <summary>
     /// Get all contacts with pagination support
@@ -48,13 +55,11 @@ public class ContactsController : ControllerBase
 
             // TODO: Get access token from session/auth context
             // For now, this is a placeholder - will be implemented with AuthController
-            var accessToken = HttpContext.Session.GetString("AccessToken");
+            var accessToken = await _tokens.GetAccessTokenAsync(HttpContext);
             if (string.IsNullOrEmpty(accessToken))
             {
                 _logger.LogWarning("No access token found in session");
-                return Unauthorized(ApiResponse<ContactsResponse>.ErrorResponse(
-                    "UNAUTHORIZED",
-                    "Not authenticated. Please sign in."));
+                return Unauthorized(ApiResponse<ContactsResponse>.ErrorResponse("SESSION_EXPIRED", "Your Google session expired. Please sign in again."));
             }
 
             // Validate page size
@@ -98,12 +103,10 @@ public class ContactsController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<List<ContactGroup>>), StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> GetContactGroups()
     {
-        var accessToken = HttpContext.Session.GetString("AccessToken");
+        var accessToken = await _tokens.GetAccessTokenAsync(HttpContext);
         if (string.IsNullOrEmpty(accessToken))
         {
-            return Unauthorized(ApiResponse<List<ContactGroup>>.ErrorResponse(
-                "UNAUTHORIZED",
-                "Not authenticated. Please sign in."));
+            return Unauthorized(ApiResponse<List<ContactGroup>>.ErrorResponse("SESSION_EXPIRED", "Your Google session expired. Please sign in again."));
         }
 
         var apiClient = new GooglePeopleApiClient(accessToken, _loggerFactory.CreateLogger<GooglePeopleApiClient>());
@@ -119,10 +122,10 @@ public class ContactsController : ControllerBase
     [HttpPost("batch-delete")]
     public async Task<IActionResult> BatchDelete([FromBody] BatchDeleteRequest request)
     {
-        var accessToken = HttpContext.Session.GetString("AccessToken");
+        var accessToken = await _tokens.GetAccessTokenAsync(HttpContext);
         if (string.IsNullOrEmpty(accessToken))
         {
-            return Unauthorized(ApiResponse<object>.ErrorResponse("UNAUTHORIZED", "Not authenticated. Please sign in."));
+            return Unauthorized(ApiResponse<object>.ErrorResponse("SESSION_EXPIRED", "Your Google session expired. Please sign in again."));
         }
 
         var names = (request.ResourceNames ?? new List<string>())
@@ -139,6 +142,43 @@ public class ContactsController : ControllerBase
     }
 
     /// <summary>
+    /// Move contacts to the app's Trash label (soft delete) or back out of it
+    /// </summary>
+    /// <param name="request">Contacts (1-1000)</param>
+    /// <param name="restore">True to take them out of Trash</param>
+    /// <returns>The Trash label's resource name</returns>
+    [HttpPost("trash")]
+    public async Task<IActionResult> Trash([FromBody] BatchDeleteRequest request, [FromQuery] bool restore = false)
+    {
+        var accessToken = await _tokens.GetAccessTokenAsync(HttpContext);
+        if (string.IsNullOrEmpty(accessToken))
+        {
+            return Unauthorized(ApiResponse<object>.ErrorResponse("SESSION_EXPIRED", "Your Google session expired. Please sign in again."));
+        }
+
+        var names = (request.ResourceNames ?? new List<string>())
+            .Where(n => !string.IsNullOrWhiteSpace(n)).Distinct().ToList();
+        if (names.Count is 0 or > 1000)
+        {
+            return BadRequest(ApiResponse<object>.ErrorResponse("INVALID_REQUEST", "Move between 1 and 1000 contacts at a time"));
+        }
+
+        var apiClient = new GooglePeopleApiClient(accessToken, _loggerFactory.CreateLogger<GooglePeopleApiClient>());
+        var trash = await apiClient.EnsureGroupAsync(TrashLabelName);
+        if (restore)
+        {
+            await apiClient.ModifyGroupMembersAsync(trash, Array.Empty<string>(), names);
+        }
+        else
+        {
+            await apiClient.ModifyGroupMembersAsync(trash, names, Array.Empty<string>());
+        }
+
+        _logger.LogInformation("{Action} {Count} contacts", restore ? "Restored" : "Trashed", names.Count);
+        return Ok(ApiResponse<object>.SuccessResponse(new { trashLabel = trash, count = names.Count }));
+    }
+
+    /// <summary>
     /// Merge contacts: save the merged data on the kept contact, then delete the others.
     /// Nothing is deleted unless the kept contact was saved, and nothing the app does
     /// not merge is lost without explicit acknowledgement (409 otherwise).
@@ -148,10 +188,10 @@ public class ContactsController : ControllerBase
     [HttpPost("merge")]
     public async Task<IActionResult> Merge([FromBody] MergeRequest request)
     {
-        var accessToken = HttpContext.Session.GetString("AccessToken");
+        var accessToken = await _tokens.GetAccessTokenAsync(HttpContext);
         if (string.IsNullOrEmpty(accessToken))
         {
-            return Unauthorized(ApiResponse<MergeResult>.ErrorResponse("UNAUTHORIZED", "Not authenticated. Please sign in."));
+            return Unauthorized(ApiResponse<MergeResult>.ErrorResponse("SESSION_EXPIRED", "Your Google session expired. Please sign in again."));
         }
 
         var deletes = (request.DeleteResourceNames ?? new List<string>())
@@ -210,9 +250,21 @@ public class ContactsController : ControllerBase
             await apiClient.AddToGroupAsync(label, request.PrimaryResourceName);
         }
 
-        // 4. Only now delete the merged-away contacts
-        _logger.LogWarning("Merge into {Primary}: deleting {Count} contacts", request.PrimaryResourceName, deletes.Count);
-        await apiClient.BatchDeleteContactsAsync(deletes);
+        // 4. Only now remove the merged-away contacts: to the app's Trash by
+        // default (restorable), or deleted when the client asked for that
+        string? trashLabel = null;
+        if (request.MoveToTrash)
+        {
+            var trash = await apiClient.EnsureGroupAsync(TrashLabelName);
+            trashLabel = trash;
+            _logger.LogInformation("Merge into {Primary}: moving {Count} contacts to Trash", request.PrimaryResourceName, deletes.Count);
+            await apiClient.ModifyGroupMembersAsync(trash, deletes, Array.Empty<string>());
+        }
+        else
+        {
+            _logger.LogWarning("Merge into {Primary}: deleting {Count} contacts", request.PrimaryResourceName, deletes.Count);
+            await apiClient.BatchDeleteContactsAsync(deletes);
+        }
 
         if (addLabels.Count > 0)
         {
@@ -227,7 +279,7 @@ public class ContactsController : ControllerBase
             }
         }
 
-        return Ok(ApiResponse<MergeResult>.SuccessResponse(new MergeResult { Contact = kept, Deleted = deletes }));
+        return Ok(ApiResponse<MergeResult>.SuccessResponse(new MergeResult { Contact = kept, Deleted = deletes, TrashLabel = trashLabel }));
     }
 
     /// <summary>
@@ -267,12 +319,10 @@ public class ContactsController : ControllerBase
             _logger.LogInformation("Fetching contact {ResourceName}", resourceName);
 
             // TODO: Get access token from session/auth context
-            var accessToken = HttpContext.Session.GetString("AccessToken");
+            var accessToken = await _tokens.GetAccessTokenAsync(HttpContext);
             if (string.IsNullOrEmpty(accessToken))
             {
-                return Unauthorized(ApiResponse<Contact>.ErrorResponse(
-                    "UNAUTHORIZED",
-                    "Not authenticated. Please sign in."));
+                return Unauthorized(ApiResponse<Contact>.ErrorResponse("SESSION_EXPIRED", "Your Google session expired. Please sign in again."));
             }
 
             // Decode resource name (it may be URL encoded)
@@ -300,10 +350,10 @@ public class ContactsController : ControllerBase
     [HttpDelete("{resourceName}")]
     public async Task<IActionResult> DeleteContact(string resourceName)
     {
-        var accessToken = HttpContext.Session.GetString("AccessToken");
+        var accessToken = await _tokens.GetAccessTokenAsync(HttpContext);
         if (string.IsNullOrEmpty(accessToken))
         {
-            return Unauthorized(ApiResponse<object>.ErrorResponse("UNAUTHORIZED", "Not authenticated. Please sign in."));
+            return Unauthorized(ApiResponse<object>.ErrorResponse("SESSION_EXPIRED", "Your Google session expired. Please sign in again."));
         }
 
         var decoded = Uri.UnescapeDataString(resourceName);
@@ -331,12 +381,10 @@ public class ContactsController : ControllerBase
             _logger.LogInformation("Updating contact {ResourceName}", resourceName);
 
             // TODO: Get access token from session/auth context
-            var accessToken = HttpContext.Session.GetString("AccessToken");
+            var accessToken = await _tokens.GetAccessTokenAsync(HttpContext);
             if (string.IsNullOrEmpty(accessToken))
             {
-                return Unauthorized(ApiResponse<Contact>.ErrorResponse(
-                    "UNAUTHORIZED",
-                    "Not authenticated. Please sign in."));
+                return Unauthorized(ApiResponse<Contact>.ErrorResponse("SESSION_EXPIRED", "Your Google session expired. Please sign in again."));
             }
 
             if (updates == null)

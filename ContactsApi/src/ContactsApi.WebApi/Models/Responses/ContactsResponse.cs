@@ -44,6 +44,9 @@ public class MergeRequest
     /// </summary>
     public List<string> AcknowledgedResourceNames { get; set; } = new();
 
+    /// <summary>Move merged-away contacts to the app's Trash label instead of deleting them</summary>
+    public bool MoveToTrash { get; set; } = true;
+
     /// <summary>Etags of the contacts to delete, as the client planned the merge with</summary>
     public Dictionary<string, string> DeleteEtags { get; set; } = new();
 }
@@ -56,6 +59,9 @@ public class MergeResult
     /// <summary>The kept contact as saved</summary>
     public Contact Contact { get; set; } = new();
 
-    /// <summary>Contacts deleted</summary>
+    /// <summary>Contacts deleted (or moved to Trash, see TrashLabel)</summary>
     public List<string> Deleted { get; set; } = new();
+
+    /// <summary>When the merged-away contacts were moved to Trash: the Trash label</summary>
+    public string? TrashLabel { get; set; }
 }

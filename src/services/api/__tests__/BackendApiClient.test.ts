@@ -4,7 +4,12 @@
  */
 
 import { jest } from '@jest/globals';
-import { ApiRequestError, BackendApiClient, backendApiClient } from '../BackendApiClient';
+import {
+  ApiRequestError,
+  BackendApiClient,
+  backendApiClient,
+  SESSION_EXPIRED_EVENT,
+} from '../BackendApiClient';
 import type { Contact } from '../../../entries/Contacts/types/Contact';
 
 // Mock global fetch
@@ -210,6 +215,36 @@ describe('BackendApiClient', () => {
       expect(error).toBeInstanceOf(ApiRequestError);
       expect((error as ApiRequestError).status).toBe(409);
       expect((error as ApiRequestError).details).toEqual({ 'people/c2': ['photo', 'events'] });
+    });
+  });
+
+  describe('session expiry', () => {
+    const respond401 = () =>
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: async () => ({
+          success: false,
+          error: { code: 'SESSION_EXPIRED', message: 'expired', timestamp: '' },
+        }),
+      });
+
+    it('announces an ended Google session so the app can send the user to sign in', async () => {
+      const listener = jest.fn();
+      window.addEventListener(SESSION_EXPIRED_EVENT, listener);
+      respond401();
+      await client.fetchContactGroups().catch(() => undefined);
+      window.removeEventListener(SESSION_EXPIRED_EVENT, listener);
+      expect(listener).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not treat "not signed in" from the status check as an expiry', async () => {
+      const listener = jest.fn();
+      window.addEventListener(SESSION_EXPIRED_EVENT, listener);
+      respond401();
+      await client.getAuthStatus().catch(() => undefined);
+      window.removeEventListener(SESSION_EXPIRED_EVENT, listener);
+      expect(listener).not.toHaveBeenCalled();
     });
   });
 

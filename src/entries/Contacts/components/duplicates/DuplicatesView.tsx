@@ -5,10 +5,19 @@
  */
 
 import React, { useMemo, useState } from 'react';
-import { Box, Button, Chip, Link, Paper, Typography } from '@mui/material';
-import { CallMerge, DeleteOutline, Email, OpenInNew, Person, Phone } from '@mui/icons-material';
+import { Box, Button, Chip, Link, Paper, Tooltip, Typography } from '@mui/material';
+import {
+  CallMerge,
+  DeleteOutline,
+  Email,
+  OpenInNew,
+  Person,
+  Phone,
+  Translate,
+} from '@mui/icons-material';
 import type { Contact } from '../../types/Contact';
 import type { DuplicateGroup, DuplicateReason } from '../../model/duplicates';
+import { isHebrewEnglishPair } from '../../model/merge';
 import ContactAvatar from '../common/ContactAvatar';
 import {
   formatBirthday,
@@ -208,6 +217,16 @@ const DuplicatesView: React.FC<DuplicatesViewProps> = ({
                   sx={{ bgcolor: tokens.raised }}
                 />
               ))}
+              {isHebrewEnglishPair(group.members) && (
+                <Tooltip title="Merging keeps the Hebrew name and stores the English one as its phonetic name">
+                  <Chip
+                    size="small"
+                    icon={<Translate sx={{ fontSize: 16 }} />}
+                    label="Hebrew + English"
+                    sx={{ bgcolor: 'rgba(57,135,229,0.15)', color: tokens.accent }}
+                  />
+                </Tooltip>
+              )}
               <Typography
                 variant="caption"
                 dir="auto"

@@ -9,7 +9,12 @@ import {
   backendApiClient,
   type MergeRequest,
 } from '../../../../services/api/BackendApiClient';
-import { contactsRemoved, contactUpdated } from '../slices/contacts/contactsSlice';
+import {
+  contactsRemoved,
+  contactUpdated,
+  fetchContactGroups,
+} from '../slices/contacts/contactsSlice';
+import type { RootState } from '../../types/store';
 import { logger } from '../../../../shared/logger';
 import type { Contact } from '../../types/Contact';
 
@@ -70,23 +75,81 @@ export const deleteContacts = createAsyncThunk<number, string[], { rejectValue: 
 /**
  * Merges contacts in Google: the kept contact is saved, the others deleted.
  */
-export const mergeContacts = createAsyncThunk<Contact, MergeRequest, { rejectValue: CleanupError }>(
-  'contacts/mergeContacts',
-  async (request, { dispatch, rejectWithValue }) => {
+/**
+ * Adds or removes a label on contacts already in the store (no reload needed),
+ * and loads the label list when the label is new (first use of Trash).
+ */
+const relabel = (
+  dispatch: (action: unknown) => unknown,
+  getState: () => RootState,
+  resourceNames: string[],
+  label: string,
+  add: boolean,
+): void => {
+  const state = getState();
+  const entities = state.contacts?.contacts?.entities ?? {};
+  resourceNames.forEach((rn) => {
+    const c = entities[rn] as Contact | undefined;
+    if (!c) {
+      return;
+    }
+    const labels = (c.labels ?? []).filter((l) => l !== label);
+    dispatch(contactUpdated({ ...c, labels: add ? [...labels, label] : labels }));
+  });
+  if (add && !state.contacts?.contacts?.groups?.[label]) {
+    dispatch(fetchContactGroups());
+  }
+};
+
+/**
+ * Moves contacts to the app's Trash label (soft delete) or restores them.
+ */
+export const trashContacts = createAsyncThunk<
+  string,
+  { resourceNames: string[]; restore: boolean },
+  { rejectValue: CleanupError; state: RootState }
+>(
+  'contacts/trashContacts',
+  async ({ resourceNames, restore }, { dispatch, getState, rejectWithValue }) => {
     try {
-      const { contact, deleted } = await backendApiClient.mergeContacts(request);
-      dispatch(contactUpdated(contact));
-      dispatch(contactsRemoved(deleted));
+      const label = await backendApiClient.trashContacts(resourceNames, restore);
+      relabel(dispatch, getState, resourceNames, label, !restore);
       logger.info(
         {
-          context: 'cleanupThunks/mergeContacts',
-          metadata: { kept: contact.resourceName, deleted: deleted.length },
+          context: 'cleanupThunks/trashContacts',
+          metadata: { count: resourceNames.length, restore },
         },
-        'Contacts merged',
+        restore ? 'Contacts restored' : 'Contacts moved to Trash',
       );
-      return contact;
+      return label;
     } catch (error) {
       return rejectWithValue(toCleanupError(error));
     }
   },
 );
+
+export const mergeContacts = createAsyncThunk<
+  Contact,
+  MergeRequest,
+  { rejectValue: CleanupError; state: RootState }
+>('contacts/mergeContacts', async (request, { dispatch, getState, rejectWithValue }) => {
+  try {
+    const { contact, deleted, trashLabel } = await backendApiClient.mergeContacts(request);
+    dispatch(contactUpdated(contact));
+    if (trashLabel) {
+      relabel(dispatch, getState, deleted, trashLabel, true);
+    } else {
+      dispatch(contactsRemoved(deleted));
+    }
+    logger.info(
+      {
+        context: 'cleanupThunks/mergeContacts',
+        metadata: { kept: contact.resourceName, deleted: deleted.length },
+      },
+      'Contacts merged',
+    );
+    return contact;
+  } catch (error) {
+    return rejectWithValue(toCleanupError(error));
+  }
+});

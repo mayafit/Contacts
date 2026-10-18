@@ -41,7 +41,9 @@ import {
   Search,
   ViewColumn,
 } from '@mui/icons-material';
-import { logout } from '../redux/slices/auth/authSlice';
+import { logoutUser } from '../redux/slices/auth/authSlice';
+import TrashView from './cleanup/TrashView';
+import { trashContacts } from '../redux/thunks/cleanupThunks';
 import { selectUser } from '../redux/slices/auth/selectors';
 import { selectConflictedOperations } from '../redux/slices/syncQueue/selectors';
 import { operationSuccess, operationFailed } from '../redux/slices/syncQueue/syncQueueSlice';
@@ -76,7 +78,10 @@ import { duplicateMemberSet, findDuplicateGroups } from '../model/duplicates';
 import { computeContactStats, type ContactFilter } from '../model/stats';
 import { tokens } from '../theme/contactsTheme';
 
-type View = 'contacts' | 'insights' | 'duplicates';
+type View = 'contacts' | 'insights' | 'duplicates' | 'trash';
+
+/** Label that holds the app's Trash (same name as the backend's) */
+export const TRASH_LABEL_NAME = 'Contacts app – Trash';
 
 const FILTERS: { id: ContactFilter; label: string }[] = [
   { id: 'all', label: 'All' },
@@ -97,10 +102,26 @@ const ContactsHome: React.FC = () => {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
   const user = useSelector(selectUser);
-  const contacts = useSelector(selectAllContacts) as Contact[];
+  const allContacts = useSelector(selectAllContacts) as Contact[];
   const loading = useSelector(selectContactsLoading);
   const error = useSelector(selectContactsError);
   const groups = useAppSelector(selectContactGroups) as Record<string, ContactGroup>;
+  // Contacts in the app's Trash are hidden from every view except Trash
+  const trashLabel = useMemo(
+    () =>
+      Object.values(groups).find(
+        (g) => g.name === TRASH_LABEL_NAME && g.groupType === 'USER_CONTACT_GROUP',
+      )?.resourceName,
+    [groups],
+  );
+  const contacts = useMemo(
+    () => (trashLabel ? allContacts.filter((c) => !c.labels?.includes(trashLabel)) : allContacts),
+    [allContacts, trashLabel],
+  );
+  const trashed = useMemo(
+    () => (trashLabel ? allContacts.filter((c) => c.labels?.includes(trashLabel)) : []),
+    [allContacts, trashLabel],
+  );
 
   const [view, setView] = useState<View>('contacts');
   const [query, setQuery] = useState('');
@@ -112,6 +133,7 @@ const ContactsHome: React.FC = () => {
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [deleteTargets, setDeleteTargets] = useState<Contact[] | null>(null);
   const [mergeTargets, setMergeTargets] = useState<Contact[] | null>(null);
+  const [deletePermanent, setDeletePermanent] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [reviewDomain, setReviewDomain] = useState<DomainInsight | null>(null);
   const [isColumnConfigOpen, setIsColumnConfigOpen] = useState(false);
@@ -208,8 +230,9 @@ const ContactsHome: React.FC = () => {
   const handleSignOut = () => {
     logger.info({ context: 'ContactsHome/handleSignOut' }, 'User initiated sign out');
     setAccountAnchor(null);
-    dispatch(logout());
-    navigate('/login');
+    // Ends the server session as well; the page alone forgetting the user
+    // left the session alive, so a reload signed straight back in.
+    void dispatch(logoutUser()).finally(() => navigate('/login'));
   };
 
   /**
@@ -299,11 +322,23 @@ const ContactsHome: React.FC = () => {
     }
   };
 
-  const handleDeleted = (count: number) => {
+  const handleDeleted = (count: number, permanent: boolean) => {
     const removed = (deleteTargets ?? []).map((c) => c.resourceName);
     setDeleteTargets(null);
     forget(removed);
-    setToast(count === 1 ? 'Contact deleted' : `${count} contacts deleted`);
+    const what = count === 1 ? 'Contact' : `${count} contacts`;
+    setToast(permanent ? `${what} deleted permanently` : `${what} moved to Trash`);
+  };
+
+  const restore = async (list: Contact[]) => {
+    try {
+      await dispatch(
+        trashContacts({ resourceNames: list.map((c) => c.resourceName), restore: true }),
+      ).unwrap();
+      setToast(list.length === 1 ? 'Contact restored' : `${list.length} contacts restored`);
+    } catch (e) {
+      setToast((e as { message?: string })?.message ?? 'Restore failed');
+    }
   };
 
   const handleMerged = (kept: Contact, removed: number) => {
@@ -557,6 +592,7 @@ const ContactsHome: React.FC = () => {
         >
           <Tab value="contacts" label="Contacts" />
           <Tab value="insights" label="Insights" />
+          <Tab value="trash" label={`Trash${trashed.length ? ` (${trashed.length})` : ''}`} />
           <Tab
             value="duplicates"
             label={
@@ -653,7 +689,7 @@ const ContactsHome: React.FC = () => {
         >
           <Avatar
             src={user?.profilePicture}
-            sx={{ width: 32, height: 32, fontSize: 14, bgcolor: tokens.raised }}
+            sx={{ width: 32, height: 32, fontSize: 14, bgcolor: tokens.accent, color: '#fff' }}
           >
             {userInitial}
           </Avatar>
@@ -663,10 +699,15 @@ const ContactsHome: React.FC = () => {
           open={!!accountAnchor}
           onClose={() => setAccountAnchor(null)}
         >
-          <MenuItem disabled sx={{ opacity: '1 !important' }}>
-            <Typography variant="body2" sx={{ color: tokens.textSecondary }}>
-              Signed in with Google
+          <MenuItem disabled sx={{ opacity: '1 !important', display: 'block' }}>
+            <Typography variant="body2" sx={{ fontWeight: 600 }}>
+              {user?.name || 'Signed in with Google'}
             </Typography>
+            {user?.email && (
+              <Typography variant="caption" sx={{ color: tokens.textSecondary }}>
+                {user.email}
+              </Typography>
+            )}
           </MenuItem>
           <MenuItem onClick={handleSignOut}>
             <ListItemIcon>
@@ -675,6 +716,11 @@ const ContactsHome: React.FC = () => {
             Sign out
           </MenuItem>
         </Menu>
+        <Tooltip title="Sign out">
+          <IconButton onClick={handleSignOut} aria-label="Sign out" size="small">
+            <LogoutIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
       </Box>
 
       {/* Views */}
@@ -690,6 +736,16 @@ const ContactsHome: React.FC = () => {
             onShowDuplicates={() => setView('duplicates')}
             orgInsights={orgInsights}
             onReviewDomain={setReviewDomain}
+          />
+        )}
+        {view === 'trash' && (
+          <TrashView
+            trashed={trashed}
+            onRestore={restore}
+            onDeleteForever={(list) => {
+              setDeletePermanent(true);
+              setDeleteTargets(list);
+            }}
           />
         )}
         {view === 'duplicates' && (
@@ -719,8 +775,15 @@ const ContactsHome: React.FC = () => {
       />
       <DeleteDialog
         contacts={deleteTargets}
-        onClose={() => setDeleteTargets(null)}
-        onDeleted={handleDeleted}
+        permanentOnly={deletePermanent}
+        onClose={() => {
+          setDeleteTargets(null);
+          setDeletePermanent(false);
+        }}
+        onDeleted={(count, permanent) => {
+          setDeletePermanent(false);
+          handleDeleted(count, permanent);
+        }}
       />
       <MergeDialog
         contacts={mergeTargets}
