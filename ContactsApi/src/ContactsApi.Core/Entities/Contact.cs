@@ -100,6 +100,9 @@ public class ContactNickname
 {
     /// <summary>Nickname value</summary>
     public string Value { get; set; } = string.Empty;
+
+    /// <summary>Type (DEFAULT, MAIDEN_NAME, INITIALS, ...)</summary>
+    public string? Type { get; set; }
 }
 
 /// <summary>Contact phone number</summary>
@@ -179,6 +182,36 @@ public class ContactOrganization
 
     /// <summary>Job description</summary>
     public string? JobDescription { get; set; }
+
+    // The fields below are not edited by the UI; they are carried so that saving
+    // the organizations group never wipes them.
+
+    /// <summary>Office location</summary>
+    public string? Location { get; set; }
+
+    /// <summary>Stock symbol</summary>
+    public string? Symbol { get; set; }
+
+    /// <summary>Organization domain</summary>
+    public string? Domain { get; set; }
+
+    /// <summary>Phonetic organization name</summary>
+    public string? PhoneticName { get; set; }
+
+    /// <summary>Cost center</summary>
+    public string? CostCenter { get; set; }
+
+    /// <summary>Whether this is the current organization</summary>
+    public bool? Current { get; set; }
+
+    /// <summary>Start date</summary>
+    public ContactDate? StartDate { get; set; }
+
+    /// <summary>End date</summary>
+    public ContactDate? EndDate { get; set; }
+
+    /// <summary>Full-time equivalent in millipercent</summary>
+    public int? FullTimeEquivalentMillipercent { get; set; }
 }
 
 /// <summary>Calendar date where any component may be absent (e.g. a birthday with no year)</summary>

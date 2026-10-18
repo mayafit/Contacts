@@ -383,9 +383,14 @@ export const matchesQuery = (
   }
   const qDigits = digitsOf(q);
   if (qDigits.length >= 3 && /^[\d\s()+-]+$/.test(q)) {
-    const tail = qDigits.startsWith('0') ? qDigits.slice(1) : qDigits;
+    // "050..." typed in local form also matches the same number stored as +972 50...
+    // (stripping the 0 instead would make "050" match every number containing "50")
+    const international = qDigits.startsWith('0') ? `972${qDigits.slice(1)}` : null;
     return (contact.phoneNumbers ?? []).some((p) =>
-      digitsOf(p.canonicalForm || p.value).includes(tail),
+      [p.value, p.canonicalForm].some((form) => {
+        const d = digitsOf(form);
+        return !!d && (d.includes(qDigits) || (!!international && d.includes(international)));
+      }),
     );
   }
   return q.split(' ').every((word) => text.includes(word));

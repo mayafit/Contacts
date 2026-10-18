@@ -56,16 +56,23 @@ const nameEdit: ColumnEdit = {
     );
   },
   apply: (c, text) => {
+    const name = editableName(getName(c));
+    const words = clean(text).split(' ').filter(Boolean);
+    // "John Ronald Tolkien" with a middle name on file keeps it as the middle
+    // name; otherwise first word -> given, rest -> family.
+    if (name.middleName && words.length >= 3) {
+      return [
+        {
+          ...name,
+          givenName: words[0],
+          middleName: words.slice(1, -1).join(' '),
+          familyName: words[words.length - 1],
+          displayName: null,
+        },
+      ];
+    }
     const { first, last } = splitFullName(text);
-    return [
-      {
-        ...editableName(getName(c)),
-        givenName: first,
-        middleName: null,
-        familyName: last,
-        displayName: null,
-      },
-    ];
+    return [{ ...name, givenName: first, middleName: null, familyName: last, displayName: null }];
   },
 };
 

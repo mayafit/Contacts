@@ -69,6 +69,23 @@ describe('findDuplicateGroups', () => {
     expect(findDuplicateGroups(few)).toHaveLength(1);
   });
 
+  it('matches names regardless of an honorific prefix', () => {
+    const groups = findDuplicateGroups([
+      c('a', {
+        names: [
+          {
+            displayName: 'Dr. Dana Levi',
+            honorificPrefix: 'Dr.',
+            givenName: 'Dana',
+            familyName: 'Levi',
+          },
+        ],
+      }),
+      c('b', { names: [{ displayName: 'Dana Levi', givenName: 'Dana', familyName: 'Levi' }] }),
+    ]);
+    expect(groups).toHaveLength(1);
+  });
+
   it('exposes member resource names', () => {
     const groups = findDuplicateGroups([
       c('a', { phoneNumbers: [{ value: '0521111111' }] }),

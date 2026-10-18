@@ -85,6 +85,11 @@ public class GooglePeopleApiClient
 
             var request = _peopleService.People.Connections.List("people/me");
             request.PersonFields = ReadPersonFields;
+            // Contact data only. The default also merges in the person's Google
+            // profile; those entries would then be written back as contact data
+            // the first time a group is saved (e.g. the profile name replacing
+            // the name the user gave the contact).
+            request.Sources = PeopleResource.ConnectionsResource.ListRequest.SourcesEnum.READSOURCETYPECONTACT;
             request.PageSize = pageSize;
             if (!string.IsNullOrEmpty(pageToken))
             {
@@ -130,6 +135,7 @@ public class GooglePeopleApiClient
 
             var request = _peopleService.People.Get(resourceName);
             request.PersonFields = ReadPersonFields;
+            request.Sources = PeopleResource.GetRequest.SourcesEnum.READSOURCETYPECONTACT;
 
             var person = await request.ExecuteAsync();
             var contact = MapPersonToContact(person);
@@ -182,6 +188,7 @@ public class GooglePeopleApiClient
             var request = _peopleService.People.UpdateContact(person, resourceName);
             request.UpdatePersonFields = string.Join(",", updateFields);
             request.PersonFields = ReadPersonFields;
+            request.Sources = PeopleResource.UpdateContactRequest.SourcesEnum.READSOURCETYPECONTACT;
 
             var updatedPerson = await request.ExecuteAsync();
 
@@ -347,7 +354,7 @@ public class GooglePeopleApiClient
         {
             fields.Add("nicknames");
             person.Nicknames = patch.Nicknames.Where(x => !string.IsNullOrWhiteSpace(x.Value))
-                .Select(x => new Nickname { Value = x.Value }).ToList();
+                .Select(x => new Nickname { Value = x.Value, Type = Blank(x.Type) }).ToList();
         }
 
         if (patch.PhoneNumbers != null)
@@ -383,9 +390,11 @@ public class GooglePeopleApiClient
                 PostalCode = Blank(a.PostalCode),
                 Country = Blank(a.Country),
                 CountryCode = Blank(a.CountryCode),
-                // Structured parts win; the formatted form only carries addresses
-                // that have no structured parts at all.
-                FormattedValue = HasStructuredAddress(a) ? null : Blank(a.FormattedValue)
+                // Passed through as read. Dropping it whenever any structured part
+                // was set lost the whole free-text address of entries such as
+                // { formattedValue: "Herzl 5, Tel Aviv", countryCode: "IL" }. The
+                // card clears it itself when the user edits a structured part.
+                FormattedValue = Blank(a.FormattedValue)
             }).Where(a => a.FormattedValue != null || HasStructuredAddress(a)).ToList();
         }
 
@@ -398,12 +407,30 @@ public class GooglePeopleApiClient
                 Title = Blank(o.Title),
                 Department = Blank(o.Department),
                 Type = Blank(o.Type),
-                JobDescription = Blank(o.JobDescription)
-            }).Where(o => o.Name != null || o.Title != null || o.Department != null).ToList();
+                JobDescription = Blank(o.JobDescription),
+                Location = Blank(o.Location),
+                Symbol = Blank(o.Symbol),
+                Domain = Blank(o.Domain),
+                PhoneticName = Blank(o.PhoneticName),
+                CostCenter = Blank(o.CostCenter),
+                Current = o.Current,
+                StartDate = ToDate(o.StartDate),
+                EndDate = ToDate(o.EndDate),
+                FullTimeEquivalentMillipercent = o.FullTimeEquivalentMillipercent
+            }).Where(o => !IsEmpty(o)).ToList();
         }
 
         if (patch.Birthdays != null)
         {
+            // A date with only a day or only a month would be filtered out below
+            // and clear the birthday; refuse it instead of losing data.
+            if (patch.Birthdays.Any(b => b.Date != null
+                && ((b.Date.Day ?? 0) > 0) != ((b.Date.Month ?? 0) > 0)
+                && string.IsNullOrWhiteSpace(b.Text)))
+            {
+                throw new ArgumentException("A birthday needs both a day and a month", nameof(patch));
+            }
+
             fields.Add("birthdays");
             person.Birthdays = patch.Birthdays.Select(b => new Birthday
             {
@@ -446,6 +473,35 @@ public class GooglePeopleApiClient
         return (person, fields);
     }
 
+    /// <summary>Converts an optional date; null when no part is set</summary>
+    private static Date? ToDate(ContactDate? d) =>
+        d is null || ((d.Year ?? 0) == 0 && (d.Month ?? 0) == 0 && (d.Day ?? 0) == 0)
+            ? null
+            : new Date
+            {
+                Year = d.Year is > 0 ? d.Year : null,
+                Month = d.Month is > 0 ? d.Month : null,
+                Day = d.Day is > 0 ? d.Day : null
+            };
+
+    /// <summary>Maps a Google date to the entity</summary>
+    private static ContactDate? FromDate(Date? d) =>
+        d == null ? null : new ContactDate { Year = d.Year, Month = d.Month, Day = d.Day };
+
+    /// <summary>True when an organization entry carries nothing at all</summary>
+    private static bool IsEmpty(Organization o) =>
+        new[] { o.Name, o.Title, o.Department, o.Type, o.JobDescription, o.Location, o.Symbol, o.Domain, o.PhoneticName, o.CostCenter }
+            .All(string.IsNullOrWhiteSpace)
+        && o.Current == null && o.StartDate == null && o.EndDate == null && o.FullTimeEquivalentMillipercent == null;
+
+    /// <summary>
+    /// True for entries that belong to the contact itself. Reads already ask for
+    /// contact sources only; this is the second guard against writing profile
+    /// data back into the contact.
+    /// </summary>
+    private static bool FromContact(FieldMetadata? metadata) =>
+        metadata?.Source?.Type is null or "CONTACT";
+
     /// <summary>Returns null for empty/whitespace strings so Google treats them as absent</summary>
     private static string? Blank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
@@ -468,7 +524,7 @@ public class GooglePeopleApiClient
         {
             ResourceName = person.ResourceName ?? string.Empty,
             Etag = person.ETag,
-            Names = person.Names?.Select(n => new ContactName
+            Names = person.Names?.Where(x => FromContact(x.Metadata)).Select(n => new ContactName
             {
                 DisplayName = n.DisplayName,
                 HonorificPrefix = n.HonorificPrefix,
@@ -481,20 +537,24 @@ public class GooglePeopleApiClient
                 PhoneticMiddleName = n.PhoneticMiddleName,
                 PhoneticFamilyName = n.PhoneticFamilyName
             }).ToList(),
-            Nicknames = person.Nicknames?.Select(n => new ContactNickname { Value = n.Value ?? string.Empty }).ToList(),
-            PhoneNumbers = person.PhoneNumbers?.Select(p => new ContactPhone
+            Nicknames = person.Nicknames?.Where(x => FromContact(x.Metadata)).Select(n => new ContactNickname
+            {
+                Value = n.Value ?? string.Empty,
+                Type = n.Type
+            }).ToList(),
+            PhoneNumbers = person.PhoneNumbers?.Where(x => FromContact(x.Metadata)).Select(p => new ContactPhone
             {
                 Value = p.Value ?? string.Empty,
                 Type = p.Type,
                 CanonicalForm = p.CanonicalForm
             }).ToList(),
-            EmailAddresses = person.EmailAddresses?.Select(e => new ContactEmail
+            EmailAddresses = person.EmailAddresses?.Where(x => FromContact(x.Metadata)).Select(e => new ContactEmail
             {
                 Value = e.Value ?? string.Empty,
                 Type = e.Type,
                 DisplayName = e.DisplayName
             }).ToList(),
-            Addresses = person.Addresses?.Select(a => new ContactAddress
+            Addresses = person.Addresses?.Where(x => FromContact(x.Metadata)).Select(a => new ContactAddress
             {
                 FormattedValue = a.FormattedValue,
                 Type = a.Type,
@@ -507,31 +567,40 @@ public class GooglePeopleApiClient
                 Country = a.Country,
                 CountryCode = a.CountryCode
             }).ToList(),
-            Organizations = person.Organizations?.Select(o => new ContactOrganization
+            Organizations = person.Organizations?.Where(x => FromContact(x.Metadata)).Select(o => new ContactOrganization
             {
                 Name = o.Name,
                 Title = o.Title,
                 Department = o.Department,
                 Type = o.Type,
-                JobDescription = o.JobDescription
+                JobDescription = o.JobDescription,
+                Location = o.Location,
+                Symbol = o.Symbol,
+                Domain = o.Domain,
+                PhoneticName = o.PhoneticName,
+                CostCenter = o.CostCenter,
+                Current = o.Current,
+                StartDate = FromDate(o.StartDate),
+                EndDate = FromDate(o.EndDate),
+                FullTimeEquivalentMillipercent = o.FullTimeEquivalentMillipercent
             }).ToList(),
-            Birthdays = person.Birthdays?.Select(b => new ContactBirthday
+            Birthdays = person.Birthdays?.Where(x => FromContact(x.Metadata)).Select(b => new ContactBirthday
             {
                 Date = b.Date == null ? null : new ContactDate { Year = b.Date.Year, Month = b.Date.Month, Day = b.Date.Day },
                 Text = b.Text
             }).ToList(),
-            Urls = person.Urls?.Select(u => new ContactUrl { Value = u.Value ?? string.Empty, Type = u.Type }).ToList(),
-            Biographies = person.Biographies?.Select(b => new ContactBiography
+            Urls = person.Urls?.Where(x => FromContact(x.Metadata)).Select(u => new ContactUrl { Value = u.Value ?? string.Empty, Type = u.Type }).ToList(),
+            Biographies = person.Biographies?.Where(x => FromContact(x.Metadata)).Select(b => new ContactBiography
             {
                 Value = b.Value ?? string.Empty,
                 ContentType = b.ContentType
             }).ToList(),
-            Relations = person.Relations?.Select(r => new ContactRelation
+            Relations = person.Relations?.Where(x => FromContact(x.Metadata)).Select(r => new ContactRelation
             {
                 Person = r.Person ?? string.Empty,
                 Type = r.Type
             }).ToList(),
-            UserDefined = person.UserDefined?.Select(u => new ContactUserDefined
+            UserDefined = person.UserDefined?.Where(x => FromContact(x.Metadata)).Select(u => new ContactUserDefined
             {
                 Key = u.Key ?? string.Empty,
                 Value = u.Value ?? string.Empty

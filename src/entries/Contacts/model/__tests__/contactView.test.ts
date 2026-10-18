@@ -154,6 +154,13 @@ describe('matchesQuery', () => {
     expect(matchesQuery(c, '0542270763')).toBe(true);
     expect(matchesQuery(c, '999')).toBe(false);
   });
+
+  it('does not turn a local prefix like 050 into a match on every "50"', () => {
+    const other = { resourceName: 'p2', phoneNumbers: [{ value: '052-150-1234' }] };
+    const local = { resourceName: 'p3', phoneNumbers: [{ value: '+972 50-123-4567' }] };
+    expect(matchesQuery(other, '050')).toBe(false);
+    expect(matchesQuery(local, '050')).toBe(true);
+  });
 });
 
 describe('getLabelNames', () => {

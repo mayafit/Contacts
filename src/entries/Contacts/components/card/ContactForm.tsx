@@ -249,7 +249,12 @@ const ContactForm: React.FC<ContactFormProps> = ({ draft, onChange, disabled }) 
           <Field
             label="Nickname"
             value={draft.nicknames?.[0]?.value}
-            onChange={(v) => set('nicknames', [{ value: v }, ...(draft.nicknames ?? []).slice(1)])}
+            onChange={(v) =>
+              set('nicknames', [
+                { ...(draft.nicknames?.[0] ?? {}), value: v },
+                ...(draft.nicknames ?? []).slice(1),
+              ])
+            }
             disabled={disabled}
           />
           <Field
@@ -439,25 +444,25 @@ const ContactForm: React.FC<ContactFormProps> = ({ draft, onChange, disabled }) 
                     <Field
                       label="Street"
                       value={a.streetAddress}
-                      onChange={(v) => update({ ...a, streetAddress: v })}
+                      onChange={(v) => update({ ...a, streetAddress: v, formattedValue: null })}
                       disabled={disabled}
                     />
                     <Field
                       label="City"
                       value={a.city}
-                      onChange={(v) => update({ ...a, city: v })}
+                      onChange={(v) => update({ ...a, city: v, formattedValue: null })}
                       disabled={disabled}
                     />
                     <Field
                       label="Postal code"
                       value={a.postalCode}
-                      onChange={(v) => update({ ...a, postalCode: v })}
+                      onChange={(v) => update({ ...a, postalCode: v, formattedValue: null })}
                       disabled={disabled}
                     />
                     <Field
                       label="Country"
                       value={a.country}
-                      onChange={(v) => update({ ...a, country: v })}
+                      onChange={(v) => update({ ...a, country: v, formattedValue: null })}
                       disabled={disabled}
                     />
                   </Box>
@@ -566,7 +571,8 @@ const ContactForm: React.FC<ContactFormProps> = ({ draft, onChange, disabled }) 
         <Field
           label="Notes"
           value={draft.biographies?.[0]?.value}
-          onChange={(v) => set('biographies', [{ ...(draft.biographies?.[0] ?? {}), value: v }])}
+          // Edited as plain text; keeping TEXT_HTML would turn a typed "<" or "&" into markup
+          onChange={(v) => set('biographies', [{ value: v, contentType: 'TEXT_PLAIN' }])}
           disabled={disabled}
           multiline
         />

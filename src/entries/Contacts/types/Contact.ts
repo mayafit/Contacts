@@ -33,6 +33,8 @@ export interface ContactName {
 export interface ContactNickname {
   /** Nickname value */
   value: string;
+  /** Type (DEFAULT, MAIDEN_NAME, INITIALS, ...) */
+  type?: string | null;
 }
 
 /** Contact phone number */
@@ -91,6 +93,25 @@ export interface ContactOrganization {
   type?: string | null;
   /** Job description */
   jobDescription?: string | null;
+  // Not edited by the UI; carried so saving organizations never wipes them
+  /** Office location */
+  location?: string | null;
+  /** Stock symbol */
+  symbol?: string | null;
+  /** Organization domain */
+  domain?: string | null;
+  /** Phonetic organization name */
+  phoneticName?: string | null;
+  /** Cost center */
+  costCenter?: string | null;
+  /** Current organization */
+  current?: boolean | null;
+  /** Start date */
+  startDate?: ContactDate | null;
+  /** End date */
+  endDate?: ContactDate | null;
+  /** Full-time equivalent in millipercent */
+  fullTimeEquivalentMillipercent?: number | null;
 }
 
 /** Calendar date where any part may be missing */

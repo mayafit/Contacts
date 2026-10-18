@@ -29,7 +29,7 @@ import { GoogleContactsService } from '../../services/GoogleContactsService';
 import { selectContactEntities } from '../../redux/slices/contacts/selectors';
 import ContactAvatar from '../common/ContactAvatar';
 import ContactForm from './ContactForm';
-import { buildPatch, changedGroups, createDraft } from './cardModel';
+import { buildPatch, changedGroups, createDraft, validateDraft } from './cardModel';
 import {
   getDisplayName,
   getJobTitle,
@@ -97,6 +97,7 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({ resourceName, gro
     [original, draft],
   );
   const dirty = dirtyGroups.length > 0;
+  const invalid = draft ? validateDraft(draft) : null;
   const saving = saveState.kind === 'saving';
 
   const save = useCallback(
@@ -252,13 +253,19 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({ resourceName, gro
                     </Box>
                   }
                 >
-                  This contact changed in Google since you opened it. Reload discards your edits;
-                  Overwrite saves your edited fields on top of the new version.
+                  This contact changed in Google since you opened it. Reload discards your edits.
+                  Overwrite replaces each section you edited with your version, including anything
+                  changed in those sections elsewhere.
                 </Alert>
               )}
               {saveState.kind === 'error' && (
                 <Alert severity="error" sx={{ my: 1 }}>
                   {saveState.message}
+                </Alert>
+              )}
+              {invalid && dirty && (
+                <Alert severity="warning" sx={{ my: 1 }}>
+                  {invalid}
                 </Alert>
               )}
               <ContactForm draft={draft} onChange={setDraft} disabled={saving} />
@@ -298,7 +305,7 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({ resourceName, gro
               <Button
                 variant="contained"
                 onClick={() => save()}
-                disabled={!dirty || saving}
+                disabled={!dirty || saving || !!invalid}
                 startIcon={saving ? <CircularProgress size={16} color="inherit" /> : undefined}
               >
                 {saving ? 'Saving…' : 'Save'}

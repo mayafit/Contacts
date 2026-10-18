@@ -66,6 +66,26 @@ export const changedGroups = (original: Contact, draft: Contact): EditableGroup[
 };
 
 /**
+ * Problems that must be fixed before saving, or null.
+ * A birthday with a day but no month (or the reverse) would otherwise be
+ * rejected by the server rather than silently cleared.
+ * @param draft - Edited draft
+ * @returns Message or null
+ */
+export const validateDraft = (draft: Contact): string | null => {
+  const date = draft.birthdays?.[0]?.date;
+  const day = date?.day ?? 0;
+  const month = date?.month ?? 0;
+  if (day > 0 !== month > 0) {
+    return 'Birthday needs both a day and a month (or neither).';
+  }
+  if (month > 12 || day > 31 || month < 0 || day < 0) {
+    return 'Birthday day or month is out of range.';
+  }
+  return null;
+};
+
+/**
  * Patch with the given etag and the draft's value for every changed group.
  * A group emptied in the card is sent as [] so Google clears it.
  * @param original - Contact as loaded

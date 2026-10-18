@@ -3,7 +3,13 @@
  */
 
 import type { Contact } from '../../../types/Contact';
-import { buildPatch, changedGroups, createDraft, normalizeGroup } from '../cardModel';
+import {
+  buildPatch,
+  changedGroups,
+  createDraft,
+  normalizeGroup,
+  validateDraft,
+} from '../cardModel';
 
 const original: Contact = {
   resourceName: 'people/c1',
@@ -69,5 +75,24 @@ describe('changedGroups / buildPatch', () => {
     const draft = createDraft(original);
     draft.nicknames = [{ value: 'Dani' }];
     expect(buildPatch(original, draft, 'e2')?.etag).toBe('e2');
+  });
+});
+
+describe('validateDraft', () => {
+  it('blocks a half-entered birthday instead of letting it clear the field', () => {
+    expect(validateDraft({ resourceName: 'p', birthdays: [{ date: { day: 4 } }] })).toMatch(
+      /day and a month/,
+    );
+    expect(
+      validateDraft({ resourceName: 'p', birthdays: [{ date: { month: 13, day: 1 } }] }),
+    ).toMatch(/range/);
+  });
+
+  it('accepts complete, absent or year-less birthdays', () => {
+    expect(
+      validateDraft({ resourceName: 'p', birthdays: [{ date: { day: 4, month: 7 } }] }),
+    ).toBeNull();
+    expect(validateDraft({ resourceName: 'p' })).toBeNull();
+    expect(validateDraft({ resourceName: 'p', birthdays: [{ text: 'spring' }] })).toBeNull();
   });
 });

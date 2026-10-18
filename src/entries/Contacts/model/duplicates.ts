@@ -43,9 +43,10 @@ export const nameKey = (contact: Contact): string | null => {
   if (!hasName(contact)) {
     return null;
   }
-  const key = getDisplayName(contact)
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}]/gu, '');
+  const n = contact.names?.[0];
+  const parts = [n?.givenName, n?.middleName, n?.familyName].filter(Boolean).join(' ');
+  // Parts first: displayName includes prefixes, so "Dr. Dana Levi" would miss "Dana Levi"
+  const key = (parts || getDisplayName(contact)).toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
   return key.length >= 3 ? key : null;
 };
 

@@ -83,8 +83,13 @@ const mockRetryOperation = jest.fn((id: string) => ({
   type: 'syncQueue/retryOperation',
   payload: id,
 }));
+const mockOperationFailed = jest.fn((payload: { id: string; error: string }) => ({
+  type: 'syncQueue/operationFailed',
+  payload,
+}));
 jest.mock('../../../redux/slices/syncQueue/syncQueueSlice', () => ({
   retryOperation: (id: string) => mockRetryOperation(id),
+  operationFailed: (payload: { id: string; error: string }) => mockOperationFailed(payload),
 }));
 
 // Mock executeFieldUpdate
@@ -145,22 +150,36 @@ const createMockOperation = (overrides: Partial<SyncOperation> = {}): SyncOperat
  *   2nd: selectRetryCount → retry count number
  *   3rd: selectMaxRetries → max retries number
  */
+// Selectors are called in render order: operations, retryCount, maxRetries, contacts.
+// By default the contact holds the failed op's oldValue, i.e. the rolled-back state.
 const setupSelector = (
   operations: SyncOperation[],
   retryCount: number = 0,
   maxRetries: number = 5,
+  contacts?: Record<string, unknown>,
 ): void => {
+  const entities =
+    contacts ??
+    Object.fromEntries(
+      operations.map((op) => [
+        op.resourceName,
+        { resourceName: op.resourceName, [op.fieldPath]: op.oldValue },
+      ]),
+    );
   let callCount = 0;
   mockUseAppSelector.mockImplementation(() => {
     callCount += 1;
-    const phase = callCount % 3;
+    const phase = callCount % 4;
     if (phase === 1) {
       return operations;
     }
     if (phase === 2) {
       return retryCount;
     }
-    return maxRetries;
+    if (phase === 3) {
+      return maxRetries;
+    }
+    return entities;
   });
 };
 
@@ -367,6 +386,28 @@ describe('SyncStatusIcon', () => {
         fieldPath: 'names',
         newValue: 'New Name',
         oldValue: 'Old Name',
+      });
+    });
+
+    it('should refuse to replay when the field changed after the failed edit', () => {
+      const op = createMockOperation({
+        status: 'failed',
+        error: 'API error',
+        newValue: 'New Name',
+        oldValue: 'Old Name',
+      });
+      setupSelector([op], 5, 5, {
+        'people/c12345': { resourceName: 'people/c12345', names: 'Newer Name saved later' },
+      });
+
+      render(<SyncStatusIcon {...defaultProps} />);
+      fireEvent.click(screen.getByTestId('sync-status-failed'));
+
+      expect(mockExecuteFieldUpdate).not.toHaveBeenCalled();
+      expect(mockRetryOperation).not.toHaveBeenCalled();
+      expect(mockOperationFailed).toHaveBeenCalledWith({
+        id: 'op-123',
+        error: expect.stringMatching(/changed after the failed edit/),
       });
     });
   });
