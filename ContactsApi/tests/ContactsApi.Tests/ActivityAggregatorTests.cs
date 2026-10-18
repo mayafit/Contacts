@@ -7,6 +7,8 @@ public class ActivityAggregatorTests
 {
     private static readonly DateTime Now = new(2026, 10, 18, 12, 0, 0, DateTimeKind.Utc);
 
+    private static (string, string?)[] G(params string[] emails) => emails.Select(e => (e, (string?)null)).ToArray();
+
     private static ActivityAggregator Create() =>
         new(new[] { "Dana@Example.com", "itay@x.com" }, new[] { "me@gmail.com" });
 
@@ -64,11 +66,11 @@ public class ActivityAggregatorTests
     public void Meetings_track_last_and_next()
     {
         var a = Create();
-        a.AddMeeting(Now.AddDays(-10), "Old sync", new[] { "dana@example.com" }, Now);
-        a.AddMeeting(Now.AddDays(-2), "Sync", new[] { "Dana@example.com", "me@gmail.com" }, Now);
-        a.AddMeeting(Now.AddDays(5), "Later", new[] { "dana@example.com" }, Now);
-        a.AddMeeting(Now.AddDays(3), "Soon", new[] { "dana@example.com" }, Now);
-        a.AddMeeting(Now.AddDays(-1), "Webinar", new[] { "random@corp.com" }, Now);
+        a.AddMeeting(Now.AddDays(-10), "Old sync", G("dana@example.com"), Now);
+        a.AddMeeting(Now.AddDays(-2), "Sync", G("Dana@example.com", "me@gmail.com"), Now);
+        a.AddMeeting(Now.AddDays(5), "Later", G("dana@example.com"), Now);
+        a.AddMeeting(Now.AddDays(3), "Soon", G("dana@example.com"), Now);
+        a.AddMeeting(Now.AddDays(-1), "Webinar", new[] { ("random@corp.com", (string?)"Rand Om") }, Now);
 
         var p = a.People["dana@example.com"];
         Assert.Equal("Sync", p.LastMeetingTitle);
@@ -88,6 +90,34 @@ public class ActivityAggregatorTests
         Assert.Contains("https://console.developers.google.com/apis/api/gmail.googleapis.com/overview?project=123", ex.Message);
 
         Assert.Equal("NOT_CONNECTED", GoogleActivityClient.Classify(403, "Request had insufficient authentication scopes.", "calendar", null).Code);
+    }
+
+    [Fact]
+    public void Parses_mailboxes_with_commas_in_quoted_names()
+    {
+        var boxes = ActivityAggregator.ParseMailboxes("\"Gat, Motti\" <Motti.Gat@corp.com>, מוטי גת <motti@gmail.com>, plain@x.com").ToList();
+        Assert.Equal(new[] { ("Gat, Motti", "motti.gat@corp.com"), ("מוטי גת", "motti@gmail.com"), ("", "plain@x.com") }, boxes);
+    }
+
+    [Fact]
+    public void Directory_keeps_names_of_everyone_in_headers_and_meetings()
+    {
+        var a = Create();
+        a.AddEmail(Now, "Motti Gat <motti@corp.com>", "Me <me@gmail.com>, \"Ronit\" <ronit@corp.com>", null, isSent: false);
+        a.AddEmail(Now.AddDays(-1), "me@gmail.com", "מוטי גת <motti@corp.com>", null, isSent: true);
+        a.AddMeeting(Now.AddDays(-2), "Sync", new[] { ("motti@corp.com", (string?)"Motti G."), ("new@corp.com", (string?)"Newbie") }, Now);
+        a.Complete();
+
+        var motti = a.Directory["motti@corp.com"];
+        Assert.Equal(new[] { "Motti Gat", "מוטי גת", "Motti G." }, motti.Names);
+        Assert.Equal(1, motti.Received);
+        Assert.Equal(1, motti.Sent);
+        Assert.Equal(1, motti.Meetings);
+        Assert.Equal(1, a.Directory["ronit@corp.com"].CopiedTogether);
+        Assert.Equal(new[] { "Newbie" }, a.Directory["new@corp.com"].Names);
+        Assert.False(a.Directory.ContainsKey("me@gmail.com"));
+        // Activity stays limited to contacts and people written to
+        Assert.False(a.People.ContainsKey("ronit@corp.com"));
     }
 
     [Theory]

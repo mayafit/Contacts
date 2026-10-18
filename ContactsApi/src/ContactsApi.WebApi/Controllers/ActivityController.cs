@@ -38,6 +38,28 @@ public class ActivityStatusResponse
     public DateTime? Since { get; set; }
     /// <summary>Addresses with activity</summary>
     public int PeopleCount { get; set; }
+
+    /// <summary>Whether the name directory (find a person by name) exists yet</summary>
+    public bool HasDirectory { get; set; }
+}
+
+/// <summary>A directory match</summary>
+public class DirectoryMatch
+{
+    /// <summary>Address</summary>
+    public string Email { get; set; } = string.Empty;
+    /// <summary>Names it appeared under</summary>
+    public List<string> Names { get; set; } = new();
+    /// <summary>Emails sent to them</summary>
+    public int Sent { get; set; }
+    /// <summary>Emails received from them</summary>
+    public int Received { get; set; }
+    /// <summary>Emails both received</summary>
+    public int CopiedTogether { get; set; }
+    /// <summary>Meetings together</summary>
+    public int Meetings { get; set; }
+    /// <summary>Last seen</summary>
+    public DateTime? LastSeen { get; set; }
 }
 
 /// <summary>Status plus the activity per address</summary>
@@ -97,6 +119,52 @@ public class ActivityController : ControllerBase
         var response = Fill(new ActivityResponse(), snapshot);
         response.People = snapshot.People;
         return Ok(ApiResponse<ActivityResponse>.SuccessResponse(response));
+    }
+
+    /// <summary>
+    /// People seen in mail or meetings whose name or address matches one of the
+    /// queries (variants of a name, e.g. Hebrew and English). Every word of a query
+    /// must appear, in any order, case-insensitively.
+    /// </summary>
+    /// <param name="q">Queries separated by "|"</param>
+    /// <param name="limit">Most matches (1-50)</param>
+    /// <returns>Best matches first</returns>
+    [HttpGet("directory")]
+    public async Task<IActionResult> Directory([FromQuery] string q = "", [FromQuery] int limit = 10)
+    {
+        var userId = await SignedInUserAsync();
+        if (userId == null)
+        {
+            return SessionExpired();
+        }
+
+        var snapshot = await _store.GetAsync(userId);
+        var queries = q.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(x => x.ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            .Where(words => words.Length > 0)
+            .Take(6)
+            .ToList();
+        var matches = (snapshot.Directory ?? new Dictionary<string, DirectoryEntry>())
+            .Where(kv =>
+            {
+                var text = (kv.Key + " " + string.Join(" ", kv.Value.Names)).ToLowerInvariant();
+                return queries.Any(words => words.All(w => text.Contains(w)));
+            })
+            .OrderByDescending(kv => kv.Value.Sent * 3 + kv.Value.Meetings * 3 + kv.Value.Received + kv.Value.CopiedTogether)
+            .ThenByDescending(kv => kv.Value.LastSeen)
+            .Take(Math.Clamp(limit, 1, 50))
+            .Select(kv => new DirectoryMatch
+            {
+                Email = kv.Key,
+                Names = kv.Value.Names,
+                Sent = kv.Value.Sent,
+                Received = kv.Value.Received,
+                CopiedTogether = kv.Value.CopiedTogether,
+                Meetings = kv.Value.Meetings,
+                LastSeen = kv.Value.LastSeen
+            })
+            .ToList();
+        return Ok(ApiResponse<object>.SuccessResponse(new { available = snapshot.Directory != null, matches }));
     }
 
     /// <summary>Starts bringing the snapshot up to date (no-op while a scan runs)</summary>
@@ -170,6 +238,7 @@ public class ActivityController : ControllerBase
         response.UpdatedAt = snapshot.UpdatedAt;
         response.Since = snapshot.Since;
         response.PeopleCount = snapshot.People.Count;
+        response.HasDirectory = snapshot.Directory != null;
         return response;
     }
 

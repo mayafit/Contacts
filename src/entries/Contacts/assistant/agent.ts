@@ -12,7 +12,7 @@ import {
 import { executeTool, TOOL_DECLARATIONS, type AssistantContext, type SearchMemory } from './tools';
 
 /** Tool rounds per user message before the loop gives up */
-const MAX_STEPS = 10;
+const MAX_STEPS = 15;
 
 /** Conversation size (JSON chars) above which the oldest turns are dropped */
 const MAX_HISTORY_CHARS = 300_000;
@@ -45,6 +45,9 @@ export const systemPrompt = (ctx: AssistantContext): string => {
     '',
     'Rules:',
     '- Answer from tool results, never from memory or guesses. Search before saying something does not exist.',
+    '- When the user names a person, call find_person ONCE with several spellings together: Hebrew and English (מוטי גת / Motti Gat / Moti Gat), and the family name alone. It searches contacts and everyone seen in Gmail and Calendar, and returns their email addresses. Do not loop over search_contacts with spelling variations.',
+    '- To add an email found in mail to a contact: pick the address with the most emails/meetings whose names match, then propose_changes addEmails on the matching contact. If several addresses or contacts fit, show them and ask which one.',
+    '- search_contacts is for filtering (labels, missing fields, organization, activity); its text filter needs every word to match.',
     '- You cannot save anything yourself. Tools named propose_* only create a proposal the user reviews and applies; say "I proposed…", never "I changed…".',
     '- Batch related edits into one propose_changes call. For many contacts and one label use propose_label with the searchId.',
     '- Phonetic names: Latin-letter pronunciation of Hebrew names (e.g. דנה כהן → Dana Cohen). Propose them only when you are confident.',
