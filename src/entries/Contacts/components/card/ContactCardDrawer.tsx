@@ -69,6 +69,27 @@ const googleContactsUrl = (resourceName: string): string =>
   `https://contacts.google.com/person/${resourceName.replace(/^people\//, '')}`;
 
 /**
+ * Search links to find more about a contact (Story 6.4). LinkedIn profiles are
+ * mostly in English, so it searches the phonetic name when there is one.
+ * @param c - Contact
+ * @returns Label and URL per site
+ */
+const lookupLinks = (c: Contact): { label: string; href: string }[] => {
+  const name = getDisplayName(c);
+  const latin = getPhoneticName(c) || name;
+  const org = getOrganization(c);
+  const q = (s: string) => encodeURIComponent(s.trim());
+  return [
+    { label: 'Google', href: `https://www.google.com/search?q=${q(`"${name}" ${org}`)}` },
+    {
+      label: 'LinkedIn',
+      href: `https://www.linkedin.com/search/results/people/?keywords=${q(`${latin} ${org}`)}`,
+    },
+    { label: 'Facebook', href: `https://www.facebook.com/search/people/?q=${q(name)}` },
+  ];
+};
+
+/**
  * Contact card drawer.
  * @param props - Component props
  * @returns Drawer element
@@ -234,6 +255,25 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({
                   >
                     Open in Google Contacts <OpenInNew sx={{ fontSize: 14 }} />
                   </Link>
+                </Box>
+                <Box
+                  sx={{ display: 'flex', gap: 1, alignItems: 'center', mt: 0.75, flexWrap: 'wrap' }}
+                >
+                  <Typography variant="caption" sx={{ color: tokens.textMuted }}>
+                    Look up:
+                  </Typography>
+                  {lookupLinks(original).map((l) => (
+                    <Link
+                      key={l.label}
+                      href={l.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      underline="hover"
+                      sx={{ fontSize: 13 }}
+                    >
+                      {l.label}
+                    </Link>
+                  ))}
                 </Box>
               </Box>
               <Tooltip title="Close">
