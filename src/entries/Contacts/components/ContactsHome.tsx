@@ -73,7 +73,13 @@ import OrgSuggestionsDialog from './insights/OrgSuggestionsDialog';
 import { analyzeOrganizations, type DomainInsight } from '../model/organizations';
 import { useAppSelector, useAppDispatch } from '../types/hooks';
 import type { Contact, ContactGroup } from '../types/Contact';
-import { getPhoneticName, hasName, matchesQuery, searchTextOf } from '../model/contactView';
+import {
+  getDisplayName,
+  getPhoneticName,
+  hasName,
+  matchesQuery,
+  searchTextOf,
+} from '../model/contactView';
 import { duplicateMemberSet, findDuplicateGroups } from '../model/duplicates';
 import { computeContactStats, type ContactFilter } from '../model/stats';
 import { tokens } from '../theme/contactsTheme';
@@ -341,14 +347,24 @@ const ContactsHome: React.FC = () => {
     }
   };
 
-  const handleMerged = (kept: Contact, removed: number) => {
+  const handleMerged = (kept: Contact, removed: number, notCopied: Record<string, string[]>) => {
+    // What could not be carried over stays on the merged-away contact
+    const leftBehind = Object.entries(notCopied).map(([rn, what]) => {
+      const c = (mergeTargets ?? []).find((t) => t.resourceName === rn);
+      return `${what.join(', ')} of ${c ? getDisplayName(c) : 'a merged contact'}`;
+    });
     const removedNames = (mergeTargets ?? [])
       .map((c) => c.resourceName)
       .filter((rn) => rn !== kept.resourceName);
     setMergeTargets(null);
     forget(removedNames);
     setChecked(new Set());
-    setToast(`Merged ${removed + 1} contacts into one`);
+    setToast(
+      `Merged ${removed + 1} contacts into one` +
+        (leftBehind.length
+          ? ` · not carried over (still on the merged-away contact): ${leftBehind.join('; ')}`
+          : ''),
+    );
   };
 
   const renderContactsView = () => (

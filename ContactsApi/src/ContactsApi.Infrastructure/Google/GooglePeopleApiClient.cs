@@ -162,7 +162,13 @@ public class GooglePeopleApiClient
     /// <param name="patch">Etag plus the groups to replace; null groups are left untouched</param>
     /// <returns>The full updated contact, including its new etag</returns>
     /// <exception cref="ArgumentException">No etag, or no groups to update</exception>
-    public async Task<Contact> UpdateContactAsync(string resourceName, Contact patch)
+    /// <param name="extras">Merged extra fields to write as well (see PersonExtrasMerger)</param>
+    /// <param name="extraFields">updatePersonFields names to take from <paramref name="extras"/></param>
+    public async Task<Contact> UpdateContactAsync(
+        string resourceName,
+        Contact patch,
+        Person? extras = null,
+        IReadOnlyCollection<string>? extraFields = null)
     {
         if (string.IsNullOrWhiteSpace(patch.Etag))
         {
@@ -170,6 +176,15 @@ public class GooglePeopleApiClient
         }
 
         var (person, updateFields) = BuildUpdate(patch);
+        if (extras != null && extraFields != null)
+        {
+            foreach (var field in extraFields)
+            {
+                CopyField(extras, person, field);
+                updateFields.Add(field);
+            }
+        }
+
         if (updateFields.Count == 0)
         {
             throw new ArgumentException("The update contains no fields", nameof(patch));
@@ -210,14 +225,6 @@ public class GooglePeopleApiClient
                 });
         }
     }
-
-    /// <summary>
-    /// Person fields this app does not edit or merge. A contact deleted by a
-    /// merge loses whatever it holds in these, so merge checks them first.
-    /// </summary>
-    private const string UnmergedPersonFields =
-        "photos,events,imClients,sipAddresses,locations,occupations,interests,skills," +
-        "miscKeywords,externalIds,calendarUrls,genders,clientData,locales";
 
     /// <summary>
     /// Deletes one contact
@@ -299,61 +306,27 @@ public class GooglePeopleApiClient
     }
 
     /// <summary>
-    /// For each contact, the person fields it has data in that this app does
-    /// not merge (a real photo, events, IM, ...). Empty when nothing would be lost.
+    /// A contact read with the fields <see cref="PersonExtrasMerger"/> merges
     /// </summary>
-    /// <param name="resourceNames">Contacts that a merge would delete</param>
-    /// <returns>Resource name to field names, only for contacts with such data</returns>
-    public async Task<Dictionary<string, List<string>>> FindUnmergedDataAsync(IEnumerable<string> resourceNames)
+    /// <param name="resourceName">Contact</param>
+    /// <returns>The person with those fields</returns>
+    public async Task<Person> GetPersonExtrasAsync(string resourceName)
     {
-        var result = new Dictionary<string, List<string>>();
-        foreach (var resourceName in resourceNames)
+        try
         {
-            Person person;
-            try
-            {
-                var request = _peopleService.People.Get(resourceName);
-                request.PersonFields = UnmergedPersonFields;
-                request.Sources = PeopleResource.GetRequest.SourcesEnum.READSOURCETYPECONTACT;
-                person = await request.ExecuteAsync();
-            }
-            catch (Exception ex)
-            {
-                throw Translate(
-                    ex,
-                    GoogleApiErrorCodes.GetContactFailed,
-                    $"Failed to check contact {resourceName} before merging",
-                    new Dictionary<string, object> { { "resourceName", resourceName } });
-            }
-
-            var fields = new List<string>();
-            void Check(string label, int count)
-            {
-                if (count > 0) fields.Add(label);
-            }
-
-            Check("photo", person.Photos?.Count(p => p.Default__ != true && FromContact(p.Metadata)) ?? 0);
-            Check("events", person.Events?.Count(x => FromContact(x.Metadata)) ?? 0);
-            Check("instant messaging", person.ImClients?.Count(x => FromContact(x.Metadata)) ?? 0);
-            Check("SIP addresses", person.SipAddresses?.Count(x => FromContact(x.Metadata)) ?? 0);
-            Check("locations", person.Locations?.Count(x => FromContact(x.Metadata)) ?? 0);
-            Check("occupations", person.Occupations?.Count(x => FromContact(x.Metadata)) ?? 0);
-            Check("interests", person.Interests?.Count(x => FromContact(x.Metadata)) ?? 0);
-            Check("skills", person.Skills?.Count(x => FromContact(x.Metadata)) ?? 0);
-            Check("keywords", person.MiscKeywords?.Count(x => FromContact(x.Metadata)) ?? 0);
-            Check("external IDs", person.ExternalIds?.Count(x => FromContact(x.Metadata)) ?? 0);
-            Check("calendar links", person.CalendarUrls?.Count(x => FromContact(x.Metadata)) ?? 0);
-            Check("gender", person.Genders?.Count(x => FromContact(x.Metadata)) ?? 0);
-            Check("app data", person.ClientData?.Count(x => FromContact(x.Metadata)) ?? 0);
-            Check("languages", person.Locales?.Count(x => FromContact(x.Metadata)) ?? 0);
-
-            if (fields.Count > 0)
-            {
-                result[resourceName] = fields;
-            }
+            var request = _peopleService.People.Get(resourceName);
+            request.PersonFields = PersonExtrasMerger.Fields;
+            request.Sources = PeopleResource.GetRequest.SourcesEnum.READSOURCETYPECONTACT;
+            return await request.ExecuteAsync();
         }
-
-        return result;
+        catch (Exception ex)
+        {
+            throw Translate(
+                ex,
+                GoogleApiErrorCodes.GetContactFailed,
+                $"Failed to read contact {resourceName} for merging",
+                new Dictionary<string, object> { { "resourceName", resourceName } });
+        }
     }
 
     /// <summary>
@@ -723,6 +696,27 @@ public class GooglePeopleApiClient
     /// </summary>
     private static bool FromContact(FieldMetadata? metadata) =>
         metadata?.Source?.Type is null or "CONTACT";
+
+    /// <summary>Copies one merged extra field onto the person being written</summary>
+    private static void CopyField(Person from, Person to, string field)
+    {
+        switch (field)
+        {
+            case "events": to.Events = from.Events; break;
+            case "imClients": to.ImClients = from.ImClients; break;
+            case "sipAddresses": to.SipAddresses = from.SipAddresses; break;
+            case "locations": to.Locations = from.Locations; break;
+            case "occupations": to.Occupations = from.Occupations; break;
+            case "interests": to.Interests = from.Interests; break;
+            case "miscKeywords": to.MiscKeywords = from.MiscKeywords; break;
+            case "externalIds": to.ExternalIds = from.ExternalIds; break;
+            case "calendarUrls": to.CalendarUrls = from.CalendarUrls; break;
+            case "clientData": to.ClientData = from.ClientData; break;
+            case "locales": to.Locales = from.Locales; break;
+            case "genders": to.Genders = from.Genders; break;
+            default: throw new ArgumentException($"Unsupported merge field {field}", nameof(field));
+        }
+    }
 
     /// <summary>Returns null for empty/whitespace strings so Google treats them as absent</summary>
     private static string? Blank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
