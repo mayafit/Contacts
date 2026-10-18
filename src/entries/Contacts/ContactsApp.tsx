@@ -7,7 +7,9 @@
  */
 
 import React, { useEffect, useMemo } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router';
+import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router';
+import { SESSION_EXPIRED_EVENT } from '../../services/api/BackendApiClient';
+import { logout, logoutUser } from './redux/slices/auth/authSlice';
 import { Box, CircularProgress, CssBaseline, ThemeProvider } from '@mui/material';
 import { createContactsTheme } from './theme/contactsTheme';
 import { useDispatch } from 'react-redux';
@@ -18,6 +20,29 @@ import ContactsHome from './components/ContactsHome';
 import { checkAuthStatus } from './redux/slices/auth/authSlice';
 import type { AppDispatch } from './types/store';
 import { logger } from '../../shared/logger';
+
+/**
+ * Sends the user to sign in when an API call reports the Google session ended
+ * (instead of leaving a page full of failed requests).
+ * @returns Nothing visible
+ */
+const SessionWatcher: React.FC = () => {
+  const navigate = useNavigate();
+  const dispatch = useDispatch<AppDispatch>();
+  useEffect(() => {
+    const onExpired = () => {
+      if (window.location.pathname !== '/login') {
+        dispatch(logout());
+        // Also end the server session, so a reload cannot look signed in
+        void dispatch(logoutUser());
+        navigate('/login?error=session_expired', { replace: true });
+      }
+    };
+    window.addEventListener(SESSION_EXPIRED_EVENT, onExpired);
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired);
+  }, [dispatch, navigate]);
+  return null;
+};
 
 /**
  * Contacts application component
@@ -97,6 +122,7 @@ const ContactsApp: React.FC = () => {
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <BrowserRouter>
+        <SessionWatcher />
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/auth/callback" element={<AuthCallback />} />

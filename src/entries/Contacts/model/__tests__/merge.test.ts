@@ -3,7 +3,7 @@
  */
 
 import type { Contact } from '../../types/Contact';
-import { planMerge, suggestPrimary } from '../merge';
+import { isHebrewEnglishPair, planMerge, suggestPrimary } from '../merge';
 
 const main: Contact = {
   resourceName: 'people/main',
@@ -158,9 +158,55 @@ describe('planMerge safety', () => {
   });
 });
 
+describe('Hebrew / English pairs', () => {
+  const hebrew: Contact = {
+    resourceName: 'people/he',
+    etag: 'e-he',
+    names: [{ displayName: 'אייל רייצס', givenName: 'אייל', familyName: 'רייצס' }],
+    phoneNumbers: [{ value: '054-326-7307' }],
+    emailAddresses: [{ value: 'eyalrit@gmail.com' }],
+  };
+  const english: Contact = {
+    resourceName: 'people/en',
+    etag: 'e-en',
+    names: [{ displayName: 'Eyal Ritzes', givenName: 'Eyal', familyName: 'Ritzes' }],
+    phoneNumbers: [{ value: '054-326-7307' }],
+    emailAddresses: [{ value: 'eyalrit@gmail.com' }],
+    updateTime: '2026-10-01T00:00:00Z',
+  };
+
+  it('recognizes the pair and suggests keeping the Hebrew contact', () => {
+    expect(isHebrewEnglishPair([hebrew, english])).toBe(true);
+    expect(suggestPrimary([english, hebrew])).toBe('people/he');
+  });
+
+  it('stores the English name as the phonetic name instead of reporting a conflict', () => {
+    const plan = planMerge(hebrew, [english]);
+    expect(plan.merged.names?.[0]).toMatchObject({
+      givenName: 'אייל',
+      familyName: 'רייצס',
+      phoneticGivenName: 'Eyal',
+      phoneticFamilyName: 'Ritzes',
+    });
+    expect(plan.transliterated).toEqual(['Eyal Ritzes']);
+    expect(plan.dropped).toEqual([]);
+    expect(Object.keys(plan.patch!).sort()).toEqual(['etag', 'names']);
+  });
+
+  it('reports the English name when a different phonetic name is already set', () => {
+    const withPhonetic: Contact = {
+      ...hebrew,
+      names: [{ ...hebrew.names![0], phoneticGivenName: 'Eial' }],
+    };
+    expect(planMerge(withPhonetic, [english]).dropped[0]).toMatch(/English name "Eyal Ritzes"/);
+  });
+});
+
 describe('suggestPrimary', () => {
   it('prefers the contact with more information, then the most recent', () => {
-    expect(suggestPrimary([main, other])).toBe('people/other');
+    // main (Hebrew) and other (English) are a pair: the Hebrew one is kept
+    // even though other holds more data
+    expect(suggestPrimary([main, other])).toBe('people/main');
     const a: Contact = {
       resourceName: 'a',
       names: [{ givenName: 'A' }],

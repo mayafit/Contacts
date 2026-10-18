@@ -357,6 +357,66 @@ public class GooglePeopleApiClient
     }
 
     /// <summary>
+    /// Resource name of the user label with this exact name, creating it when missing
+    /// </summary>
+    /// <param name="name">Label name</param>
+    /// <returns>Group resource name</returns>
+    public async Task<string> EnsureGroupAsync(string name)
+    {
+        var existing = (await ListContactGroupsAsync())
+            .FirstOrDefault(g => g.GroupType == "USER_CONTACT_GROUP" && g.Name == name);
+        if (existing != null)
+        {
+            return existing.ResourceName;
+        }
+
+        try
+        {
+            var created = await _peopleService.ContactGroups.Create(new CreateContactGroupRequest
+            {
+                ContactGroup = new global::Google.Apis.PeopleService.v1.Data.ContactGroup { Name = name }
+            }).ExecuteAsync();
+            _logger.LogInformation("Created label {Name}", name);
+            return created.ResourceName;
+        }
+        catch (Exception ex)
+        {
+            throw Translate(ex, GoogleApiErrorCodes.ModifyGroupFailed, $"Failed to create label {name}", null);
+        }
+    }
+
+    /// <summary>
+    /// Adds and removes members of a label, in Google's batches of at most 1000
+    /// </summary>
+    /// <param name="groupResourceName">Label</param>
+    /// <param name="add">Contacts to add</param>
+    /// <param name="remove">Contacts to remove</param>
+    public async Task ModifyGroupMembersAsync(string groupResourceName, IReadOnlyList<string> add, IReadOnlyList<string> remove)
+    {
+        try
+        {
+            foreach (var chunk in add.Chunk(1000))
+            {
+                await _peopleService.ContactGroups.Members.Modify(
+                    new ModifyContactGroupMembersRequest { ResourceNamesToAdd = chunk.ToList() },
+                    groupResourceName).ExecuteAsync();
+            }
+
+            foreach (var chunk in remove.Chunk(1000))
+            {
+                await _peopleService.ContactGroups.Members.Modify(
+                    new ModifyContactGroupMembersRequest { ResourceNamesToRemove = chunk.ToList() },
+                    groupResourceName).ExecuteAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            throw Translate(ex, GoogleApiErrorCodes.ModifyGroupFailed, "Failed to update label members",
+                new Dictionary<string, object> { { "group", groupResourceName } });
+        }
+    }
+
+    /// <summary>
     /// Current etag of each contact, read with the same fields as the contact list
     /// so it is comparable with the etag the client holds.
     /// </summary>

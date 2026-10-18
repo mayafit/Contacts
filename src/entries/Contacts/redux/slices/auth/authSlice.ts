@@ -29,7 +29,7 @@ const initialState: AuthState = {
  * Verifies if user has valid session cookie
  */
 export const checkAuthStatus = createAsyncThunk<
-  { isAuthenticated: boolean },
+  { isAuthenticated: boolean; user?: User },
   void,
   { rejectValue: AppError }
 >('auth/checkAuthStatus', async (_, { rejectWithValue }) => {
@@ -144,9 +144,7 @@ const authSlice = createSlice({
       .addCase(checkAuthStatus.fulfilled, (state, action) => {
         state.isLoading = false;
         state.isAuthenticated = action.payload.isAuthenticated;
-        if (!action.payload.isAuthenticated) {
-          state.user = null;
-        }
+        state.user = action.payload.isAuthenticated ? (action.payload.user ?? state.user) : null;
 
         // DIAGNOSTIC: This will show in Redux DevTools console
         console.log('[authSlice] checkAuthStatus.fulfilled:', {
