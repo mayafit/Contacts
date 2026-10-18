@@ -67,6 +67,8 @@ import InsightsView from './insights/InsightsView';
 import DuplicatesView from './duplicates/DuplicatesView';
 import DeleteDialog from './cleanup/DeleteDialog';
 import MergeDialog from './cleanup/MergeDialog';
+import OrgSuggestionsDialog from './insights/OrgSuggestionsDialog';
+import { analyzeOrganizations, type DomainInsight } from '../model/organizations';
 import { useAppSelector, useAppDispatch } from '../types/hooks';
 import type { Contact, ContactGroup } from '../types/Contact';
 import { getPhoneticName, hasName, matchesQuery, searchTextOf } from '../model/contactView';
@@ -111,6 +113,7 @@ const ContactsHome: React.FC = () => {
   const [deleteTargets, setDeleteTargets] = useState<Contact[] | null>(null);
   const [mergeTargets, setMergeTargets] = useState<Contact[] | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [reviewDomain, setReviewDomain] = useState<DomainInsight | null>(null);
   const [isColumnConfigOpen, setIsColumnConfigOpen] = useState(false);
   const [accountAnchor, setAccountAnchor] = useState<HTMLElement | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -147,6 +150,7 @@ const ContactsHome: React.FC = () => {
     () => computeContactStats(contacts, groups, duplicateGroups),
     [contacts, groups, duplicateGroups],
   );
+  const orgInsights = useMemo(() => analyzeOrganizations(contacts), [contacts]);
   const searchIndex = useMemo(
     () => new Map(contacts.map((c) => [c.resourceName, searchTextOf(c)])),
     [contacts],
@@ -684,6 +688,8 @@ const ContactsHome: React.FC = () => {
             stats={stats}
             onShowFilter={showFilter}
             onShowDuplicates={() => setView('duplicates')}
+            orgInsights={orgInsights}
+            onReviewDomain={setReviewDomain}
           />
         )}
         {view === 'duplicates' && (
@@ -703,6 +709,14 @@ const ContactsHome: React.FC = () => {
         onDelete={(c) => setDeleteTargets([c])}
       />
 
+      <OrgSuggestionsDialog
+        insight={reviewDomain}
+        onClose={() => setReviewDomain(null)}
+        onApplied={(count) => {
+          setReviewDomain(null);
+          setToast(`Organization updated for ${count} ${count === 1 ? 'contact' : 'contacts'}`);
+        }}
+      />
       <DeleteDialog
         contacts={deleteTargets}
         onClose={() => setDeleteTargets(null)}
