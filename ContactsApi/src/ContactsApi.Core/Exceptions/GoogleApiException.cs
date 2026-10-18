@@ -89,6 +89,9 @@ public static class GoogleApiErrorCodes
     public const string InsufficientScope = "INSUFFICIENT_SCOPE";
     public const string RateLimited = "RATE_LIMITED";
     public const string FetchGroupsFailed = "FETCH_GROUPS_FAILED";
+    public const string DeleteContactFailed = "DELETE_CONTACT_FAILED";
+    public const string ModifyGroupFailed = "MODIFY_GROUP_FAILED";
+    public const string MergeWouldLoseData = "MERGE_WOULD_LOSE_DATA";
     public const string TokenRefreshFailed = "TOKEN_REFRESH_FAILED";
     public const string AuthenticationFailed = "AUTHENTICATION_FAILED";
     public const string UnknownError = "UNKNOWN_ERROR";

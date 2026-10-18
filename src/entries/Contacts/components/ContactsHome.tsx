@@ -23,6 +23,7 @@ import {
   Menu,
   MenuItem,
   Paper,
+  Snackbar,
   Select,
   Skeleton,
   Tab,
@@ -31,8 +32,10 @@ import {
   Typography,
 } from '@mui/material';
 import {
+  CallMerge,
   Close,
   ContactPhone,
+  DeleteOutline,
   Logout as LogoutIcon,
   Refresh,
   Search,
@@ -62,6 +65,8 @@ import { ConflictResolutionDialog } from './ConflictResolutionDialog';
 import ContactCardDrawer from './card/ContactCardDrawer';
 import InsightsView from './insights/InsightsView';
 import DuplicatesView from './duplicates/DuplicatesView';
+import DeleteDialog from './cleanup/DeleteDialog';
+import MergeDialog from './cleanup/MergeDialog';
 import { useAppSelector, useAppDispatch } from '../types/hooks';
 import type { Contact, ContactGroup } from '../types/Contact';
 import { getPhoneticName, hasName, matchesQuery, searchTextOf } from '../model/contactView';
@@ -101,6 +106,11 @@ const ContactsHome: React.FC = () => {
   const [filter, setFilter] = useState<ContactFilter>('all');
   const [label, setLabel] = useState<string>('');
   const [cardFor, setCardFor] = useState<string | null>(null);
+  // Story 5.1/5.2: checked rows and the delete / merge dialogs
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+  const [deleteTargets, setDeleteTargets] = useState<Contact[] | null>(null);
+  const [mergeTargets, setMergeTargets] = useState<Contact[] | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
   const [isColumnConfigOpen, setIsColumnConfigOpen] = useState(false);
   const [accountAnchor, setAccountAnchor] = useState<HTMLElement | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -255,6 +265,53 @@ const ContactsHome: React.FC = () => {
     .slice(0, 1)
     .toUpperCase();
 
+  const byResourceName = useMemo(
+    () => new Map(contacts.map((c) => [c.resourceName, c])),
+    [contacts],
+  );
+  const checkedContacts = useMemo(
+    () =>
+      Array.from(checked)
+        .map((rn) => byResourceName.get(rn))
+        .filter(Boolean) as Contact[],
+    [checked, byResourceName],
+  );
+
+  // Checks apply to what is on screen: a new search or filter starts a new
+  // selection, so a delete can never include rows the user cannot see.
+  useEffect(() => {
+    setChecked(new Set());
+  }, [filter, label, deferredQuery]);
+
+  /** Forget removed contacts everywhere they may still be referenced */
+  const forget = (removed: string[]) => {
+    setChecked((prev) => {
+      const next = new Set(prev);
+      removed.forEach((rn) => next.delete(rn));
+      return next;
+    });
+    if (cardFor && removed.includes(cardFor)) {
+      setCardFor(null);
+    }
+  };
+
+  const handleDeleted = (count: number) => {
+    const removed = (deleteTargets ?? []).map((c) => c.resourceName);
+    setDeleteTargets(null);
+    forget(removed);
+    setToast(count === 1 ? 'Contact deleted' : `${count} contacts deleted`);
+  };
+
+  const handleMerged = (kept: Contact, removed: number) => {
+    const removedNames = (mergeTargets ?? [])
+      .map((c) => c.resourceName)
+      .filter((rn) => rn !== kept.resourceName);
+    setMergeTargets(null);
+    forget(removedNames);
+    setChecked(new Set());
+    setToast(`Merged ${removed + 1} contacts into one`);
+  };
+
   const renderContactsView = () => (
     <Box
       sx={{
@@ -266,6 +323,46 @@ const ContactsHome: React.FC = () => {
         gap: 1.5,
       }}
     >
+      {checkedContacts.length > 0 && (
+        <Box
+          role="toolbar"
+          aria-label="Selected contacts"
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1,
+            px: 1.5,
+            py: 0.75,
+            borderRadius: '10px',
+            bgcolor: 'rgba(57,135,229,0.12)',
+            border: `1px solid rgba(57,135,229,0.35)`,
+          }}
+        >
+          <Typography variant="body2" sx={{ fontWeight: 600, mr: 1 }}>
+            {fmt.format(checkedContacts.length)} selected
+          </Typography>
+          <Button
+            size="small"
+            startIcon={<CallMerge />}
+            disabled={checkedContacts.length < 2 || checkedContacts.length > 20}
+            onClick={() => setMergeTargets(checkedContacts)}
+          >
+            Merge
+          </Button>
+          <Button
+            size="small"
+            color="error"
+            startIcon={<DeleteOutline />}
+            onClick={() => setDeleteTargets(checkedContacts)}
+          >
+            Delete
+          </Button>
+          <Box sx={{ flex: 1 }} />
+          <Button size="small" color="inherit" onClick={() => setChecked(new Set())}>
+            Clear
+          </Button>
+        </Box>
+      )}
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
         {FILTERS.map((f) => {
           const active = filter === f.id;
@@ -390,6 +487,8 @@ const ContactsHome: React.FC = () => {
             selectedResourceName={cardFor}
             onOpenCard={setCardFor}
             scrollResetKey={`${filter}|${label}|${deferredQuery}`}
+            checked={checked}
+            onCheckedChange={setChecked}
           />
         )}
       </Paper>
@@ -588,11 +687,40 @@ const ContactsHome: React.FC = () => {
           />
         )}
         {view === 'duplicates' && (
-          <DuplicatesView groups={duplicateGroups} onOpenCard={setCardFor} />
+          <DuplicatesView
+            groups={duplicateGroups}
+            onOpenCard={setCardFor}
+            onMerge={setMergeTargets}
+            onDelete={(c) => setDeleteTargets([c])}
+          />
         )}
       </Box>
 
-      <ContactCardDrawer resourceName={cardFor} groups={groups} onClose={() => setCardFor(null)} />
+      <ContactCardDrawer
+        resourceName={cardFor}
+        groups={groups}
+        onClose={() => setCardFor(null)}
+        onDelete={(c) => setDeleteTargets([c])}
+      />
+
+      <DeleteDialog
+        contacts={deleteTargets}
+        onClose={() => setDeleteTargets(null)}
+        onDeleted={handleDeleted}
+      />
+      <MergeDialog
+        contacts={mergeTargets}
+        groups={groups}
+        onClose={() => setMergeTargets(null)}
+        onMerged={handleMerged}
+      />
+      <Snackbar
+        open={!!toast}
+        autoHideDuration={4000}
+        onClose={() => setToast(null)}
+        message={toast}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      />
 
       {/* Column Configuration Dialog */}
       <ColumnConfigDialog open={isColumnConfigOpen} onClose={() => setIsColumnConfigOpen(false)} />

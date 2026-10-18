@@ -45,7 +45,7 @@ describe('BackendApiClient', () => {
         'people/c12345',
         'names',
         [{ givenName: 'Jane', familyName: 'Doe' }],
-        'etag-1'
+        'etag-1',
       );
 
       expect(result).toEqual(mockContact);
@@ -62,7 +62,7 @@ describe('BackendApiClient', () => {
             etag: 'etag-1',
             names: [{ givenName: 'Jane', familyName: 'Doe' }],
           }),
-        })
+        }),
       );
     });
 
@@ -77,15 +77,13 @@ describe('BackendApiClient', () => {
         json: async () => mockResponse,
       });
 
-      await client.updateContactField(
-        'people/c12345',
-        'phoneNumbers',
-        [{ value: '555-1234', type: 'mobile' }]
-      );
+      await client.updateContactField('people/c12345', 'phoneNumbers', [
+        { value: '555-1234', type: 'mobile' },
+      ]);
 
       expect(global.fetch).toHaveBeenCalledWith(
         expect.stringContaining('people%2Fc12345'),
-        expect.any(Object)
+        expect.any(Object),
       );
     });
 
@@ -104,9 +102,9 @@ describe('BackendApiClient', () => {
         json: async () => mockErrorResponse,
       });
 
-      await expect(
-        client.updateContactField('people/c12345', 'names', {})
-      ).rejects.toThrow('Contact not found');
+      await expect(client.updateContactField('people/c12345', 'names', {})).rejects.toThrow(
+        'Contact not found',
+      );
     });
 
     it('should throw error when response data is missing', async () => {
@@ -120,9 +118,9 @@ describe('BackendApiClient', () => {
         json: async () => mockResponse,
       });
 
-      await expect(
-        client.updateContactField('people/c12345', 'names', {})
-      ).rejects.toThrow('Failed to update contact');
+      await expect(client.updateContactField('people/c12345', 'names', {})).rejects.toThrow(
+        'Failed to update contact',
+      );
     });
 
     it('should put the HTTP status in the error so conflicts can be detected', async () => {
@@ -155,8 +153,63 @@ describe('BackendApiClient', () => {
       });
 
       await expect(client.updateContactField('people/c12345', 'names', [], 'e')).rejects.toThrow(
-        'Unexpected response from server (502) [HTTP 502]'
+        'Unexpected response from server (502) [HTTP 502]',
       );
+    });
+  });
+
+  describe('deleteContacts', () => {
+    it('should send at most 500 per request and sum the results', async () => {
+      const names = Array.from({ length: 501 }, (_, i) => `people/c${i}`);
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ success: true, data: { deleted: 500 } }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ success: true, data: { deleted: 1 } }),
+        });
+
+      await expect(client.deleteContacts(names)).resolves.toBe(501);
+      const calls = (global.fetch as jest.Mock).mock.calls;
+      expect(calls[0][0]).toBe('http://localhost:5000/api/contacts/batch-delete');
+      expect(JSON.parse(calls[0][1].body).resourceNames).toHaveLength(500);
+      expect(JSON.parse(calls[1][1].body).resourceNames).toEqual(['people/c500']);
+    });
+  });
+
+  describe('mergeContacts', () => {
+    it('should surface what a merge would lose (409 with details)', async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        json: async () => ({
+          success: false,
+          error: {
+            code: 'MERGE_WOULD_LOSE_DATA',
+            message: 'Some contacts to delete hold data this app cannot merge',
+            details: { 'people/c2': ['photo', 'events'] },
+            timestamp: '',
+          },
+        }),
+      });
+
+      const error = await client
+        .mergeContacts({
+          primaryResourceName: 'people/c1',
+          patch: null,
+          deleteResourceNames: ['people/c2'],
+          addLabels: [],
+          acknowledgeDataLoss: false,
+        })
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ApiRequestError);
+      expect((error as ApiRequestError).status).toBe(409);
+      expect((error as ApiRequestError).details).toEqual({ 'people/c2': ['photo', 'events'] });
     });
   });
 
@@ -172,7 +225,7 @@ describe('BackendApiClient', () => {
       await expect(client.fetchContactGroups()).resolves.toEqual(groups);
       expect(global.fetch).toHaveBeenCalledWith(
         'http://localhost:5000/api/contacts/groups',
-        expect.any(Object)
+        expect.any(Object),
       );
     });
   });
