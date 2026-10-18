@@ -123,14 +123,18 @@ module.exports = (env, args) => {
       devtool: process.env?.DEV_BUILD === 'true' ? 'eval-cheap-module-source-map' : undefined,
       optimization: {
         chunkIds: 'named',
-        minimize: !process.env?.DEV_BUILD === 'true',
+        // Was `!process.env?.DEV_BUILD === 'true'`, which is (!x) === 'true' and
+        // therefore always false: production bundles shipped unminified (3.6 MB).
+        minimize: process.env?.DEV_BUILD !== 'true',
         minimizer: [
           new TerserPlugin({
             exclude: ['env.config.json'],
 
             terserOptions: {
               compress: {
-                drop_console: !process.env?.DEV_BUILD === 'true',
+                // Kept on purpose: the app's logger writes errors to the console,
+                // and those are how production problems get diagnosed.
+                drop_console: false,
               },
             },
           }),
