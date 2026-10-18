@@ -2,49 +2,16 @@
  * @fileoverview Tests for EditableCell component
  * @module Contacts/components/EditableCell/__tests__/EditableCell
  *
- * Story 3.4: Inline cell editing for contact fields
+ * Story 3.4: inline cell editing. Story 4.4: in-place editor, double-click opens the card.
  */
 
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { jest } from '@jest/globals';
 
-// Mock MUI components
-jest.mock('@mui/material', () => ({
-  TextField: ({ inputProps, ...props }: any) => (
-    <input
-      data-testid="editable-cell-input"
-      aria-label={inputProps?.['aria-label']}
-      role={inputProps?.role}
-      value={props.value}
-      onChange={(e: any) => props.onChange?.({ target: { value: e.target.value } })}
-      onKeyDown={props.onKeyDown}
-      onBlur={props.onBlur}
-      autoFocus={props.autoFocus}
-    />
-  ),
-}));
-
-// Mock logger
-jest.mock('../../../../../shared/logger', () => ({
-  logger: {
-    info: jest.fn(),
-    warn: jest.fn(),
-    error: jest.fn(),
-    debug: jest.fn(),
-  },
-}));
-
-// Mock dispatch
-const mockDispatch = jest.fn(() => Promise.resolve());
-jest.mock('../../../types/hooks', () => ({
-  useAppDispatch: () => mockDispatch,
-}));
-
-// Mock SyncStatusIcon
+// Mock SyncStatusIcon (needs a store; not under test here)
 jest.mock('../../SyncStatusIcon', () => ({
-  SyncStatusIcon: (props: any) => (
+  SyncStatusIcon: (props: { resourceName: string; fieldPath: string }) => (
     <span
       data-testid="sync-status-icon"
       data-resource={props.resourceName}
@@ -53,203 +20,164 @@ jest.mock('../../SyncStatusIcon', () => ({
   ),
 }));
 
-// Mock executeFieldUpdate
-const mockExecuteFieldUpdate = jest.fn(
-  (args: { resourceName: string; fieldPath: string; newValue: unknown; oldValue: unknown }) => ({
-    type: 'sync/executeFieldUpdate',
-    payload: args,
-  }),
-);
-jest.mock('../../../redux/thunks/syncThunks', () => ({
-  executeFieldUpdate: (args: any) => mockExecuteFieldUpdate(args),
-}));
+import EditableCell, { DOUBLE_CLICK_WINDOW_MS } from '../EditableCell';
 
-import EditableCell from '../EditableCell';
+const onCommit = jest.fn();
+const onOpenCard = jest.fn();
+const onNavigate = jest.fn();
 
 const defaultProps = {
   resourceName: 'people/c12345',
   fieldPath: 'names',
-  value: 'Alice Smith',
+  value: 'John Doe',
   fieldLabel: 'Name',
-  contactName: 'Alice Smith',
+  contactName: 'John Doe',
+  onCommit,
+  onOpenCard,
+  onNavigate,
+};
+
+/** Click once and let the double-click window pass */
+const clickToEdit = (text = 'John Doe') => {
+  fireEvent.click(screen.getByText(text), { detail: 1 });
+  act(() => {
+    jest.advanceTimersByTime(DOUBLE_CLICK_WINDOW_MS + 10);
+  });
+  return screen.getByRole('textbox') as HTMLInputElement;
 };
 
 describe('EditableCell', () => {
   beforeEach(() => {
+    jest.useFakeTimers();
     jest.clearAllMocks();
   });
 
-  describe('ClickActivatesEditMode_Should_ShowInput_When_CellClicked', () => {
-    it('should display value as text when not editing', () => {
-      render(<EditableCell {...defaultProps} />);
-
-      expect(screen.getByText('Alice Smith')).toBeInTheDocument();
-      expect(screen.queryByTestId('editable-cell-input')).not.toBeInTheDocument();
-    });
-
-    it('should activate edit mode when cell is clicked', () => {
-      render(<EditableCell {...defaultProps} />);
-
-      fireEvent.click(screen.getByText('Alice Smith'));
-
-      expect(screen.getByTestId('editable-cell-input')).toBeInTheDocument();
-    });
-
-    it('should pre-populate input with current value', () => {
-      render(<EditableCell {...defaultProps} />);
-
-      fireEvent.click(screen.getByText('Alice Smith'));
-
-      const input = screen.getByTestId('editable-cell-input') as HTMLInputElement;
-      expect(input.value).toBe('Alice Smith');
-    });
+  afterEach(() => {
+    jest.useRealTimers();
   });
 
-  describe('EnterKey_Should_SaveAndExitEditMode_When_Pressed', () => {
-    it('should save and exit edit mode on Enter', () => {
-      render(<EditableCell {...defaultProps} />);
+  it('render_Should_ShowValueAndSyncIcon_When_NotEditing', () => {
+    render(<EditableCell {...defaultProps} />);
 
-      fireEvent.click(screen.getByText('Alice Smith'));
-      const input = screen.getByTestId('editable-cell-input');
-
-      fireEvent.change(input, { target: { value: 'Bob Jones' } });
-      fireEvent.keyDown(input, { key: 'Enter' });
-
-      expect(mockDispatch).toHaveBeenCalled();
-      expect(mockExecuteFieldUpdate).toHaveBeenCalledWith({
-        resourceName: 'people/c12345',
-        fieldPath: 'names',
-        newValue: 'Bob Jones',
-        oldValue: 'Alice Smith',
-      });
-      expect(screen.queryByTestId('editable-cell-input')).not.toBeInTheDocument();
-    });
+    expect(screen.getByText('John Doe')).toBeTruthy();
+    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(screen.getByTestId('sync-status-icon').getAttribute('data-field')).toBe('names');
   });
 
-  describe('EscapeKey_Should_CancelWithoutSaving_When_Pressed', () => {
-    it('should revert to original value and exit edit mode on Escape', () => {
-      render(<EditableCell {...defaultProps} />);
+  it('render_Should_ShowPlaceholder_When_ValueEmpty', () => {
+    render(<EditableCell {...defaultProps} value="" placeholder="Add phonetic" />);
 
-      fireEvent.click(screen.getByText('Alice Smith'));
-      const input = screen.getByTestId('editable-cell-input');
-
-      fireEvent.change(input, { target: { value: 'Changed Value' } });
-      fireEvent.keyDown(input, { key: 'Escape' });
-
-      expect(mockDispatch).not.toHaveBeenCalled();
-      expect(screen.queryByTestId('editable-cell-input')).not.toBeInTheDocument();
-      expect(screen.getByText('Alice Smith')).toBeInTheDocument();
-    });
+    expect(screen.getByText('Add phonetic')).toBeTruthy();
   });
 
-  describe('Blur_Should_SaveAndExitEditMode_When_ClickOutside', () => {
-    it('should save on blur when value changed', () => {
-      render(<EditableCell {...defaultProps} />);
+  it('click_Should_EnterEditMode_AfterDoubleClickWindow', () => {
+    render(<EditableCell {...defaultProps} />);
 
-      fireEvent.click(screen.getByText('Alice Smith'));
-      const input = screen.getByTestId('editable-cell-input');
+    fireEvent.click(screen.getByText('John Doe'), { detail: 1 });
+    expect(screen.queryByRole('textbox')).toBeNull();
 
-      fireEvent.change(input, { target: { value: 'New Name' } });
-      fireEvent.blur(input);
-
-      expect(mockDispatch).toHaveBeenCalled();
-      expect(mockExecuteFieldUpdate).toHaveBeenCalledWith({
-        resourceName: 'people/c12345',
-        fieldPath: 'names',
-        newValue: 'New Name',
-        oldValue: 'Alice Smith',
-      });
+    act(() => {
+      jest.advanceTimersByTime(DOUBLE_CLICK_WINDOW_MS + 10);
     });
+    const input = screen.getByRole('textbox') as HTMLInputElement;
+    expect(input.value).toBe('John Doe');
+    expect(input.getAttribute('aria-label')).toBe('Edit Name for John Doe');
   });
 
-  describe('UnchangedValue_Should_NotDispatch_When_SaveTriggered', () => {
-    it('should not dispatch if value is unchanged on Enter', () => {
-      render(<EditableCell {...defaultProps} />);
+  it('doubleClick_Should_OpenCard_AndNotEdit', () => {
+    render(<EditableCell {...defaultProps} />);
+    const text = screen.getByText('John Doe');
 
-      fireEvent.click(screen.getByText('Alice Smith'));
-      const input = screen.getByTestId('editable-cell-input');
-
-      fireEvent.keyDown(input, { key: 'Enter' });
-
-      expect(mockDispatch).not.toHaveBeenCalled();
+    fireEvent.click(text, { detail: 1 });
+    fireEvent.click(text, { detail: 2 });
+    fireEvent.doubleClick(text);
+    act(() => {
+      jest.advanceTimersByTime(DOUBLE_CLICK_WINDOW_MS + 10);
     });
 
-    it('should not dispatch if value is unchanged on blur', () => {
-      render(<EditableCell {...defaultProps} />);
-
-      fireEvent.click(screen.getByText('Alice Smith'));
-      const input = screen.getByTestId('editable-cell-input');
-
-      fireEvent.blur(input);
-
-      expect(mockDispatch).not.toHaveBeenCalled();
-    });
+    expect(onOpenCard).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('textbox')).toBeNull();
   });
 
-  describe('TabKey_Should_CallOnNavigateRight_When_Pressed', () => {
-    it('should call onNavigate with right on Tab', () => {
-      const mockNavigate = jest.fn();
-      render(<EditableCell {...defaultProps} onNavigate={mockNavigate} />);
+  it('editValue_Should_SeedTheEditor_When_DifferentFromDisplay', () => {
+    render(<EditableCell {...defaultProps} value="Dr. John Doe" editValue="John Doe" />);
 
-      fireEvent.click(screen.getByText('Alice Smith'));
-      const input = screen.getByTestId('editable-cell-input');
-
-      fireEvent.change(input, { target: { value: 'New Name' } });
-      fireEvent.keyDown(input, { key: 'Tab' });
-
-      expect(mockNavigate).toHaveBeenCalledWith('right');
-    });
+    const input = clickToEdit('Dr. John Doe');
+    expect(input.value).toBe('John Doe');
   });
 
-  describe('EnterKey_Should_CallOnNavigateDown_When_Pressed', () => {
-    it('should call onNavigate with down on Enter', () => {
-      const mockNavigate = jest.fn();
-      render(<EditableCell {...defaultProps} onNavigate={mockNavigate} />);
+  it('enter_Should_CommitChangedText_AndNavigateDown', () => {
+    render(<EditableCell {...defaultProps} />);
+    const input = clickToEdit();
 
-      fireEvent.click(screen.getByText('Alice Smith'));
-      const input = screen.getByTestId('editable-cell-input');
+    fireEvent.change(input, { target: { value: 'Jane Doe' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
 
-      fireEvent.change(input, { target: { value: 'New Name' } });
-      fireEvent.keyDown(input, { key: 'Enter' });
-
-      expect(mockNavigate).toHaveBeenCalledWith('down');
-    });
+    expect(onCommit).toHaveBeenCalledWith('Jane Doe');
+    expect(onNavigate).toHaveBeenCalledWith('down');
+    expect(screen.queryByRole('textbox')).toBeNull();
   });
 
-  describe('AutoEdit_Should_EnterEditMode_When_PropTrue', () => {
-    it('should auto-enter edit mode when autoEdit is true', () => {
-      const mockConsumed = jest.fn();
-      render(<EditableCell {...defaultProps} autoEdit={true} onAutoEditConsumed={mockConsumed} />);
+  it('tab_Should_CommitAndNavigateRight', () => {
+    render(<EditableCell {...defaultProps} />);
+    const input = clickToEdit();
 
-      expect(screen.getByTestId('editable-cell-input')).toBeInTheDocument();
-      expect(mockConsumed).toHaveBeenCalled();
-    });
+    fireEvent.change(input, { target: { value: 'Jane' } });
+    fireEvent.keyDown(input, { key: 'Tab' });
 
-    it('should not auto-enter edit mode when autoEdit is false', () => {
-      render(<EditableCell {...defaultProps} autoEdit={false} />);
-
-      expect(screen.queryByTestId('editable-cell-input')).not.toBeInTheDocument();
-      expect(screen.getByText('Alice Smith')).toBeInTheDocument();
-    });
+    expect(onCommit).toHaveBeenCalledWith('Jane');
+    expect(onNavigate).toHaveBeenCalledWith('right');
   });
 
-  describe('Accessibility_Should_HaveAriaLabel_When_Editing', () => {
-    it('should have correct aria-label on input', () => {
-      render(<EditableCell {...defaultProps} />);
+  it('escape_Should_CancelWithoutCommit', () => {
+    render(<EditableCell {...defaultProps} />);
+    const input = clickToEdit();
 
-      fireEvent.click(screen.getByText('Alice Smith'));
-      const input = screen.getByTestId('editable-cell-input');
+    fireEvent.change(input, { target: { value: 'Something else' } });
+    fireEvent.keyDown(input, { key: 'Escape' });
+    fireEvent.blur(input);
 
-      expect(input).toHaveAttribute('aria-label', 'Edit Name for Alice Smith');
-    });
+    expect(onCommit).not.toHaveBeenCalled();
+    expect(screen.getByText('John Doe')).toBeTruthy();
+  });
 
-    it('should have role textbox on input', () => {
-      render(<EditableCell {...defaultProps} />);
+  it('blur_Should_Commit_When_Changed', () => {
+    render(<EditableCell {...defaultProps} />);
+    const input = clickToEdit();
 
-      fireEvent.click(screen.getByText('Alice Smith'));
-      const input = screen.getByTestId('editable-cell-input');
+    fireEvent.change(input, { target: { value: 'Jane Doe' } });
+    fireEvent.blur(input);
 
-      expect(input).toHaveAttribute('role', 'textbox');
-    });
+    expect(onCommit).toHaveBeenCalledTimes(1);
+    expect(onCommit).toHaveBeenCalledWith('Jane Doe');
+  });
+
+  it('save_Should_NotCommit_When_OnlyWhitespaceChanged', () => {
+    render(<EditableCell {...defaultProps} />);
+    const input = clickToEdit();
+
+    fireEvent.change(input, { target: { value: '  John Doe ' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(onCommit).not.toHaveBeenCalled();
+  });
+
+  it('enterThenBlur_Should_CommitOnce', () => {
+    render(<EditableCell {...defaultProps} />);
+    const input = clickToEdit();
+
+    fireEvent.change(input, { target: { value: 'Jane Doe' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    fireEvent.blur(input);
+
+    expect(onCommit).toHaveBeenCalledTimes(1);
+  });
+
+  it('autoEdit_Should_EnterEditMode_AndNotifyConsumed', () => {
+    const onAutoEditConsumed = jest.fn();
+    render(<EditableCell {...defaultProps} autoEdit onAutoEditConsumed={onAutoEditConsumed} />);
+
+    expect((screen.getByRole('textbox') as HTMLInputElement).value).toBe('John Doe');
+    expect(onAutoEditConsumed).toHaveBeenCalled();
   });
 });

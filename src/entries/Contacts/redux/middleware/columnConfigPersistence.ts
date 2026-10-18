@@ -40,41 +40,39 @@ const COLUMN_CONFIG_ACTIONS = [
  * the error is logged but does not interrupt the Redux action flow.
  * The app continues to function normally without persistence.
  */
-export const columnConfigPersistenceMiddleware: Middleware<
-  Record<string, never>,
-  RootState
-> = (store) => (next) => (action) => {
-  // Pass action to next middleware and reducers
-  const result = next(action);
+export const columnConfigPersistenceMiddleware: Middleware<Record<string, never>, RootState> =
+  (store) => (next) => (action) => {
+    // Pass action to next middleware and reducers
+    const result = next(action);
 
-  // After state update, check if this was a column config action
-  if (
-    action &&
-    typeof action === 'object' &&
-    'type' in action &&
-    typeof action.type === 'string' &&
-    COLUMN_CONFIG_ACTIONS.includes(action.type)
-  ) {
-    // Get updated state after reducer ran
-    const state = store.getState();
-    const columnConfig = state.contacts?.ui?.columnConfig;
+    // After state update, check if this was a column config action
+    if (
+      action &&
+      typeof action === 'object' &&
+      'type' in action &&
+      typeof action.type === 'string' &&
+      COLUMN_CONFIG_ACTIONS.includes(action.type)
+    ) {
+      // Get updated state after reducer ran
+      const state = store.getState();
+      const columnConfig = state.contacts?.ui?.columnConfig;
 
-    if (columnConfig) {
-      // Save to localStorage (errors handled internally by saveColumnConfig)
-      saveColumnConfig(columnConfig);
+      if (columnConfig) {
+        // Save to localStorage (errors handled internally by saveColumnConfig)
+        saveColumnConfig(columnConfig);
 
-      logger.info(
-        {
-          context: 'columnConfigPersistenceMiddleware',
-          metadata: {
-            actionType: action.type,
-            columnConfig,
+        logger.info(
+          {
+            context: 'columnConfigPersistenceMiddleware',
+            metadata: {
+              actionType: action.type,
+              columnConfig,
+            },
           },
-        },
-        'Column configuration persisted to localStorage'
-      );
+          'Column configuration persisted to localStorage',
+        );
+      }
     }
-  }
 
-  return result;
-};
+    return result;
+  };

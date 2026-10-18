@@ -22,8 +22,4 @@ export type {
   APIResponse,
 } from './Contact';
 
-export type {
-  SyncOperation,
-  SyncOperationStatus,
-  SyncQueueState,
-} from './SyncOperation';
+export type { SyncOperation, SyncOperationStatus, SyncQueueState } from './SyncOperation';

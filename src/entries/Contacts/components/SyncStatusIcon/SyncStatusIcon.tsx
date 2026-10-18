@@ -16,7 +16,10 @@ import {
   selectRetryCount,
   selectMaxRetries,
 } from '../../redux/slices/syncQueue/selectors';
-import { retryOperation } from '../../redux/slices/syncQueue/syncQueueSlice';
+import { operationFailed, retryOperation } from '../../redux/slices/syncQueue/syncQueueSlice';
+import { selectContactEntities } from '../../redux/slices/contacts/selectors';
+import { normalizeGroup } from '../card/cardModel';
+import type { Contact } from '../../types/Contact';
 import { executeFieldUpdate } from '../../redux/thunks/syncThunks';
 import { logger } from '../../../../shared/logger';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
@@ -124,6 +127,7 @@ const SyncStatusIcon: React.FC<SyncStatusIconProps> = ({
   );
 
   const maxRetries = useAppSelector(selectMaxRetries);
+  const contacts = useAppSelector(selectContactEntities);
 
   const [visible, setVisible] = useState(true);
   const [ariaMessage, setAriaMessage] = useState('');
@@ -188,6 +192,22 @@ const SyncStatusIcon: React.FC<SyncStatusIconProps> = ({
       return;
     }
 
+    // The failed edit was rolled back, so the group should still equal its old
+    // value. If it does not, a newer edit was saved since; replaying this one
+    // would silently revert it.
+    const current = contacts?.[operation.resourceName]?.[operation.fieldPath as keyof Contact];
+    if (
+      JSON.stringify(normalizeGroup(current)) !== JSON.stringify(normalizeGroup(operation.oldValue))
+    ) {
+      dispatch(
+        operationFailed({
+          id: operation.id,
+          error: 'This field changed after the failed edit. Edit it again instead of retrying.',
+        }),
+      );
+      return;
+    }
+
     dispatch(retryOperation(operation.id));
     dispatch(
       executeFieldUpdate({
@@ -205,7 +225,7 @@ const SyncStatusIcon: React.FC<SyncStatusIconProps> = ({
       },
       'Manual retry triggered',
     );
-  }, [dispatch, operation, resourceName]);
+  }, [contacts, dispatch, operation, resourceName]);
 
   // Render success checkmark when success is inferred (operation removed from Redux)
   if (successInferred && visible) {

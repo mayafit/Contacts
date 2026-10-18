@@ -139,7 +139,7 @@ describe('ConflictResolutionDialog', () => {
     expect(screen.getByTestId('conflict-remote-value').textContent).toBe('(empty)');
   });
 
-  it('render_Should_ShowJsonStringified_When_ValueIsObject', () => {
+  it('render_Should_ShowReadableText_When_ValueIsFieldGroup', () => {
     const operation = createMockOperation({
       oldValue: [{ givenName: 'John' }],
       newValue: [{ givenName: 'Jane' }],
@@ -153,15 +153,28 @@ describe('ConflictResolutionDialog', () => {
       />,
     );
 
-    expect(screen.getByTestId('conflict-old-value').textContent).toBe(
-      JSON.stringify([{ givenName: 'John' }]),
+    expect(screen.getByTestId('conflict-old-value').textContent).toBe('John');
+    expect(screen.getByTestId('conflict-new-value').textContent).toBe('Jane');
+    expect(screen.getByTestId('conflict-remote-value').textContent).toBe('Johnny');
+  });
+
+  it('render_Should_ShowPhoneticAndValues_When_GroupsHaveThem', () => {
+    const operation = createMockOperation({
+      oldValue: [{ givenName: 'דנה', phoneticGivenName: 'Dana' }],
+      newValue: [{ value: '052-1111111' }, { value: '03-1234567' }],
+    });
+    render(
+      <ConflictResolutionDialog
+        operation={operation}
+        remoteValue={[]}
+        onKeepMine={mockOnKeepMine}
+        onUseRemote={mockOnUseRemote}
+      />,
     );
-    expect(screen.getByTestId('conflict-new-value').textContent).toBe(
-      JSON.stringify([{ givenName: 'Jane' }]),
-    );
-    expect(screen.getByTestId('conflict-remote-value').textContent).toBe(
-      JSON.stringify([{ givenName: 'Johnny' }]),
-    );
+
+    expect(screen.getByTestId('conflict-old-value').textContent).toBe('דנה (Dana)');
+    expect(screen.getByTestId('conflict-new-value').textContent).toBe('052-1111111, 03-1234567');
+    expect(screen.getByTestId('conflict-remote-value').textContent).toBe('(empty)');
   });
 
   it('onKeepMine_Should_CallHandler_When_KeepYourChangeClicked', () => {

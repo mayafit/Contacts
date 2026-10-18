@@ -31,6 +31,32 @@ const BACKOFF_DELAYS_MS = [1000, 2000, 4000, 8000, 16000] as const;
 const pendingRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 /**
+ * Tail of the save chain per contact. Saves to one contact run one at a time so
+ * each sends the etag returned by the previous one; two quick edits to the same
+ * row would otherwise both send the old etag and the second would be a false
+ * 412 conflict.
+ */
+const saveChains = new Map<string, Promise<void>>();
+
+/**
+ * Runs a task after every earlier task for the same contact has finished.
+ * @param resourceName - Contact the task writes to
+ * @param task - The save
+ * @returns Promise settling when this task finishes
+ */
+function runSerialized(resourceName: string, task: () => Promise<void>): Promise<void> {
+  const previous = saveChains.get(resourceName) ?? Promise.resolve();
+  const next = previous.catch(() => undefined).then(task);
+  saveChains.set(resourceName, next);
+  void next.finally(() => {
+    if (saveChains.get(resourceName) === next) {
+      saveChains.delete(resourceName);
+    }
+  });
+  return next;
+}
+
+/**
  * Calculate exponential backoff delay for a given retry count (0-based).
  * @param retryCount - Current retry attempt (0-based index into BACKOFF_DELAYS_MS)
  * @returns Delay in milliseconds: 1000, 2000, 4000, 8000, 16000
@@ -186,15 +212,9 @@ export const executeFieldUpdate = createAsyncThunk<
       dispatch(contactUpdated(optimisticContact));
     }
 
-    // 3. Execute the API call
-    await executeApiCall(
-      dispatch,
-      getState,
-      operationId,
-      resourceName,
-      fieldPath,
-      newValue,
-      oldValue,
+    // 3. Execute the API call, after any earlier save to the same contact
+    await runSerialized(resourceName, () =>
+      executeApiCall(dispatch, getState, operationId, resourceName, fieldPath, newValue, oldValue),
     );
   },
 );
@@ -214,7 +234,15 @@ async function executeApiCall(
 ): Promise<void> {
   dispatch(operationStarted(operationId));
 
-  const result = await GoogleContactsService.updateContactField(resourceName, fieldPath, newValue);
+  // Read the etag now, not when the edit was made: an earlier save to this
+  // contact may have just replaced it.
+  const etag = getState().contacts?.contacts?.entities[resourceName]?.etag;
+  const result = await GoogleContactsService.updateContactField(
+    resourceName,
+    fieldPath,
+    newValue,
+    etag,
+  );
 
   if (result.success && result.data) {
     // Success: remove from queue, update contact with server-confirmed data

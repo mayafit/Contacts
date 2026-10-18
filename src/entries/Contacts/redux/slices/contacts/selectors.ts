@@ -18,13 +18,10 @@ export const selectContactsState = (state: RootState) => state.contacts?.contact
  * Select all contacts as denormalized array
  * Uses entity adapter's selectAll for efficient access
  */
-export const selectAllContacts = createSelector(
-  [selectContactsState],
-  (contactsState) => {
-    if (!contactsState) return [];
-    return contactsSelectors.selectAll(contactsState);
-  },
-);
+export const selectAllContacts = createSelector([selectContactsState], (contactsState) => {
+  if (!contactsState) return [];
+  return contactsSelectors.selectAll(contactsState);
+});
 
 /**
  * Select contact by resourceName (ID)
@@ -65,22 +62,29 @@ export const selectContactsLastFetched = createSelector(
 /**
  * Select total count of contacts
  */
-export const selectContactsCount = createSelector(
-  [selectContactsState],
-  (contactsState) => {
-    if (!contactsState) return 0;
-    return contactsState.ids.length;
-  },
-);
+export const selectContactsCount = createSelector([selectContactsState], (contactsState) => {
+  if (!contactsState) return 0;
+  return contactsState.ids.length;
+});
 
 /**
  * Select whether contacts data is stale (older than 5 minutes)
  */
-export const selectContactsIsStale = createSelector(
-  [selectContactsLastFetched],
-  (lastFetched) => {
-    if (!lastFetched) return true;
-    const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
-    return new Date(lastFetched).getTime() < fiveMinutesAgo;
-  },
-);
+export const selectContactsIsStale = createSelector([selectContactsLastFetched], (lastFetched) => {
+  if (!lastFetched) return true;
+  const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
+  return new Date(lastFetched).getTime() < fiveMinutesAgo;
+});
+
+const NO_GROUPS = {};
+
+/**
+ * Select labels (contact groups) by resource name
+ */
+export const selectContactGroups = (state: RootState) =>
+  state.contacts?.contacts?.groups ?? NO_GROUPS;
+
+/**
+ * Select contacts by resource name (for components that look up one contact)
+ */
+export const selectContactEntities = (state: RootState) => state.contacts?.contacts?.entities;

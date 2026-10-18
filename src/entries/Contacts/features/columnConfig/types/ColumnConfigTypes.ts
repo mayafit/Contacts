@@ -3,7 +3,28 @@
  * @module features/columnConfig/types
  */
 
-import type { Contact } from '../../../types/Contact';
+import type { Contact, ContactGroup, EditableGroup } from '../../../types/Contact';
+
+/**
+ * Data a column accessor may need beyond the contact itself
+ */
+export interface ColumnContext {
+  /** Labels by resource name */
+  groups: Record<string, ContactGroup>;
+}
+
+/**
+ * How a column is edited inline: the text shown in the editor, and how the
+ * typed text becomes a new value for one field group.
+ */
+export interface ColumnEdit {
+  /** Field group the edit replaces */
+  fieldPath: EditableGroup;
+  /** Text to start editing from */
+  value: (contact: Contact) => string;
+  /** New value of the whole group, built from the typed text */
+  apply: (contact: Contact, text: string) => unknown;
+}
 
 /**
  * Category classification for contact fields
@@ -20,10 +41,16 @@ export interface ColumnDefinition {
   label: string;
   /** Category for grouping in configuration UI */
   category: ColumnCategory;
-  /** Whether this is a default column that cannot be removed */
+  /** Whether this column is locked on (cannot be removed) */
   isDefault: boolean;
-  /** Function to extract field value from contact object */
-  accessor: (contact: Contact) => string | undefined;
+  /** Whether the column is shown for a new user */
+  defaultVisible?: boolean;
+  /** Function to extract the display value ('' when empty) */
+  accessor: (contact: Contact, context?: ColumnContext) => string | undefined;
+  /** Preferred width in px; columns share leftover space proportionally */
+  width?: number;
+  /** Inline edit behaviour; absent for read-only columns */
+  edit?: ColumnEdit;
 }
 
 /**

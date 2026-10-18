@@ -3,4 +3,10 @@
  * @module features/columnConfig/types
  */
 
-export type { ColumnCategory, ColumnDefinition, ColumnConfig } from './ColumnConfigTypes';
+export type {
+  ColumnCategory,
+  ColumnDefinition,
+  ColumnConfig,
+  ColumnContext,
+  ColumnEdit,
+} from './ColumnConfigTypes';

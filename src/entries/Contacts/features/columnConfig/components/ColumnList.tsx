@@ -4,21 +4,9 @@
  */
 
 import React from 'react';
-import {
-  DndContext,
-  closestCenter,
-  DragOverlay,
-} from '@dnd-kit/core';
-import {
-  SortableContext,
-  verticalListSortingStrategy,
-} from '@dnd-kit/sortable';
-import {
-  List,
-  ListSubheader,
-  Box,
-  Typography,
-} from '@mui/material';
+import { DndContext, closestCenter, DragOverlay } from '@dnd-kit/core';
+import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { List, ListSubheader, Box, Typography } from '@mui/material';
 import ColumnItem from './ColumnItem';
 import { useColumnDragDrop } from '../hooks/useColumnDragDrop';
 import type { ColumnDefinition } from '../types';
@@ -64,9 +52,7 @@ const ColumnList: React.FC<ColumnListProps> = ({
   ];
 
   // Get the active column for drag overlay
-  const activeColumn = activeId
-    ? columns.find((col) => col.id === activeId)
-    : null;
+  const activeColumn = activeId ? columns.find((col) => col.id === activeId) : null;
 
   return (
     <DndContext
