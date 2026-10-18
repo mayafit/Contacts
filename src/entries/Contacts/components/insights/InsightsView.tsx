@@ -3,10 +3,11 @@
  * @module Contacts/components/insights/InsightsView
  */
 
-import React from 'react';
-import { Box, Button, LinearProgress, Paper, Typography } from '@mui/material';
+import React, { useState } from 'react';
+import { Box, Button, Chip, LinearProgress, Paper, Typography } from '@mui/material';
 import { ArrowForward } from '@mui/icons-material';
 import type { ContactFilter, ContactStats } from '../../model/stats';
+import type { DomainInsight } from '../../model/organizations';
 import { BarList, ColumnChart, percent } from './charts';
 import { tokens } from '../../theme/contactsTheme';
 
@@ -18,6 +19,10 @@ export interface InsightsViewProps {
   onShowFilter: (filter: ContactFilter) => void;
   /** Open the Duplicates view */
   onShowDuplicates: () => void;
+  /** Work email domains and their organization suggestions */
+  orgInsights: DomainInsight[];
+  /** Review the suggestions for one domain */
+  onReviewDomain: (insight: DomainInsight) => void;
 }
 
 const fmt = new Intl.NumberFormat('en-US');
@@ -119,7 +124,16 @@ const Tile: React.FC<{
  * @param props - Component props
  * @returns View element
  */
-const InsightsView: React.FC<InsightsViewProps> = ({ stats, onShowFilter, onShowDuplicates }) => {
+const InsightsView: React.FC<InsightsViewProps> = ({
+  stats,
+  onShowFilter,
+  onShowDuplicates,
+  orgInsights,
+  onReviewDomain,
+}) => {
+  const [allDomains, setAllDomains] = useState(false);
+  const toFix = orgInsights.reduce((s, d) => s + d.needsUpdate.length, 0);
+  const shownDomains = allDomains ? orgInsights : orgInsights.slice(0, 8);
   const missingPhonetic = stats.total - stats.withPhonetic;
   const hebrewMissing = stats.hebrewNamed - stats.hebrewNamedWithPhonetic;
   const phoneRow = stats.completeness.find((r) => r.key === 'phone');
@@ -186,6 +200,90 @@ const InsightsView: React.FC<InsightsViewProps> = ({ stats, onShowFilter, onShow
           action={{ label: 'Show', onClick: () => onShowFilter('noEmail') }}
         />
       </Box>
+
+      {orgInsights.length > 0 && (
+        <Card
+          title="Organizations from work email"
+          subtitle={
+            toFix
+              ? `${fmt.format(toFix)} contacts with a work address have a missing or different organization`
+              : 'Every contact with a work address lists the matching organization'
+          }
+          sx={{ mb: 2 }}
+        >
+          <Box role="table" aria-label="Work email domains">
+            {shownDomains.map((d) => (
+              <Box
+                key={d.domain}
+                role="row"
+                sx={{
+                  display: 'grid',
+                  gridTemplateColumns: {
+                    xs: '1fr auto',
+                    md: 'minmax(160px, 1.2fr) minmax(140px, 1fr) 110px 150px auto',
+                  },
+                  alignItems: 'center',
+                  gap: 1.5,
+                  py: 0.75,
+                  px: 1,
+                  borderRadius: '8px',
+                  '&:hover': { bgcolor: tokens.hover },
+                }}
+              >
+                <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                  @{d.domain}
+                </Typography>
+                <Typography
+                  variant="body2"
+                  dir="auto"
+                  sx={{
+                    color: tokens.textSecondary,
+                    display: { xs: 'none', md: 'block' },
+                    textAlign: 'left',
+                  }}
+                >
+                  {d.suggested}
+                </Typography>
+                <Typography
+                  variant="body2"
+                  sx={{
+                    color: tokens.textMuted,
+                    display: { xs: 'none', md: 'block' },
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
+                >
+                  {fmt.format(d.members.length)} contacts
+                </Typography>
+                <Box sx={{ display: { xs: 'none', md: 'block' } }}>
+                  {d.needsUpdate.length > 0 ? (
+                    <Chip
+                      size="small"
+                      label={`${d.needsUpdate.length} to update`}
+                      sx={{ bgcolor: 'rgba(232,162,58,0.15)', color: tokens.attention }}
+                    />
+                  ) : (
+                    <Typography variant="caption" sx={{ color: tokens.textMuted }}>
+                      up to date
+                    </Typography>
+                  )}
+                </Box>
+                <Button
+                  size="small"
+                  onClick={() => onReviewDomain(d)}
+                  disabled={d.needsUpdate.length === 0}
+                >
+                  Review
+                </Button>
+              </Box>
+            ))}
+          </Box>
+          {orgInsights.length > 8 && (
+            <Button size="small" sx={{ mt: 1 }} onClick={() => setAllDomains((v) => !v)}>
+              {allDomains ? 'Show fewer' : `Show all ${orgInsights.length} domains`}
+            </Button>
+          )}
+        </Card>
+      )}
 
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1fr 1fr' }, gap: 2 }}>
         <Card
