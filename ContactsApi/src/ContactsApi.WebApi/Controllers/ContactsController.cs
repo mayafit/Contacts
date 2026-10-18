@@ -224,11 +224,24 @@ public class ContactsController : ControllerBase
                 statusCode: StatusCodes.Status412PreconditionFailed);
         }
 
-        // 1b. Refuse to lose data the merge cannot carry over. An acknowledgement
-        // only covers the contacts it was given for; anything else is reported again.
-        var unmerged = await apiClient.FindUnmergedDataAsync(deletes);
-        var unacknowledged = unmerged.Where(kv => !acknowledged.Contains(kv.Key))
-            .ToDictionary(kv => kv.Key, kv => (object)kv.Value);
+        // 1b. Carry over what the app does not show (events, IM, app data, ...):
+        // read the kept contact and the others with those fields and merge them.
+        var keptExtras = await apiClient.GetPersonExtrasAsync(request.PrimaryResourceName);
+        var otherExtras = new List<Google.Apis.PeopleService.v1.Data.Person>();
+        foreach (var rn in deletes)
+        {
+            otherExtras.Add(await apiClient.GetPersonExtrasAsync(rn));
+        }
+
+        var extras = PersonExtrasMerger.Merge(keptExtras, otherExtras);
+
+        // 1c. What cannot be carried over (a photo, a different gender) stays on the
+        // merged-away contact. Moving it to Trash keeps it, so that is only reported;
+        // deleting it needs an acknowledgement covering exactly those contacts.
+        var unacknowledged = request.MoveToTrash
+            ? new Dictionary<string, object>()
+            : extras.NotCopied.Where(kv => !acknowledged.Contains(kv.Key))
+                .ToDictionary(kv => kv.Key, kv => (object)kv.Value);
         if (unacknowledged.Count > 0)
         {
             throw new GoogleApiException(
@@ -239,9 +252,25 @@ public class ContactsController : ControllerBase
         }
 
         // 2. Save the kept contact first; if this fails nothing has been deleted
-        var kept = request.Patch != null && HasGroups(request.Patch)
-            ? await apiClient.UpdateContactAsync(request.PrimaryResourceName, request.Patch)
-            : await apiClient.GetContactAsync(request.PrimaryResourceName);
+        Contact kept;
+        var hasPatch = request.Patch != null && HasGroups(request.Patch);
+        if (hasPatch || extras.ChangedFields.Count > 0)
+        {
+            var patch = hasPatch
+                ? request.Patch!
+                : new Contact
+                {
+                    // No edits from the client: the etag the extras were just read
+                    // with, so only a change made since then is a conflict
+                    Etag = keptExtras.ETag
+                };
+            kept = await apiClient.UpdateContactAsync(
+                request.PrimaryResourceName, patch, extras.Extras, extras.ChangedFields);
+        }
+        else
+        {
+            kept = await apiClient.GetContactAsync(request.PrimaryResourceName);
+        }
 
         // 3. Carry over labels
         var existing = new HashSet<string>(kept.Labels ?? new List<string>());
@@ -279,7 +308,13 @@ public class ContactsController : ControllerBase
             }
         }
 
-        return Ok(ApiResponse<MergeResult>.SuccessResponse(new MergeResult { Contact = kept, Deleted = deletes, TrashLabel = trashLabel }));
+        return Ok(ApiResponse<MergeResult>.SuccessResponse(new MergeResult
+        {
+            Contact = kept,
+            Deleted = deletes,
+            TrashLabel = trashLabel,
+            NotCopied = extras.NotCopied
+        }));
     }
 
     /// <summary>

@@ -47,7 +47,7 @@ export interface MergeDialogProps {
   /** Close without merging */
   onClose: () => void;
   /** Called after a successful merge with the kept contact and how many were removed */
-  onMerged: (kept: Contact, removed: number) => void;
+  onMerged: (kept: Contact, removed: number, notCopied: Record<string, string[]>) => void;
 }
 
 /**
@@ -159,7 +159,7 @@ const MergeDialog: React.FC<MergeDialogProps> = ({ contacts, groups, onClose, on
     setError(null);
     setNotice(null);
     try {
-      const kept = await dispatch(
+      const { contact: kept, notCopied } = await dispatch(
         mergeContacts({
           primaryResourceName: main.resourceName,
           patch: edited && main ? buildPatch(main, edited) : plan.patch,
@@ -172,7 +172,7 @@ const MergeDialog: React.FC<MergeDialogProps> = ({ contacts, groups, onClose, on
           ),
         }),
       ).unwrap();
-      onMerged(kept, others.length);
+      onMerged(kept, others.length, notCopied);
     } catch (e) {
       setError(e as CleanupError);
     } finally {

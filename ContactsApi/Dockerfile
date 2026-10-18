@@ -28,7 +28,7 @@ COPY --chown=dotnet:dotnet src/ContactsApi.Infrastructure/ContactsApi.Infrastruc
 
 # Restore dependencies as non-root user
 USER dotnet
-RUN dotnet restore --runtime $(cat /tmp/rid)
+RUN dotnet restore src/ContactsApi.WebApi/ContactsApi.WebApi.csproj --runtime $(cat /tmp/rid)
 
 # Copy remaining source code
 COPY --chown=dotnet:dotnet . .
