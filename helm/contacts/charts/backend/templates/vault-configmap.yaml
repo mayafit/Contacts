@@ -11,5 +11,6 @@ data:
     export GoogleOAuth__ClientId="{{ `{{ .Data.data.GoogleOAuth__ClientId }}` }}"
     export GoogleOAuth__ClientSecret="{{ `{{ .Data.data.GoogleOAuth__ClientSecret }}` }}"
     export Database__ConnectionString="{{ `{{ .Data.data.Database__ConnectionString }}` }}"
+    {{`{{ with .Data.data.Gemini__ApiKey }}export Gemini__ApiKey="{{ . }}"{{ end }}`}}
     {{`{{ end }}`}}
 {{- end }}

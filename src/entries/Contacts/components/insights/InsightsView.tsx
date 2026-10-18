@@ -23,6 +23,8 @@ export interface InsightsViewProps {
   orgInsights: DomainInsight[];
   /** Review the suggestions for one domain */
   onReviewDomain: (insight: DomainInsight) => void;
+  /** Keeping-in-touch section, shown under the headline tiles */
+  activitySection?: React.ReactNode;
 }
 
 const fmt = new Intl.NumberFormat('en-US');
@@ -130,6 +132,7 @@ const InsightsView: React.FC<InsightsViewProps> = ({
   onShowDuplicates,
   orgInsights,
   onReviewDomain,
+  activitySection,
 }) => {
   const [allDomains, setAllDomains] = useState(false);
   const toFix = orgInsights.reduce((s, d) => s + d.needsUpdate.length, 0);
@@ -200,6 +203,8 @@ const InsightsView: React.FC<InsightsViewProps> = ({
           action={{ label: 'Show', onClick: () => onShowFilter('noEmail') }}
         />
       </Box>
+
+      {activitySection}
 
       {orgInsights.length > 0 && (
         <Card

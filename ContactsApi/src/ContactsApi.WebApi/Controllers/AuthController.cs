@@ -23,6 +23,9 @@ public class AuthController : ControllerBase
     /// <summary>Read/write Google Contacts scope; required for the app to work</summary>
     private const string ContactsScope = "https://www.googleapis.com/auth/contacts";
 
+    /// <summary>Session key: where to go after the callback (set by an opt-in flow)</summary>
+    private const string AfterLoginKey = "AfterLogin";
+
     private readonly ILogger<AuthController> _logger;
     private readonly IConfiguration _configuration;
     private readonly GoogleOAuthOptions _oauthOptions;
@@ -45,7 +48,9 @@ public class AuthController : ControllerBase
     /// </summary>
     /// <returns>Redirect to Google OAuth consent screen</returns>
     [HttpGet("login")]
-    public async Task<IActionResult> Login([FromQuery] bool consent = false)
+    /// <param name="consent">Show Google's consent screen (to get a new refresh token)</param>
+    /// <param name="activity">Also ask for Gmail metadata and Calendar access (opt-in)</param>
+    public async Task<IActionResult> Login([FromQuery] bool consent = false, [FromQuery] bool activity = false)
     {
         try
         {
@@ -53,7 +58,17 @@ public class AuthController : ControllerBase
 
             var clientId = _oauthOptions.ClientId;
             var redirectUri = _oauthOptions.RedirectUri;
-            var scopes = _oauthOptions.Scopes;
+            var scopes = (_oauthOptions.Scopes ?? Array.Empty<string>()).ToList();
+            HttpContext.Session.Remove(AfterLoginKey);
+            if (activity)
+            {
+                // Incremental: added to what was granted before (include_granted_scopes).
+                // Consent is needed anyway, and it returns a refresh token that covers them.
+                scopes.Add(ActivityScopes.Gmail);
+                scopes.Add(ActivityScopes.Calendar);
+                consent = true;
+                HttpContext.Session.SetString(AfterLoginKey, "/?connected=activity");
+            }
 
             if (string.IsNullOrEmpty(clientId) || string.IsNullOrEmpty(redirectUri))
             {
@@ -76,7 +91,7 @@ public class AuthController : ControllerBase
             authUrl.Append($"?client_id={Uri.EscapeDataString(clientId)}");
             authUrl.Append($"&redirect_uri={Uri.EscapeDataString(redirectUri)}");
             authUrl.Append($"&response_type=code");
-            authUrl.Append($"&scope={Uri.EscapeDataString(string.Join(" ", scopes ?? Array.Empty<string>()))}");
+            authUrl.Append($"&scope={Uri.EscapeDataString(string.Join(" ", scopes))}");
             authUrl.Append($"&state={Uri.EscapeDataString(state)}");
             authUrl.Append($"&access_type=offline"); // Request refresh token
             authUrl.Append($"&include_granted_scopes=true");
@@ -117,6 +132,14 @@ public class AuthController : ControllerBase
             if (!string.IsNullOrEmpty(error))
             {
                 _logger.LogWarning("OAuth error: {Error}", error);
+                // Declining the Gmail/Calendar opt-in leaves the existing sign-in as it was
+                if (HttpContext.Session.GetString(AfterLoginKey) != null
+                    && HttpContext.Session.GetString(GoogleTokenService.UserIdKey) != null)
+                {
+                    HttpContext.Session.Remove(AfterLoginKey);
+                    return RedirectToFrontend("/?connected=activity&declined=1");
+                }
+
                 return RedirectToFrontend($"/login?error={Uri.EscapeDataString(error)}");
             }
 
@@ -213,6 +236,9 @@ public class AuthController : ControllerBase
             HttpContext.Session.SetString("UserName", payload.Name ?? payload.Email ?? string.Empty);
             HttpContext.Session.SetString("UserPicture", payload.Picture ?? string.Empty);
 
+            // Everything granted so far (include_granted_scopes), e.g. Gmail and Calendar
+            HttpContext.Session.SetString(ActivityScopes.SessionKey, tokenResponse.Scope ?? string.Empty);
+
             // Store token expiry
             var expiresAt = DateTime.UtcNow.AddSeconds(tokenResponse.ExpiresInSeconds ?? 3600);
             HttpContext.Session.SetString("TokenExpiresAt", expiresAt.ToString("o"));
@@ -227,8 +253,11 @@ public class AuthController : ControllerBase
 
             _logger.LogInformation("OAuth flow completed successfully");
 
-            // Redirect to frontend
-            return RedirectToFrontend("/");
+            // Redirect to frontend (back to the opt-in's page when there was one)
+            var afterLogin = HttpContext.Session.GetString(AfterLoginKey);
+            HttpContext.Session.Remove(AfterLoginKey);
+            await HttpContext.Session.CommitAsync();
+            return RedirectToFrontend(afterLogin == "/?connected=activity" ? afterLogin : "/");
         }
         catch (Exception ex)
         {

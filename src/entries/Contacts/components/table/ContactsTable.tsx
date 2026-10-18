@@ -15,6 +15,7 @@ import type { Contact, ContactGroup } from '../../types/Contact';
 import { selectColumnConfig } from '../../redux/slices/ui/uiSlice';
 import { executeFieldUpdate } from '../../redux/thunks/syncThunks';
 import { useAppDispatch } from '../../types/hooks';
+import type { ActivityIndex } from '../../model/activity';
 import { AVAILABLE_COLUMNS } from '../../features/columnConfig/columnDefinitions';
 import type { ColumnDefinition } from '../../features/columnConfig/types';
 import { EditableCell } from '../EditableCell';
@@ -60,6 +61,8 @@ export interface ContactsTableProps {
   checked?: Set<string>;
   /** Replace the checked set */
   onCheckedChange?: (next: Set<string>) => void;
+  /** Email / meeting activity per contact */
+  activity?: ActivityIndex;
 }
 
 /** Width of the checkbox column */
@@ -87,6 +90,7 @@ const ContactsTable: React.FC<ContactsTableProps> = ({
   scrollResetKey,
   checked,
   onCheckedChange,
+  activity,
 }) => {
   const dispatch = useAppDispatch();
   const lastChecked = useRef<string | null>(null);
@@ -97,7 +101,7 @@ const ContactsTable: React.FC<ContactsTableProps> = ({
     null,
   );
   const [firstVisible, setFirstVisible] = useState(0);
-  const context = useMemo(() => ({ groups }), [groups]);
+  const context = useMemo(() => ({ groups, activity }), [groups, activity]);
 
   const columns = useMemo<ColumnDefinition[]>(() => {
     const visible = AVAILABLE_COLUMNS.filter((c) => columnConfig.visibleColumns.includes(c.id));
@@ -113,7 +117,8 @@ const ContactsTable: React.FC<ContactsTableProps> = ({
     if (!column || column.id === 'displayName') {
       rows.sort(compareByName);
     } else {
-      const keyed = rows.map((c) => ({ c, k: column.accessor(c, context) ?? '' }));
+      const key = column.sortKey ?? column.accessor;
+      const keyed = rows.map((c) => ({ c, k: key(c, context) ?? '' }));
       keyed.sort((a, b) => {
         // Empty values always last, whatever the direction
         if (!a.k !== !b.k) {

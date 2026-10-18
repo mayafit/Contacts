@@ -19,6 +19,7 @@ import {
   getPrimaryPhone,
   splitFullName,
 } from '../../model/contactView';
+import { formatRelativeShort } from '../../model/activity';
 
 /**
  * Replaces the first entry of a list group, adds one when the list is empty,
@@ -253,6 +254,16 @@ export const AVAILABLE_COLUMNS: ColumnDefinition[] = [
     width: 130,
     accessor: (c: Contact) =>
       c.updateTime ? new Date(c.updateTime).toLocaleDateString('en-GB') : '',
+    sortKey: (c: Contact) => c.updateTime ?? '',
+  },
+  {
+    id: 'lastInTouch',
+    label: 'Last in touch',
+    category: 'Additional',
+    isDefault: false,
+    width: 110,
+    accessor: (c, ctx) => formatRelativeShort(ctx?.activity?.get(c.resourceName)?.lastInTouch),
+    sortKey: (c, ctx) => ctx?.activity?.get(c.resourceName)?.lastInTouch ?? '',
   },
 
   // Advanced Fields

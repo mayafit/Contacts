@@ -142,6 +142,96 @@ public class ContactsController : ControllerBase
     }
 
     /// <summary>
+    /// Create a contact
+    /// </summary>
+    /// <param name="contact">Field groups of the new contact</param>
+    /// <returns>The created contact</returns>
+    [HttpPost]
+    public async Task<IActionResult> Create([FromBody] Contact contact)
+    {
+        var accessToken = await _tokens.GetAccessTokenAsync(HttpContext);
+        if (string.IsNullOrEmpty(accessToken))
+        {
+            return Unauthorized(ApiResponse<object>.ErrorResponse("SESSION_EXPIRED", "Your Google session expired. Please sign in again."));
+        }
+
+        if (!(contact.Names?.Count > 0 || contact.EmailAddresses?.Count > 0 || contact.PhoneNumbers?.Count > 0
+              || contact.Organizations?.Count > 0))
+        {
+            return BadRequest(ApiResponse<object>.ErrorResponse(
+                "INVALID_REQUEST", "A new contact needs a name, email, phone or organization"));
+        }
+
+        var apiClient = new GooglePeopleApiClient(accessToken, _loggerFactory.CreateLogger<GooglePeopleApiClient>());
+        var created = await apiClient.CreateContactAsync(contact);
+        return Ok(ApiResponse<Contact>.SuccessResponse(created));
+    }
+
+    /// <summary>
+    /// Add contacts to a label and/or remove them from it. The label is created
+    /// when it is given by name, does not exist and contacts are added. System
+    /// groups and the app's Trash cannot be changed here.
+    /// </summary>
+    /// <param name="request">Label and members</param>
+    /// <returns>The label's resource name</returns>
+    [HttpPost("labels")]
+    public async Task<IActionResult> ModifyLabel([FromBody] LabelMembersRequest request)
+    {
+        var accessToken = await _tokens.GetAccessTokenAsync(HttpContext);
+        if (string.IsNullOrEmpty(accessToken))
+        {
+            return Unauthorized(ApiResponse<object>.ErrorResponse("SESSION_EXPIRED", "Your Google session expired. Please sign in again."));
+        }
+
+        var add = (request.Add ?? new()).Where(n => !string.IsNullOrWhiteSpace(n)).Distinct().ToList();
+        var remove = (request.Remove ?? new()).Where(n => !string.IsNullOrWhiteSpace(n)).Distinct().ToList();
+        var name = request.LabelName?.Trim();
+        if (add.Count + remove.Count is 0 or > 1000
+            || (string.IsNullOrEmpty(name) == string.IsNullOrEmpty(request.LabelResourceName))
+            || name == TrashLabelName)
+        {
+            return BadRequest(ApiResponse<object>.ErrorResponse(
+                "INVALID_REQUEST", "Give one label (not Trash) and 1-1000 contacts to add or remove"));
+        }
+
+        var apiClient = new GooglePeopleApiClient(accessToken, _loggerFactory.CreateLogger<GooglePeopleApiClient>());
+        string label;
+        if (!string.IsNullOrEmpty(name))
+        {
+            var all = await apiClient.ListContactGroupsAsync();
+            // A system group's name ("Starred", "Family"...) must not become a new user label
+            if (all.Any(g => g.GroupType != "USER_CONTACT_GROUP" && string.Equals(g.Name, name, StringComparison.OrdinalIgnoreCase)))
+            {
+                return BadRequest(ApiResponse<object>.ErrorResponse(
+                    "INVALID_REQUEST", $"\"{name}\" is a system group; pass it by resource name"));
+            }
+
+            var existing = all.FirstOrDefault(g =>
+                g.GroupType == "USER_CONTACT_GROUP" && string.Equals(g.Name, name, StringComparison.OrdinalIgnoreCase));
+            if (existing == null && add.Count == 0)
+            {
+                return Ok(ApiResponse<object>.SuccessResponse(new { label = (string?)null }));
+            }
+
+            label = existing?.ResourceName ?? await apiClient.EnsureGroupAsync(name);
+        }
+        else
+        {
+            label = request.LabelResourceName!;
+            var groups = await apiClient.ListContactGroupsAsync();
+            var group = groups.FirstOrDefault(g => g.ResourceName == label);
+            if (group == null || group.Name == TrashLabelName || !IsAssignableLabel(label))
+            {
+                return BadRequest(ApiResponse<object>.ErrorResponse("INVALID_REQUEST", "That label cannot be changed here"));
+            }
+        }
+
+        await apiClient.ModifyGroupMembersAsync(label, add, remove);
+        _logger.LogInformation("Label {Label}: +{Added} -{Removed}", label, add.Count, remove.Count);
+        return Ok(ApiResponse<object>.SuccessResponse(new { label }));
+    }
+
+    /// <summary>
     /// Move contacts to the app's Trash label (soft delete) or back out of it
     /// </summary>
     /// <param name="request">Contacts (1-1000)</param>
