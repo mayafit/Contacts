@@ -64,4 +64,10 @@ public class MergeResult
 
     /// <summary>When the merged-away contacts were moved to Trash: the Trash label</summary>
     public string? TrashLabel { get; set; }
+
+    /// <summary>
+    /// Per merged-away contact, what could not be carried over to the kept one
+    /// (a photo, a different gender). It stays on that contact in Trash.
+    /// </summary>
+    public Dictionary<string, List<string>> NotCopied { get; set; } = new();
 }

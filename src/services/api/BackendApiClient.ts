@@ -73,6 +73,18 @@ function unwrap<T>(response: ApiResponse<T>, fallback: string): T {
 /**
  * Merge request sent to the backend
  */
+/** Outcome of a merge */
+export interface MergeResult {
+  contact: Contact;
+  deleted: string[];
+  trashLabel?: string | null;
+  /**
+   * Per merged-away contact, what could not be carried over to the kept one
+   * (photo, skills, a different gender); it stays on that contact in Trash
+   */
+  notCopied?: Record<string, string[]>;
+}
+
 export interface MergeRequest {
   /** Contact that is kept */
   primaryResourceName: string;
@@ -427,9 +439,7 @@ export class BackendApiClient {
    * @param request - Merge request
    * @returns The kept contact and the deleted names
    */
-  async mergeContacts(
-    request: MergeRequest,
-  ): Promise<{ contact: Contact; deleted: string[]; trashLabel?: string | null }> {
+  async mergeContacts(request: MergeRequest): Promise<MergeResult> {
     logger.warn(
       {
         context: 'BackendApiClient',
@@ -440,11 +450,7 @@ export class BackendApiClient {
       },
       'Merging contacts',
     );
-    const response = await this.request<{
-      contact: Contact;
-      deleted: string[];
-      trashLabel?: string | null;
-    }>('/contacts/merge', {
+    const response = await this.request<MergeResult>('/contacts/merge', {
       method: 'POST',
       body: JSON.stringify(request),
     });

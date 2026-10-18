@@ -128,13 +128,20 @@ export const trashContacts = createAsyncThunk<
   },
 );
 
+/** Kept contact and, per merged-away contact, what stayed behind on it */
+export interface MergeOutcome {
+  contact: Contact;
+  notCopied: Record<string, string[]>;
+}
+
 export const mergeContacts = createAsyncThunk<
-  Contact,
+  MergeOutcome,
   MergeRequest,
   { rejectValue: CleanupError; state: RootState }
 >('contacts/mergeContacts', async (request, { dispatch, getState, rejectWithValue }) => {
   try {
-    const { contact, deleted, trashLabel } = await backendApiClient.mergeContacts(request);
+    const { contact, deleted, trashLabel, notCopied } =
+      await backendApiClient.mergeContacts(request);
     dispatch(contactUpdated(contact));
     if (trashLabel) {
       relabel(dispatch, getState, deleted, trashLabel, true);
@@ -148,7 +155,7 @@ export const mergeContacts = createAsyncThunk<
       },
       'Contacts merged',
     );
-    return contact;
+    return { contact, notCopied: notCopied ?? {} };
   } catch (error) {
     return rejectWithValue(toCleanupError(error));
   }
