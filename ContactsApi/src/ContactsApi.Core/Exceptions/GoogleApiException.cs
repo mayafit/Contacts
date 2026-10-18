@@ -84,6 +84,7 @@ public static class GoogleApiErrorCodes
     public const string FetchContactsFailed = "FETCH_CONTACTS_FAILED";
     public const string GetContactFailed = "GET_CONTACT_FAILED";
     public const string UpdateContactFailed = "UPDATE_CONTACT_FAILED";
+    public const string CreateContactFailed = "CREATE_CONTACT_FAILED";
     public const string ContactConflict = "CONTACT_CONFLICT";
     public const string ContactNotFound = "CONTACT_NOT_FOUND";
     public const string InsufficientScope = "INSUFFICIENT_SCOPE";

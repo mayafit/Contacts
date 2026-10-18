@@ -127,6 +127,11 @@ const contactsSlice = createSlice({
       contactsAdapter.removeMany(state, action.payload);
     },
 
+    /** Adds a contact created in this session (or replaces it) */
+    contactAdded(state, action: PayloadAction<Contact>) {
+      contactsAdapter.upsertOne(state, action.payload);
+    },
+
     contactUpdated(state, action: PayloadAction<Contact>) {
       const { resourceName } = action.payload;
       if (state.entities[resourceName]) {
@@ -193,7 +198,7 @@ const contactsSlice = createSlice({
   },
 });
 
-export const { contactUpdated, contactsRemoved, clearContactsError, resetContacts } =
+export const { contactAdded, contactUpdated, contactsRemoved, clearContactsError, resetContacts } =
   contactsSlice.actions;
 
 export default contactsSlice.reducer;

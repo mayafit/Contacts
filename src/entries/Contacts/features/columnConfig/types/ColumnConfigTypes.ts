@@ -4,6 +4,7 @@
  */
 
 import type { Contact, ContactGroup, EditableGroup } from '../../../types/Contact';
+import type { ActivityIndex } from '../../../model/activity';
 
 /**
  * Data a column accessor may need beyond the contact itself
@@ -11,6 +12,8 @@ import type { Contact, ContactGroup, EditableGroup } from '../../../types/Contac
 export interface ColumnContext {
   /** Labels by resource name */
   groups: Record<string, ContactGroup>;
+  /** Email / meeting activity per contact, when Gmail & Calendar are connected */
+  activity?: ActivityIndex;
 }
 
 /**
@@ -47,6 +50,8 @@ export interface ColumnDefinition {
   defaultVisible?: boolean;
   /** Function to extract the display value ('' when empty) */
   accessor: (contact: Contact, context?: ColumnContext) => string | undefined;
+  /** Value to sort by when the shown text does not sort right (e.g. dates); defaults to the accessor */
+  sortKey?: (contact: Contact, context?: ColumnContext) => string | undefined;
   /** Preferred width in px; columns share leftover space proportionally */
   width?: number;
   /** Inline edit behaviour; absent for read-only columns */

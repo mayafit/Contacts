@@ -22,6 +22,24 @@ public class BatchDeleteRequest
 }
 
 /// <summary>
+/// Request to add contacts to, and remove them from, one label
+/// </summary>
+public class LabelMembersRequest
+{
+    /// <summary>Label by name (created when missing and contacts are added)</summary>
+    public string? LabelName { get; set; }
+
+    /// <summary>Label by resource name, instead of the name</summary>
+    public string? LabelResourceName { get; set; }
+
+    /// <summary>Contacts to add</summary>
+    public List<string> Add { get; set; } = new();
+
+    /// <summary>Contacts to remove</summary>
+    public List<string> Remove { get; set; } = new();
+}
+
+/// <summary>
 /// Request to merge contacts into one
 /// </summary>
 public class MergeRequest
