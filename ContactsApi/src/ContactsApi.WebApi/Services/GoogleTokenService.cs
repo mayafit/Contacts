@@ -31,6 +31,7 @@ public class GoogleTokenService
     private readonly IDistributedCache _cache;
     private readonly IDataProtector _protector;
     private readonly ILogger<GoogleTokenService> _logger;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string AccessToken, DateTime ExpiresAt)> _userTokens = new();
 
     public GoogleTokenService(
         IOptions<GoogleOAuthOptions> options,
@@ -94,6 +95,30 @@ public class GoogleTokenService
     }
 
     /// <summary>
+    /// An access token for a user outside any request (background work), from the
+    /// remembered refresh token. Kept in memory until 10 minutes before it expires.
+    /// </summary>
+    /// <param name="userId">Google account id ("sub")</param>
+    /// <returns>Access token, or null when the user must sign in again</returns>
+    public async Task<string?> GetAccessTokenForUserAsync(string userId)
+    {
+        if (_userTokens.TryGetValue(userId, out var cached) && cached.ExpiresAt - DateTime.UtcNow > TimeSpan.FromMinutes(10))
+        {
+            return cached.AccessToken;
+        }
+
+        var refreshToken = await GetStoredRefreshTokenAsync(userId);
+        var refreshed = refreshToken == null ? null : await RefreshAsync(refreshToken);
+        if (refreshed == null)
+        {
+            return null;
+        }
+
+        _userTokens[userId] = refreshed.Value;
+        return refreshed.Value.AccessToken;
+    }
+
+    /// <summary>
     /// Exchanges a refresh token for a new access token.
     /// </summary>
     /// <param name="refreshToken">Refresh token</param>
@@ -120,9 +145,13 @@ public class GoogleTokenService
     /// <summary>Remembers a user's refresh token beyond the session, encrypted</summary>
     /// <param name="userId">Google account id ("sub")</param>
     /// <param name="refreshToken">Refresh token</param>
-    public Task StoreRefreshTokenAsync(string userId, string refreshToken) =>
-        _cache.SetStringAsync(CacheKey(userId), _protector.Protect(refreshToken),
+    public Task StoreRefreshTokenAsync(string userId, string refreshToken)
+    {
+        // A new grant (e.g. Gmail added) makes a cached token's scopes outdated
+        _userTokens.TryRemove(userId, out _);
+        return _cache.SetStringAsync(CacheKey(userId), _protector.Protect(refreshToken),
             new DistributedCacheEntryOptions { SlidingExpiration = TimeSpan.FromDays(180) });
+    }
 
     /// <summary>The refresh token remembered for a user, or null</summary>
     /// <param name="userId">Google account id ("sub")</param>
@@ -149,7 +178,11 @@ public class GoogleTokenService
 
     /// <summary>Forgets a user's remembered refresh token</summary>
     /// <param name="userId">Google account id ("sub")</param>
-    public Task ForgetRefreshTokenAsync(string userId) => _cache.RemoveAsync(CacheKey(userId));
+    public Task ForgetRefreshTokenAsync(string userId)
+    {
+        _userTokens.TryRemove(userId, out _);
+        return _cache.RemoveAsync(CacheKey(userId));
+    }
 
     private static string CacheKey(string userId) => $"refresh-token:{userId}";
 }

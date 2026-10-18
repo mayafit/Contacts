@@ -73,6 +73,70 @@ function unwrap<T>(response: ApiResponse<T>, fallback: string): T {
 /**
  * Merge request sent to the backend
  */
+/** Activity per email address, from Gmail headers and Calendar */
+export interface PersonActivity {
+  lastEmailAt?: string | null;
+  lastSentAt?: string | null;
+  lastReceivedAt?: string | null;
+  sentCount: number;
+  receivedCount: number;
+  /** Emails per month, "yyyy-MM" */
+  emailMonths: Record<string, number>;
+  lastMeetingAt?: string | null;
+  lastMeetingTitle?: string | null;
+  nextMeetingAt?: string | null;
+  nextMeetingTitle?: string | null;
+  /** Past meetings per month, "yyyy-MM" */
+  meetingMonths: Record<string, number>;
+}
+
+/** Activity snapshot state */
+export interface ActivityStatusResponse {
+  connected: { gmail: boolean; calendar: boolean };
+  status: 'none' | 'running' | 'ready' | 'error';
+  progress?: { phase: string; done: number } | null;
+  error?: string | null;
+  errorCode?: string | null;
+  updatedAt?: string | null;
+  since?: string | null;
+  peopleCount: number;
+}
+
+/** Activity snapshot with the data */
+export interface ActivityResponse extends ActivityStatusResponse {
+  people: Record<string, PersonActivity>;
+}
+
+/** Gemini content part (only the shapes the assistant uses are typed) */
+export interface GeminiPart {
+  text?: string;
+  thought?: boolean;
+  thoughtSignature?: string;
+  functionCall?: { name: string; args?: Record<string, unknown>; id?: string };
+  functionResponse?: { name: string; response: Record<string, unknown>; id?: string };
+}
+
+/** Gemini message */
+export interface GeminiContent {
+  role: 'user' | 'model';
+  parts: GeminiPart[];
+}
+
+/** Gemini generateContent request */
+export interface GeminiRequest {
+  systemInstruction?: { parts: GeminiPart[] };
+  contents: GeminiContent[];
+  tools?: unknown[];
+  toolConfig?: unknown;
+}
+
+/** Gemini generateContent response */
+export interface GeminiResponse {
+  candidates?: { content?: GeminiContent; finishReason?: string }[];
+  promptFeedback?: { blockReason?: string };
+  usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
+}
+
 /** Outcome of a merge */
 export interface MergeResult {
   contact: Contact;
@@ -455,6 +519,141 @@ export class BackendApiClient {
       body: JSON.stringify(request),
     });
     return unwrap(response, 'Failed to merge contacts');
+  }
+
+  // ===================================
+  // Contacts: create and labels (assistant)
+  // ===================================
+
+  /**
+   * Create a contact
+   * @param contact - Field groups of the new contact
+   * @returns The created contact
+   */
+  async createContact(contact: ContactPatch): Promise<Contact> {
+    const response = await this.request<Contact>('/contacts', {
+      method: 'POST',
+      body: JSON.stringify(contact),
+    });
+    return unwrap(response, 'Failed to create contact');
+  }
+
+  /**
+   * Add contacts to a label and/or remove them from it
+   * @param request - Label (by name, created when missing, or resource name) and members
+   * @returns The label's resource name (null when nothing changed)
+   */
+  async modifyLabel(request: {
+    labelName?: string;
+    labelResourceName?: string;
+    add?: string[];
+    remove?: string[];
+  }): Promise<string | null> {
+    const response = await this.request<{ label: string | null }>('/contacts/labels', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    });
+    return unwrap(response, 'Failed to update the label').label;
+  }
+
+  // ===================================
+  // Activity (Gmail + Calendar)
+  // ===================================
+
+  /** Starts the opt-in to Gmail and Calendar access (leaves the page) */
+  connectActivity(): void {
+    window.location.href = `${this.baseUrl}/auth/login?activity=true`;
+  }
+
+  /**
+   * Activity snapshot state (cheap; polled during a scan)
+   * @returns Status
+   */
+  async getActivityStatus(): Promise<ActivityStatusResponse> {
+    return unwrap(
+      await this.request<ActivityStatusResponse>('/activity/status'),
+      'Failed to read activity status',
+    );
+  }
+
+  /**
+   * Activity snapshot with the per-address data
+   * @returns Activity
+   */
+  async getActivity(): Promise<ActivityResponse> {
+    return unwrap(await this.request<ActivityResponse>('/activity'), 'Failed to read activity');
+  }
+
+  /**
+   * Start bringing the snapshot up to date
+   * @param full - Rescan the whole window
+   * @returns Status after queueing
+   */
+  async refreshActivity(full = false): Promise<ActivityStatusResponse> {
+    return unwrap(
+      await this.request<ActivityStatusResponse>(`/activity/refresh${full ? '?full=true' : ''}`, {
+        method: 'POST',
+      }),
+      'Failed to start the activity scan',
+    );
+  }
+
+  /**
+   * Forget the stored activity
+   * @returns Empty status
+   */
+  async forgetActivity(): Promise<ActivityStatusResponse> {
+    return unwrap(
+      await this.request<ActivityStatusResponse>('/activity', { method: 'DELETE' }),
+      'Failed to forget activity',
+    );
+  }
+
+  // ===================================
+  // Assistant (Gemini proxy)
+  // ===================================
+
+  /**
+   * Whether the assistant is configured
+   * @returns Enabled flag and model
+   */
+  async getAssistantStatus(): Promise<{ enabled: boolean; model: string }> {
+    return unwrap(
+      await this.request<{ enabled: boolean; model: string }>('/assistant/status'),
+      'Failed to read assistant status',
+    );
+  }
+
+  /**
+   * One Gemini generateContent call through the backend
+   * @param request - systemInstruction, contents, tools, toolConfig
+   * @returns Gemini's response
+   */
+  async assistantGenerate(request: GeminiRequest): Promise<GeminiResponse> {
+    return unwrap(
+      await this.request<GeminiResponse>('/assistant/generate', {
+        method: 'POST',
+        body: JSON.stringify(request),
+      }),
+      'The assistant failed to answer',
+    );
+  }
+
+  /**
+   * Web search with Google Search grounding
+   * @param query - What to look up
+   * @returns Answer and sources
+   */
+  async assistantSearch(
+    query: string,
+  ): Promise<{ text: string; sources: { title?: string; uri?: string }[] }> {
+    return unwrap(
+      await this.request<{ text: string; sources: { title?: string; uri?: string }[] }>(
+        '/assistant/search',
+        { method: 'POST', body: JSON.stringify({ query }) },
+      ),
+      'Web search failed',
+    );
   }
 
   /**

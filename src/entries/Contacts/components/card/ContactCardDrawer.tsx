@@ -38,6 +38,7 @@ import {
   getPhoneticName,
 } from '../../model/contactView';
 import { tokens } from '../../theme/contactsTheme';
+import { formatRelative, type ActivityIndex, type ContactActivity } from '../../model/activity';
 import { logger } from '../../../../shared/logger';
 import type { AppError } from '../../types';
 
@@ -51,7 +52,38 @@ export interface ContactCardDrawerProps {
   onClose: () => void;
   /** Ask to delete this contact (opens the confirmation) */
   onDelete?: (contact: Contact) => void;
+  /** Email / meeting activity per contact (Gmail & Calendar connected) */
+  activity?: ActivityIndex;
 }
+
+/**
+ * One line about the last email and meetings with a contact.
+ * @param a - The contact's activity
+ * @returns Text, '' when there is nothing to say
+ */
+const activityLine = (a: ContactActivity | undefined): string => {
+  if (!a) {
+    return '';
+  }
+  const parts: string[] = [];
+  if (a.lastEmailAt) {
+    const sent = a.lastSentAt && a.lastSentAt === a.lastEmailAt;
+    parts.push(
+      `Last email ${formatRelative(a.lastEmailAt)} (${sent ? 'you wrote' : 'they wrote'})`,
+    );
+  }
+  if (a.lastMeetingAt) {
+    parts.push(
+      `met ${formatRelative(a.lastMeetingAt)}${a.lastMeetingTitle ? ` – “${a.lastMeetingTitle}”` : ''}`,
+    );
+  }
+  if (a.nextMeetingAt) {
+    parts.push(
+      `next meeting ${formatRelative(a.nextMeetingAt)}${a.nextMeetingTitle ? ` – “${a.nextMeetingTitle}”` : ''}`,
+    );
+  }
+  return parts.join(' · ');
+};
 
 type SaveState =
   | { kind: 'idle' }
@@ -99,6 +131,7 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({
   groups,
   onClose,
   onDelete,
+  activity,
 }) => {
   const dispatch = useAppDispatch();
   const entities = useAppSelector(selectContactEntities);
@@ -231,6 +264,20 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({
                 >
                   {phonetic || 'No phonetic name yet'}
                 </Typography>
+                {resourceName && activityLine(activity?.get(resourceName)) && (
+                  <Typography
+                    variant="caption"
+                    dir="auto"
+                    sx={{
+                      color: tokens.textSecondary,
+                      mt: 0.5,
+                      display: 'block',
+                      textAlign: 'left',
+                    }}
+                  >
+                    {activityLine(activity?.get(resourceName))}
+                  </Typography>
+                )}
                 {orgLine && (
                   <Typography
                     variant="body2"

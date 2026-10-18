@@ -227,6 +227,36 @@ public class GooglePeopleApiClient
     }
 
     /// <summary>
+    /// Creates a contact from the given field groups
+    /// </summary>
+    /// <param name="contact">Field groups of the new contact (etag ignored)</param>
+    /// <returns>The created contact</returns>
+    /// <exception cref="ArgumentException">No fields</exception>
+    public async Task<Contact> CreateContactAsync(Contact contact)
+    {
+        var (person, fields) = BuildUpdate(contact);
+        if (fields.Count == 0)
+        {
+            throw new ArgumentException("A new contact needs at least one field", nameof(contact));
+        }
+
+        try
+        {
+            var request = _peopleService.People.CreateContact(person);
+            request.PersonFields = ReadPersonFields;
+            request.Sources = PeopleResource.CreateContactRequest.SourcesEnum.READSOURCETYPECONTACT;
+            var created = await request.ExecuteAsync();
+            _logger.LogInformation("Created contact {ResourceName}", created.ResourceName);
+            return MapPersonToContact(created);
+        }
+        catch (Exception ex)
+        {
+            throw Translate(ex, GoogleApiErrorCodes.CreateContactFailed, "Failed to create contact",
+                new Dictionary<string, object> { { "fields", string.Join(",", fields) } });
+        }
+    }
+
+    /// <summary>
     /// Deletes one contact
     /// </summary>
     /// <param name="resourceName">Contact resource name</param>

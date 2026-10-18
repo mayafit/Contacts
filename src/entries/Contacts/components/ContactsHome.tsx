@@ -32,6 +32,7 @@ import {
   Typography,
 } from '@mui/material';
 import {
+  AutoAwesome,
   CallMerge,
   Close,
   ContactPhone,
@@ -48,12 +49,14 @@ import { selectUser } from '../redux/slices/auth/selectors';
 import { selectConflictedOperations } from '../redux/slices/syncQueue/selectors';
 import { operationSuccess, operationFailed } from '../redux/slices/syncQueue/syncQueueSlice';
 import {
+  contactAdded,
   contactUpdated,
   fetchContactGroups,
   fetchContacts,
 } from '../redux/slices/contacts/contactsSlice';
 import {
   selectAllContacts,
+  selectContactEntities,
   selectContactGroups,
   selectContactsError,
   selectContactsLoading,
@@ -83,6 +86,12 @@ import {
 import { duplicateMemberSet, findDuplicateGroups } from '../model/duplicates';
 import { computeContactStats, type ContactFilter } from '../model/stats';
 import { tokens } from '../theme/contactsTheme';
+import { useActivity } from '../hooks/useActivity';
+import { buildActivityIndex } from '../model/activity';
+import ActivitySection from './insights/ActivitySection';
+import AssistantPanel from './assistant/AssistantPanel';
+import { backendApiClient } from '../../../services/api/BackendApiClient';
+import { selectColumnConfig, setColumnConfig } from '../redux/slices/ui/uiSlice';
 
 type View = 'contacts' | 'insights' | 'duplicates' | 'trash';
 
@@ -144,6 +153,66 @@ const ContactsHome: React.FC = () => {
   const [reviewDomain, setReviewDomain] = useState<DomainInsight | null>(null);
   const [isColumnConfigOpen, setIsColumnConfigOpen] = useState(false);
   const [accountAnchor, setAccountAnchor] = useState<HTMLElement | null>(null);
+  // A set of contacts shown in the table (from Insights or the assistant)
+  const [selection, setSelection] = useState<{ title: string; ids: Set<string> } | null>(null);
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const [assistantInfo, setAssistantInfo] = useState<{ enabled: boolean; model: string } | null>(
+    null,
+  );
+  const entities = useAppSelector(selectContactEntities) as Record<string, Contact | undefined>;
+  const columnConfig = useAppSelector(selectColumnConfig);
+
+  // Epic 7: email / meeting activity
+  const activity = useActivity();
+  const activityIndex = useMemo(
+    () => (activity.people ? buildActivityIndex(contacts, activity.people) : undefined),
+    [contacts, activity.people],
+  );
+
+  useEffect(() => {
+    backendApiClient
+      .getAssistantStatus()
+      .then(setAssistantInfo)
+      .catch(() => setAssistantInfo(null));
+  }, []);
+
+  // Back from connecting Gmail & Calendar: show where the result appears
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('connected') === 'activity') {
+      setView('insights');
+      if (params.get('declined')) {
+        setToast('Gmail & Calendar were not connected');
+      }
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+  }, []);
+
+  // Once activity exists, offer the "Last in touch" column (once per browser)
+  useEffect(() => {
+    if (!activityIndex || activityIndex.size === 0) {
+      return;
+    }
+    try {
+      if (localStorage.getItem('contacts.lastInTouchOffered')) {
+        return;
+      }
+      localStorage.setItem('contacts.lastInTouchOffered', '1');
+    } catch {
+      return;
+    }
+    if (!columnConfig.visibleColumns.includes('lastInTouch')) {
+      dispatch(
+        setColumnConfig({
+          visibleColumns: [...columnConfig.visibleColumns, 'lastInTouch'],
+          columnOrder: [
+            ...columnConfig.columnOrder.filter((c) => c !== 'lastInTouch'),
+            'lastInTouch',
+          ],
+        }),
+      );
+    }
+  }, [activityIndex, columnConfig, dispatch]);
   const searchRef = useRef<HTMLInputElement>(null);
 
   // Story 3.7: Conflict resolution state
@@ -220,18 +289,72 @@ const ContactsHome: React.FC = () => {
       contacts.filter(
         (c) =>
           predicates[filter](c) &&
+          (!selection || selection.ids.has(c.resourceName)) &&
           (!label || (c.labels ?? []).includes(label)) &&
           matchesQuery(c, deferredQuery, searchIndex.get(c.resourceName)),
       ),
-    [contacts, predicates, filter, label, deferredQuery, searchIndex],
+    [contacts, predicates, filter, selection, label, deferredQuery, searchIndex],
   );
 
+  /** Shows a set of contacts in the table, replacing other filters */
+  const showContacts = useCallback((ids: string[], title: string) => {
+    setSelection({ title, ids: new Set(ids) });
+    setFilter('all');
+    setLabel('');
+    setQuery('');
+    setView('contacts');
+  }, []);
+
+  /** Creates a contact for an address you write to (Insights) and opens it */
+  const addContactForEmail = async (email: string) => {
+    try {
+      const created = await backendApiClient.createContact({
+        etag: '',
+        emailAddresses: [{ value: email, type: 'other' }],
+      });
+      dispatch(contactAdded(created));
+      setCardFor(created.resourceName);
+      setToast(`Added ${email}. Fill in the name in the card.`);
+    } catch (e) {
+      setToast((e as Error).message || 'Could not add the contact');
+    }
+  };
+
   const showFilter = (f: ContactFilter) => {
+    setSelection(null);
     setFilter(f);
     setLabel('');
     setQuery('');
     setView('contacts');
   };
+
+  const assistantContext = useMemo(
+    () => ({
+      contacts,
+      trashed,
+      groups,
+      stats,
+      duplicateGroups,
+      orgInsights,
+      activity: activityIndex,
+      activityReady: !!activityIndex,
+      user: { name: user?.name, email: user?.email },
+      openContact: setCardFor,
+      showContacts,
+      openMerge: setMergeTargets,
+    }),
+    [
+      contacts,
+      trashed,
+      groups,
+      stats,
+      duplicateGroups,
+      orgInsights,
+      activityIndex,
+      user,
+      showContacts,
+    ],
+  );
 
   const handleSignOut = () => {
     logger.info({ context: 'ContactsHome/handleSignOut' }, 'User initiated sign out');
@@ -446,6 +569,14 @@ const ContactsHome: React.FC = () => {
             />
           );
         })}
+        {selection && (
+          <Chip
+            color="primary"
+            label={`${selection.title} · ${fmt.format(selection.ids.size)}`}
+            onDelete={() => setSelection(null)}
+            sx={{ maxWidth: 360 }}
+          />
+        )}
         {labelOptions.length > 0 && (
           <Select
             size="small"
@@ -541,9 +672,10 @@ const ContactsHome: React.FC = () => {
             groups={groups}
             selectedResourceName={cardFor}
             onOpenCard={setCardFor}
-            scrollResetKey={`${filter}|${label}|${deferredQuery}`}
+            scrollResetKey={`${filter}|${label}|${deferredQuery}|${selection?.title ?? ''}`}
             checked={checked}
             onCheckedChange={setChecked}
+            activity={activityIndex}
           />
         )}
       </Paper>
@@ -690,6 +822,28 @@ const ContactsHome: React.FC = () => {
           )}
         </Box>
 
+        {assistantInfo?.enabled && (
+          <Tooltip title="Assistant">
+            <Button
+              onClick={() => setAssistantOpen((v) => !v)}
+              startIcon={<AutoAwesome />}
+              variant={assistantOpen ? 'contained' : 'outlined'}
+              size="small"
+              aria-pressed={assistantOpen}
+              sx={{
+                flexShrink: 0,
+                minWidth: 0,
+                px: { xs: 1, sm: 1.5 },
+                '& .MuiButton-startIcon': { mr: { xs: 0, sm: 1 } },
+              }}
+            >
+              <Box component="span" sx={{ display: { xs: 'none', sm: 'inline' } }}>
+                Assistant
+              </Box>
+            </Button>
+          </Tooltip>
+        )}
+
         <Tooltip title="Reload from Google">
           <span>
             <IconButton onClick={load} disabled={loading} aria-label="Reload contacts">
@@ -739,37 +893,60 @@ const ContactsHome: React.FC = () => {
         </Tooltip>
       </Box>
 
-      {/* Views */}
-      <Box
-        component="main"
-        sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}
-      >
-        {view === 'contacts' && renderContactsView()}
-        {view === 'insights' && (
-          <InsightsView
-            stats={stats}
-            onShowFilter={showFilter}
-            onShowDuplicates={() => setView('duplicates')}
-            orgInsights={orgInsights}
-            onReviewDomain={setReviewDomain}
-          />
-        )}
-        {view === 'trash' && (
-          <TrashView
-            trashed={trashed}
-            onRestore={restore}
-            onDeleteForever={(list) => {
-              setDeletePermanent(true);
-              setDeleteTargets(list);
-            }}
-          />
-        )}
-        {view === 'duplicates' && (
-          <DuplicatesView
-            groups={duplicateGroups}
-            onOpenCard={setCardFor}
-            onMerge={setMergeTargets}
-            onDelete={(c) => setDeleteTargets([c])}
+      {/* Views, with the assistant beside them */}
+      <Box sx={{ flex: 1, minHeight: 0, display: 'flex' }}>
+        <Box
+          component="main"
+          sx={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}
+        >
+          {view === 'contacts' && renderContactsView()}
+          {view === 'insights' && (
+            <InsightsView
+              stats={stats}
+              onShowFilter={showFilter}
+              onShowDuplicates={() => setView('duplicates')}
+              orgInsights={orgInsights}
+              onReviewDomain={setReviewDomain}
+              activitySection={
+                <ActivitySection
+                  activity={activity}
+                  contacts={contacts}
+                  allContacts={allContacts}
+                  index={activityIndex}
+                  onOpenCard={setCardFor}
+                  onShowContacts={showContacts}
+                  onAddContact={addContactForEmail}
+                />
+              }
+            />
+          )}
+          {view === 'trash' && (
+            <TrashView
+              trashed={trashed}
+              onRestore={restore}
+              onDeleteForever={(list) => {
+                setDeletePermanent(true);
+                setDeleteTargets(list);
+              }}
+            />
+          )}
+          {view === 'duplicates' && (
+            <DuplicatesView
+              groups={duplicateGroups}
+              onOpenCard={setCardFor}
+              onMerge={setMergeTargets}
+              onDelete={(c) => setDeleteTargets([c])}
+            />
+          )}
+        </Box>
+        {assistantInfo?.enabled && (
+          <AssistantPanel
+            open={assistantOpen}
+            onClose={() => setAssistantOpen(false)}
+            model={assistantInfo.model}
+            entities={entities}
+            groups={groups}
+            context={assistantContext}
           />
         )}
       </Box>
@@ -779,6 +956,7 @@ const ContactsHome: React.FC = () => {
         groups={groups}
         onClose={() => setCardFor(null)}
         onDelete={(c) => setDeleteTargets([c])}
+        activity={activityIndex}
       />
 
       <OrgSuggestionsDialog
