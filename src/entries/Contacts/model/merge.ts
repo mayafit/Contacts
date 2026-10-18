@@ -10,7 +10,15 @@
 
 import type { Contact, ContactName, ContactPatch } from '../types/Contact';
 import { buildPatch, createDraft } from '../components/card/cardModel';
-import { clean, digitsOf, editableName, formatBirthday, getDisplayName } from './contactView';
+import {
+  clean,
+  digitsOf,
+  editableName,
+  formatBirthday,
+  getDisplayName,
+  scriptOf,
+  splitFullName,
+} from './contactView';
 
 /** Result of planning a merge */
 export interface MergePlan {
@@ -22,7 +30,25 @@ export interface MergePlan {
   addLabels: string[];
   /** Values of the other contacts that will not be kept, as readable lines */
   dropped: string[];
+  /** Names in English taken over as the phonetic name of a Hebrew-named contact */
+  transliterated: string[];
 }
+
+/** First, middle and last name of a contact as one string */
+const fullNameOf = (n: ContactName): string =>
+  clean([n.givenName, n.middleName, n.familyName].filter(Boolean).join(' ')) ||
+  clean(n.displayName);
+
+/**
+ * Whether a group holds the same person written in Hebrew and in English, the
+ * case where the English name is the Hebrew contact's phonetic name.
+ * @param contacts - Group members
+ * @returns True when both scripts appear
+ */
+export const isHebrewEnglishPair = (contacts: Contact[]): boolean => {
+  const scripts = new Set(contacts.map((c) => scriptOf(fullNameOf(c.names?.[0] ?? {}))));
+  return scripts.has('hebrew') && scripts.has('latin');
+};
 
 const NAME_PARTS: (keyof ContactName)[] = [
   'honorificPrefix',
@@ -164,11 +190,15 @@ export const richnessOf = (c: Contact): number => {
  * @param contacts - Candidates (at least one)
  * @returns Resource name of the suggested contact
  */
-export const suggestPrimary = (contacts: Contact[]): string =>
-  [...contacts].sort(
+export const suggestPrimary = (contacts: Contact[]): string => {
+  // For a Hebrew/English pair keep the Hebrew one: the English name becomes its phonetic name
+  const hebrew = contacts.filter((c) => scriptOf(fullNameOf(c.names?.[0] ?? {})) === 'hebrew');
+  const pool = isHebrewEnglishPair(contacts) && hebrew.length ? hebrew : contacts;
+  return [...pool].sort(
     (a, b) =>
       richnessOf(b) - richnessOf(a) || (b.updateTime ?? '').localeCompare(a.updateTime ?? ''),
   )[0].resourceName;
+};
 
 /**
  * Plans merging `others` into `primary`.
@@ -185,8 +215,38 @@ export const planMerge = (primary: Contact, others: Contact[]): MergePlan => {
   // A different non-empty part on another contact cannot be kept (one name per
   // contact), so it is reported.
   const name: ContactName = { ...(merged.names?.[0] ?? {}) };
+  const transliterated: string[] = [];
+  const keptIsHebrew = scriptOf(fullNameOf(name)) === 'hebrew';
   others.forEach((o) => {
     const n = editableName(o.names?.[0] ?? undefined);
+    const theirFull = fullNameOf(n);
+    // The same person written in English: that is the Hebrew name's phonetic
+    // name, not a conflicting name
+    if (keptIsHebrew && scriptOf(theirFull) === 'latin') {
+      // Only a display name on file: split it into first word / rest
+      const split = splitFullName(theirFull);
+      const parts: ContactName =
+        n.givenName || n.familyName ? n : { givenName: split.first, familyName: split.last };
+      const ourPhonetic = clean(
+        [name.phoneticGivenName, name.phoneticMiddleName, name.phoneticFamilyName]
+          .filter(Boolean)
+          .join(' '),
+      );
+      // Explicit phonetic parts on the English contact win over its plain name
+      const explicit = n.phoneticGivenName || n.phoneticMiddleName || n.phoneticFamilyName;
+      if (!ourPhonetic) {
+        name.phoneticGivenName = (explicit ? n.phoneticGivenName : parts.givenName) ?? null;
+        name.phoneticMiddleName = (explicit ? n.phoneticMiddleName : parts.middleName) ?? null;
+        name.phoneticFamilyName = (explicit ? n.phoneticFamilyName : parts.familyName) ?? null;
+        name.phoneticFullName = null;
+        transliterated.push(theirFull);
+      } else if (ourPhonetic.toLowerCase() !== theirFull.toLowerCase()) {
+        dropped.push(
+          `${getDisplayName(o)}: English name "${theirFull}" (phonetic name is "${ourPhonetic}")`,
+        );
+      }
+      return;
+    }
     NAME_PARTS.forEach((part) => {
       const theirs = clean(n[part] as string | undefined);
       if (!theirs) {
@@ -280,5 +340,5 @@ export const planMerge = (primary: Contact, others: Contact[]): MergePlan => {
   );
   merged.labels = [...(primary.labels ?? []), ...addLabels];
 
-  return { merged, patch: buildPatch(primary, merged), addLabels, dropped };
+  return { merged, patch: buildPatch(primary, merged), addLabels, dropped, transliterated };
 };

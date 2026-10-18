@@ -20,7 +20,7 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
-import { CallMerge } from '@mui/icons-material';
+import { CallMerge, Edit } from '@mui/icons-material';
 import type { Contact, ContactGroup } from '../../types/Contact';
 import { useAppDispatch } from '../../types/hooks';
 import { mergeContacts, type CleanupError } from '../../redux/thunks/cleanupThunks';
@@ -28,6 +28,8 @@ import { contactUpdated } from '../../redux/slices/contacts/contactsSlice';
 import { GoogleContactsService } from '../../services/GoogleContactsService';
 import ContactAvatar from '../common/ContactAvatar';
 import { planMerge, suggestPrimary } from '../../model/merge';
+import ContactForm from '../card/ContactForm';
+import { buildPatch } from '../card/cardModel';
 import {
   formatBirthday,
   getDisplayName,
@@ -101,8 +103,12 @@ const MergeDialog: React.FC<MergeDialogProps> = ({ contacts, groups, onClose, on
   }, [contacts]);
 
   // A warning or acknowledgement belongs to one exact set: any change voids it
+  // Hand edits of the result, made on top of the plan. Changing who is kept or
+  // included makes a new plan, so the edits are dropped with it.
+  const [edited, setEdited] = useState<Contact | null>(null);
   useEffect(() => {
     setError(null);
+    setEdited(null);
   }, [primary, included]);
 
   const list = (contacts ?? []).map((c) => refreshed[c.resourceName] ?? c);
@@ -153,9 +159,10 @@ const MergeDialog: React.FC<MergeDialogProps> = ({ contacts, groups, onClose, on
       const kept = await dispatch(
         mergeContacts({
           primaryResourceName: main.resourceName,
-          patch: plan.patch,
+          patch: edited && main ? buildPatch(main, edited) : plan.patch,
           deleteResourceNames: others.map((o) => o.resourceName),
           addLabels: plan.addLabels,
+          moveToTrash: true,
           acknowledgedResourceNames: acknowledged,
           deleteEtags: Object.fromEntries(
             others.filter((o) => o.etag).map((o) => [o.resourceName, o.etag as string]),
@@ -172,7 +179,7 @@ const MergeDialog: React.FC<MergeDialogProps> = ({ contacts, groups, onClose, on
 
   const nameOf = (rn: string) =>
     getDisplayName(list.find((c) => c.resourceName === rn) ?? { resourceName: rn });
-  const m = plan?.merged;
+  const m = edited ?? plan?.merged;
   const lost = error?.code === 'MERGE_WOULD_LOSE_DATA' ? error.lostData : undefined;
   const stale = error?.code === 'CONTACT_CONFLICT';
 
@@ -238,7 +245,7 @@ const MergeDialog: React.FC<MergeDialogProps> = ({ contacts, groups, onClose, on
                       noWrap
                       sx={{ color: tokens.textMuted, display: 'block' }}
                     >
-                      {isMain ? 'Kept' : isIn ? 'Merged in, then deleted' : 'Left out'}
+                      {isMain ? 'Kept' : isIn ? 'Merged in, then moved to Trash' : 'Left out'}
                       {counts.length ? ` · ${counts.join(', ')}` : ''}
                     </Typography>
                   </Box>
@@ -260,10 +267,41 @@ const MergeDialog: React.FC<MergeDialogProps> = ({ contacts, groups, onClose, on
 
         {/* Preview */}
         <Box>
-          <Typography variant="subtitle2" sx={{ color: tokens.textSecondary, mb: 1 }}>
-            Result
-          </Typography>
-          {m ? (
+          <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+            <Typography variant="subtitle2" sx={{ color: tokens.textSecondary, flex: 1 }}>
+              Result
+            </Typography>
+            {plan && (
+              <Button
+                size="small"
+                startIcon={<Edit />}
+                onClick={() => setEdited(edited ? null : plan.merged)}
+                disabled={busy}
+              >
+                {edited ? 'Discard edits' : 'Edit result'}
+              </Button>
+            )}
+          </Box>
+          {plan && plan.transliterated.length > 0 && (
+            <Alert severity="info" sx={{ mb: 1 }}>
+              Same person in Hebrew and English: {plan.transliterated.join(', ')} becomes the
+              phonetic name.
+            </Alert>
+          )}
+          {edited ? (
+            <Box
+              sx={{
+                maxHeight: 460,
+                overflowY: 'auto',
+                px: 2,
+                borderRadius: '10px',
+                border: `1px solid ${tokens.accent}`,
+                bgcolor: tokens.page,
+              }}
+            >
+              <ContactForm draft={edited} onChange={setEdited} disabled={busy} />
+            </Box>
+          ) : m ? (
             <Box
               sx={{
                 p: 2,
@@ -385,7 +423,7 @@ const MergeDialog: React.FC<MergeDialogProps> = ({ contacts, groups, onClose, on
                   {others.length === 1
                     ? 'is the other contact'
                     : `are the other ${others.length} contacts`}{' '}
-                  deleted.
+                  moved to Trash (restorable from the Trash tab).
                 </Alert>
               </>
             )}

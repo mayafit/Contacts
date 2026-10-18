@@ -362,7 +362,12 @@ export class GoogleContactsService {
    * Check authentication status with backend
    * @returns Promise resolving to APIResponse with auth status
    */
-  static async checkAuthStatus(): Promise<APIResponse<{ isAuthenticated: boolean }>> {
+  static async checkAuthStatus(): Promise<
+    APIResponse<{
+      isAuthenticated: boolean;
+      user?: { id: string; email: string; name: string; profilePicture?: string };
+    }>
+  > {
     try {
       logger.info(
         {
@@ -383,7 +388,17 @@ export class GoogleContactsService {
 
       return {
         success: true,
-        data: { isAuthenticated: status.isAuthenticated },
+        data: {
+          isAuthenticated: status.isAuthenticated,
+          user: status.user
+            ? {
+                id: status.user.id,
+                email: status.user.email,
+                name: status.user.name,
+                profilePicture: status.user.picture ?? undefined,
+              }
+            : undefined,
+        },
       };
     } catch (error) {
       logger.error(

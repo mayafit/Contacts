@@ -1,5 +1,7 @@
 using ContactsApi.WebApi.Configuration;
 using ContactsApi.WebApi.Models.Responses;
+using ContactsApi.WebApi.Services;
+using Google.Apis.Auth;
 using Google.Apis.Auth.OAuth2;
 using Google.Apis.Auth.OAuth2.Flows;
 using Google.Apis.Auth.OAuth2.Responses;
@@ -24,15 +26,18 @@ public class AuthController : ControllerBase
     private readonly ILogger<AuthController> _logger;
     private readonly IConfiguration _configuration;
     private readonly GoogleOAuthOptions _oauthOptions;
+    private readonly GoogleTokenService _tokens;
 
     public AuthController(
         ILogger<AuthController> logger,
         IConfiguration configuration,
-        IOptions<GoogleOAuthOptions> oauthOptions)
+        IOptions<GoogleOAuthOptions> oauthOptions,
+        GoogleTokenService tokens)
     {
         _logger = logger;
         _configuration = configuration;
         _oauthOptions = oauthOptions.Value;
+        _tokens = tokens;
     }
 
     /// <summary>
@@ -40,7 +45,7 @@ public class AuthController : ControllerBase
     /// </summary>
     /// <returns>Redirect to Google OAuth consent screen</returns>
     [HttpGet("login")]
-    public async Task<IActionResult> Login()
+    public async Task<IActionResult> Login([FromQuery] bool consent = false)
     {
         try
         {
@@ -74,7 +79,14 @@ public class AuthController : ControllerBase
             authUrl.Append($"&scope={Uri.EscapeDataString(string.Join(" ", scopes ?? Array.Empty<string>()))}");
             authUrl.Append($"&state={Uri.EscapeDataString(state)}");
             authUrl.Append($"&access_type=offline"); // Request refresh token
-            authUrl.Append($"&prompt=consent"); // Force consent to get refresh token
+            authUrl.Append($"&include_granted_scopes=true");
+            // The consent screen is shown only when we need a new refresh token
+            // (first sign-in, or the remembered one stopped working). Otherwise
+            // Google signs the user straight in.
+            if (consent)
+            {
+                authUrl.Append($"&prompt=consent");
+            }
 
             _logger.LogInformation("Redirecting to Google OAuth consent screen");
             return Redirect(authUrl.ToString());
@@ -171,11 +183,36 @@ public class AuthController : ControllerBase
             // Store tokens in session (temporary - will be moved to Redis/DB)
             // TODO: Encrypt tokens before storing
             // TODO: Store in Redis cache + SQL Server
-            HttpContext.Session.SetString("AccessToken", tokenResponse.AccessToken);
-            if (!string.IsNullOrEmpty(tokenResponse.RefreshToken))
+            // Who signed in, from the verified ID token
+            var payload = await GoogleJsonWebSignature.ValidateAsync(
+                tokenResponse.IdToken,
+                new GoogleJsonWebSignature.ValidationSettings { Audience = new[] { clientId } });
+
+            // A refresh token is only issued on the consent screen. Without one,
+            // use the one remembered from an earlier sign-in; if that is missing
+            // or no longer accepted, go through consent once to get a new one.
+            var refreshToken = tokenResponse.RefreshToken;
+            if (!string.IsNullOrEmpty(refreshToken))
             {
-                HttpContext.Session.SetString("RefreshToken", tokenResponse.RefreshToken);
+                await _tokens.StoreRefreshTokenAsync(payload.Subject, refreshToken);
             }
+            else
+            {
+                refreshToken = await _tokens.GetStoredRefreshTokenAsync(payload.Subject);
+                if (refreshToken == null || await _tokens.RefreshAsync(refreshToken) == null)
+                {
+                    await _tokens.ForgetRefreshTokenAsync(payload.Subject);
+                    _logger.LogInformation("No usable refresh token; asking for consent once");
+                    return Redirect("/api/auth/login?consent=true");
+                }
+            }
+
+            HttpContext.Session.SetString(GoogleTokenService.AccessTokenKey, tokenResponse.AccessToken);
+            HttpContext.Session.SetString(GoogleTokenService.RefreshTokenKey, refreshToken);
+            HttpContext.Session.SetString(GoogleTokenService.UserIdKey, payload.Subject);
+            HttpContext.Session.SetString("UserEmail", payload.Email ?? string.Empty);
+            HttpContext.Session.SetString("UserName", payload.Name ?? payload.Email ?? string.Empty);
+            HttpContext.Session.SetString("UserPicture", payload.Picture ?? string.Empty);
 
             // Store token expiry
             var expiresAt = DateTime.UtcNow.AddSeconds(tokenResponse.ExpiresInSeconds ?? 3600);
@@ -234,15 +271,16 @@ public class AuthController : ControllerBase
 
             // TODO: Fetch actual user info from database or Google
             // For now, return placeholder
+            var picture = HttpContext.Session.GetString("UserPicture");
             var response = new AuthStatusResponse
             {
                 IsAuthenticated = true,
                 User = new UserInfo
                 {
-                    Id = "temp-user-id",
-                    Email = "user@example.com",
-                    Name = "User",
-                    Picture = null
+                    Id = HttpContext.Session.GetString(GoogleTokenService.UserIdKey) ?? string.Empty,
+                    Email = HttpContext.Session.GetString("UserEmail") ?? string.Empty,
+                    Name = HttpContext.Session.GetString("UserName") ?? string.Empty,
+                    Picture = string.IsNullOrEmpty(picture) ? null : picture
                 }
             };
 

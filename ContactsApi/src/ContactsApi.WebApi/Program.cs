@@ -43,6 +43,7 @@ builder.Services.Configure<GoogleOAuthOptions>(options =>
 
 // Register hosted service to load secrets from Vault at startup
 builder.Services.AddHostedService<VaultConfigurationService>();
+builder.Services.AddSingleton<GoogleTokenService>();
 
 // Configure Redis connection
 //
@@ -104,6 +105,9 @@ builder.Services.AddSession(options =>
     // app (cookies ignore ports, so localhost:3002 -> :5000 still works), while
     // a hardcoded "localhost" made browsers drop the cookie everywhere else.
     options.Cookie.Path = "/"; // Cookie available for all paths
+    // Persistent, so closing the browser does not sign the user out; the
+    // session itself still expires after 7 idle days.
+    options.Cookie.MaxAge = TimeSpan.FromDays(7);
 });
 
 // Configure CORS

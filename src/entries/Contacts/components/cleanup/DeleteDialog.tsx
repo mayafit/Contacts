@@ -1,60 +1,84 @@
 /**
- * @fileoverview Confirmation dialog for deleting one or more contacts (Story 5.1).
+ * @fileoverview "Are you sure?" dialog for removing contacts (Story 5.1).
+ * By default contacts are moved to the app's Trash (restorable); deleting
+ * permanently is an explicit choice, or the action of the Trash view.
  * @module Contacts/components/cleanup/DeleteDialog
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Alert,
   Box,
   Button,
+  Checkbox,
   CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControlLabel,
   Typography,
 } from '@mui/material';
-import { DeleteOutline } from '@mui/icons-material';
+import { DeleteForever, DeleteOutline } from '@mui/icons-material';
 import type { Contact } from '../../types/Contact';
 import { useAppDispatch } from '../../types/hooks';
-import { deleteContacts } from '../../redux/thunks/cleanupThunks';
+import { deleteContacts, trashContacts } from '../../redux/thunks/cleanupThunks';
 import ContactAvatar from '../common/ContactAvatar';
 import { getDisplayName, getPrimaryPhone } from '../../model/contactView';
 import { tokens } from '../../theme/contactsTheme';
 
 /** Props for DeleteDialog */
 export interface DeleteDialogProps {
-  /** Contacts to delete; null closes the dialog */
+  /** Contacts to remove; null closes the dialog */
   contacts: Contact[] | null;
-  /** Close without deleting */
+  /** Only permanent deletion is offered (used by the Trash view) */
+  permanentOnly?: boolean;
+  /** Close without removing */
   onClose: () => void;
-  /** Called after a successful delete */
-  onDeleted: (count: number) => void;
+  /** Called after success with the count and whether it was permanent */
+  onDeleted: (count: number, permanent: boolean) => void;
 }
 
 const SHOWN = 8;
 
 /**
- * Delete confirmation dialog.
+ * Remove-contacts confirmation dialog.
  * @param props - Component props
  * @returns Dialog element
  */
-const DeleteDialog: React.FC<DeleteDialogProps> = ({ contacts, onClose, onDeleted }) => {
+const DeleteDialog: React.FC<DeleteDialogProps> = ({
+  contacts,
+  permanentOnly = false,
+  onClose,
+  onDeleted,
+}) => {
   const dispatch = useAppDispatch();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [permanent, setPermanent] = useState(permanentOnly);
   const list = contacts ?? [];
   const count = list.length;
+  const noun = count === 1 ? 'this contact' : `${count} contacts`;
+
+  useEffect(() => {
+    setPermanent(permanentOnly);
+    setError(null);
+  }, [contacts, permanentOnly]);
 
   const confirm = async () => {
     setBusy(true);
     setError(null);
+    const names = list.map((c) => c.resourceName);
     try {
-      const deleted = await dispatch(deleteContacts(list.map((c) => c.resourceName))).unwrap();
-      onDeleted(deleted);
+      if (permanent) {
+        const deleted = await dispatch(deleteContacts(names)).unwrap();
+        onDeleted(deleted, true);
+      } else {
+        await dispatch(trashContacts({ resourceNames: names, restore: false })).unwrap();
+        onDeleted(names.length, false);
+      }
     } catch (e) {
-      setError((e as { message?: string })?.message ?? 'Delete failed');
+      setError((e as { message?: string })?.message ?? 'Failed');
     } finally {
       setBusy(false);
     }
@@ -62,11 +86,14 @@ const DeleteDialog: React.FC<DeleteDialogProps> = ({ contacts, onClose, onDelete
 
   return (
     <Dialog open={!!contacts} onClose={busy ? undefined : onClose} maxWidth="xs" fullWidth>
-      <DialogTitle>Delete {count === 1 ? 'this contact' : `${count} contacts`}?</DialogTitle>
+      <DialogTitle>
+        {permanent ? `Permanently delete ${noun}?` : `Move ${noun} to Trash?`}
+      </DialogTitle>
       <DialogContent>
         <Typography variant="body2" sx={{ color: tokens.textSecondary, mb: 1.5 }}>
-          {count === 1 ? 'It is' : 'They are'} deleted from your Google account and disappear from
-          every device that syncs Google Contacts.
+          {permanent
+            ? 'They are deleted from your Google account and disappear from every device that syncs Google Contacts. This cannot be undone from this app.'
+            : 'They disappear from this app and can be restored from the Trash tab. In Google Contacts they stay, marked with the label "Contacts app – Trash", until you delete them permanently.'}
         </Typography>
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
           {list.slice(0, SHOWN).map((c) => (
@@ -93,6 +120,24 @@ const DeleteDialog: React.FC<DeleteDialogProps> = ({ contacts, onClose, onDelete
             </Typography>
           )}
         </Box>
+        {!permanentOnly && (
+          <FormControlLabel
+            sx={{ mt: 1.5 }}
+            control={
+              <Checkbox
+                size="small"
+                checked={permanent}
+                onChange={(e) => setPermanent(e.target.checked)}
+                disabled={busy}
+              />
+            }
+            label={
+              <Typography variant="body2" sx={{ color: tokens.textSecondary }}>
+                Delete permanently instead
+              </Typography>
+            }
+          />
+        )}
         {error && (
           <Alert severity="error" sx={{ mt: 2 }}>
             {error}
@@ -105,12 +150,26 @@ const DeleteDialog: React.FC<DeleteDialogProps> = ({ contacts, onClose, onDelete
         </Button>
         <Button
           variant="contained"
-          color="error"
+          color={permanent ? 'error' : 'warning'}
           onClick={confirm}
           disabled={busy || count === 0}
-          startIcon={busy ? <CircularProgress size={16} color="inherit" /> : <DeleteOutline />}
+          startIcon={
+            busy ? (
+              <CircularProgress size={16} color="inherit" />
+            ) : permanent ? (
+              <DeleteForever />
+            ) : (
+              <DeleteOutline />
+            )
+          }
         >
-          {busy ? 'Deleting…' : count === 1 ? 'Delete' : `Delete ${count} contacts`}
+          {busy
+            ? 'Working…'
+            : permanent
+              ? count === 1
+                ? 'Delete permanently'
+                : `Delete ${count} permanently`
+              : 'Move to Trash'}
         </Button>
       </DialogActions>
     </Dialog>
