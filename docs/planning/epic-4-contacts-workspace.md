@@ -78,3 +78,38 @@ Google Contacts; a concurrent edit yields 412, not a silent overwrite.
   member's card to fix it.
 - Out of scope here: automatic merge and delete (Google has no merge API; it
   needs a field-by-field merge design — candidate for Epic 5).
+
+---
+
+# Epic 5 — Clean-up: delete and merge
+
+| Version | Date       | Author | Change |
+|---------|------------|--------|--------|
+| 1.0     | 2026-10-18 | Alon (with Claude) | Requested after first use of Epic 4 |
+
+### 5.1 Delete contacts
+- Checkbox on every row; header checkbox selects all visible (filtered)
+  rows; shift-click selects a range.
+- Selection bar: "N selected · Merge · Delete · Clear".
+- Delete from the selection bar, from the contact card and from a
+  duplicate group; always behind a confirmation listing who is deleted.
+- API: `DELETE /api/contacts/{rn}`, `POST /api/contacts/batch-delete`.
+
+### 5.2 Merge contacts
+- From a duplicate group or from 2+ selected rows. The user picks the
+  contact to keep and can leave members out; a preview shows the result.
+- Merge rules: keep the main contact's name, fill its empty name and
+  phonetic parts from the others; union phones (same number in any
+  format counts once), emails, addresses, websites, relations, custom
+  fields, nicknames, organizations and labels; keep the main birthday or
+  take another's; join distinct notes.
+- API: `POST /api/contacts/merge` updates the main contact (etag-checked)
+  first, adds labels, and only then deletes the others.
+- **Data-loss guard:** before deleting, the API re-reads the contacts to
+  delete including fields the app does not merge (photo, events, IM,
+  SIP, locations, occupations, interests, skills, keywords, external IDs,
+  calendar URLs, gender). If any is present it refuses with a list, and
+  the user must confirm the loss explicitly.
+
+**AC:** a merge never deletes a contact unless the merged contact was
+saved; nothing is lost silently.
