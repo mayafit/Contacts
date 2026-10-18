@@ -48,27 +48,34 @@ describe('GoogleContactsService', () => {
 
   describe('updateContactField', () => {
     it('updateContactField_Should_UpdateField_When_Successful', async () => {
-      const result = await GoogleContactsService.updateContactField(
-        'people/c12345',
-        'names',
-        { givenName: 'Jane', familyName: 'Doe', displayName: 'Jane Doe' }
-      );
+      const result = await GoogleContactsService.updateContactField('people/c12345', 'names', {
+        givenName: 'Jane',
+        familyName: 'Doe',
+        displayName: 'Jane Doe',
+      });
 
       expect(result.success).toBe(true);
       expect(result.data).toEqual(mockContact);
       expect(updateContactFieldSpy).toHaveBeenCalledWith(
         'people/c12345',
         'names',
-        { givenName: 'Jane', familyName: 'Doe', displayName: 'Jane Doe' }
+        { givenName: 'Jane', familyName: 'Doe', displayName: 'Jane Doe' },
+        undefined,
       );
     });
 
+    it('updateContactField_Should_PassEtag_When_Given', async () => {
+      updateContactFieldSpy.mockResolvedValueOnce(mockContact);
+
+      await GoogleContactsService.updateContactField('people/c12345', 'names', [], 'etag-7');
+
+      expect(updateContactFieldSpy).toHaveBeenCalledWith('people/c12345', 'names', [], 'etag-7');
+    });
+
     it('updateContactField_Should_ReturnValidationError_When_InvalidResourceName', async () => {
-      const result = await GoogleContactsService.updateContactField(
-        'invalid-format',
-        'names',
-        { givenName: 'Jane' }
-      );
+      const result = await GoogleContactsService.updateContactField('invalid-format', 'names', {
+        givenName: 'Jane',
+      });
 
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe('VALIDATION_ERROR');
@@ -80,7 +87,7 @@ describe('GoogleContactsService', () => {
       const result = await GoogleContactsService.updateContactField(
         'people/c12345',
         'invalidField',
-        { value: 'test' }
+        { value: 'test' },
       );
 
       expect(result.success).toBe(false);
@@ -90,18 +97,17 @@ describe('GoogleContactsService', () => {
 
     it('updateContactField_Should_HandleBackendError_When_UpdateFails', async () => {
       updateContactFieldSpy.mockRejectedValueOnce(
-        new Error('CONTACT_NOT_FOUND: Contact not found')
+        new Error('CONTACT_NOT_FOUND: Contact not found'),
       );
 
-      const result = await GoogleContactsService.updateContactField(
-        'people/c12345',
-        'names',
-        { givenName: 'Jane' }
-      );
+      const result = await GoogleContactsService.updateContactField('people/c12345', 'names', {
+        givenName: 'Jane',
+      });
 
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe('UPDATE_FIELD_FAILED');
-      expect(result.error?.message).toBe('Failed to update names');
+      // The underlying message is kept: retry/conflict handling classifies on it
+      expect(result.error?.message).toBe('CONTACT_NOT_FOUND: Contact not found');
     });
 
     it('updateContactField_Should_UpdatePhoneNumbers_When_Called', async () => {
@@ -115,7 +121,7 @@ describe('GoogleContactsService', () => {
       const result = await GoogleContactsService.updateContactField(
         'people/c12345',
         'phoneNumbers',
-        phoneValue
+        phoneValue,
       );
 
       expect(result.success).toBe(true);
@@ -133,7 +139,7 @@ describe('GoogleContactsService', () => {
       const result = await GoogleContactsService.updateContactField(
         'people/c12345',
         'emailAddresses',
-        emailValue
+        emailValue,
       );
 
       expect(result.success).toBe(true);
@@ -141,11 +147,7 @@ describe('GoogleContactsService', () => {
     });
 
     it('updateContactField_Should_LogValidationFailure_When_InvalidInput', async () => {
-      await GoogleContactsService.updateContactField(
-        'invalid-format',
-        'names',
-        {}
-      );
+      await GoogleContactsService.updateContactField('invalid-format', 'names', {});
 
       expect(loggerWarnSpy).toHaveBeenCalled();
       expect(loggerWarnSpy.mock.calls[0][0]).toMatchObject({
@@ -154,11 +156,9 @@ describe('GoogleContactsService', () => {
     });
 
     it('updateContactField_Should_LogOperationStartAndCompletion_When_Called', async () => {
-      await GoogleContactsService.updateContactField(
-        'people/c12345',
-        'names',
-        { givenName: 'Jane' }
-      );
+      await GoogleContactsService.updateContactField('people/c12345', 'names', {
+        givenName: 'Jane',
+      });
 
       expect(loggerInfoSpy).toHaveBeenCalledTimes(2);
       expect(loggerInfoSpy.mock.calls[0][0]).toMatchObject({
@@ -173,11 +173,7 @@ describe('GoogleContactsService', () => {
       const error = new Error('Backend error');
       updateContactFieldSpy.mockRejectedValueOnce(error);
 
-      await GoogleContactsService.updateContactField(
-        'people/c12345',
-        'names',
-        {}
-      );
+      await GoogleContactsService.updateContactField('people/c12345', 'names', {});
 
       expect(loggerErrorSpy).toHaveBeenCalled();
       expect(loggerErrorSpy.mock.calls[0][0]).toMatchObject({
@@ -195,6 +191,7 @@ describe('GoogleContactsService', () => {
     it('updateContactField_Should_ValidateAllAllowedFieldPaths_When_Called', async () => {
       const allowedFields = [
         'names',
+        'nicknames',
         'phoneNumbers',
         'emailAddresses',
         'addresses',
@@ -213,14 +210,15 @@ describe('GoogleContactsService', () => {
         const result = await GoogleContactsService.updateContactField(
           'people/c12345',
           fieldPath,
-          {}
+          {},
         );
 
         expect(result.success).toBe(true);
         expect(updateContactFieldSpy).toHaveBeenCalledWith(
           'people/c12345',
           fieldPath,
-          {}
+          {},
+          undefined,
         );
       }
     });
@@ -228,11 +226,7 @@ describe('GoogleContactsService', () => {
     it('updateContactField_Should_HandleNonErrorException_When_StringThrown', async () => {
       updateContactFieldSpy.mockRejectedValueOnce('String error');
 
-      const result = await GoogleContactsService.updateContactField(
-        'people/c12345',
-        'names',
-        {}
-      );
+      const result = await GoogleContactsService.updateContactField('people/c12345', 'names', {});
 
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe('UPDATE_FIELD_FAILED');

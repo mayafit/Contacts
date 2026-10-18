@@ -4,7 +4,7 @@
  */
 
 import { jest } from '@jest/globals';
-import { BackendApiClient, backendApiClient } from '../BackendApiClient';
+import { ApiRequestError, BackendApiClient, backendApiClient } from '../BackendApiClient';
 import type { Contact } from '../../../entries/Contacts/types/Contact';
 
 // Mock global fetch
@@ -44,21 +44,23 @@ describe('BackendApiClient', () => {
       const result = await client.updateContactField(
         'people/c12345',
         'names',
-        { givenName: 'Jane', familyName: 'Doe', displayName: 'Jane Doe' }
+        [{ givenName: 'Jane', familyName: 'Doe' }],
+        'etag-1'
       );
 
       expect(result).toEqual(mockContact);
+      // One group plus the etag, through the real PUT endpoint
       expect(global.fetch).toHaveBeenCalledWith(
-        'http://localhost:5000/api/contacts/people%2Fc12345/fields',
+        'http://localhost:5000/api/contacts/people%2Fc12345',
         expect.objectContaining({
-          method: 'PATCH',
+          method: 'PUT',
           credentials: 'include',
           headers: expect.objectContaining({
             'Content-Type': 'application/json',
           }),
           body: JSON.stringify({
-            fieldPath: 'names',
-            newValue: { givenName: 'Jane', familyName: 'Doe', displayName: 'Jane Doe' },
+            etag: 'etag-1',
+            names: [{ givenName: 'Jane', familyName: 'Doe' }],
           }),
         })
       );
@@ -120,7 +122,58 @@ describe('BackendApiClient', () => {
 
       await expect(
         client.updateContactField('people/c12345', 'names', {})
-      ).rejects.toThrow('Failed to update field');
+      ).rejects.toThrow('Failed to update contact');
+    });
+
+    it('should put the HTTP status in the error so conflicts can be detected', async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: false,
+        status: 412,
+        json: async () => ({
+          success: false,
+          error: { code: 'CONTACT_CONFLICT', message: 'Changed elsewhere', timestamp: '' },
+        }),
+      });
+
+      const error = await client
+        .updateContactField('people/c12345', 'names', [], 'stale')
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ApiRequestError);
+      expect((error as ApiRequestError).status).toBe(412);
+      expect((error as ApiRequestError).code).toBe('CONTACT_CONFLICT');
+      expect((error as Error).message).toBe('Changed elsewhere [HTTP 412]');
+    });
+
+    it('should keep the status when the server answers with a non-JSON error page', async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: false,
+        status: 502,
+        json: async () => {
+          throw new SyntaxError('Unexpected token <');
+        },
+      });
+
+      await expect(client.updateContactField('people/c12345', 'names', [], 'e')).rejects.toThrow(
+        'Unexpected response from server (502) [HTTP 502]'
+      );
+    });
+  });
+
+  describe('fetchContactGroups', () => {
+    it('should return the labels', async () => {
+      const groups = [{ resourceName: 'contactGroups/a', name: 'Family' }];
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, data: groups }),
+      });
+
+      await expect(client.fetchContactGroups()).resolves.toEqual(groups);
+      expect(global.fetch).toHaveBeenCalledWith(
+        'http://localhost:5000/api/contacts/groups',
+        expect.any(Object)
+      );
     });
   });
 });

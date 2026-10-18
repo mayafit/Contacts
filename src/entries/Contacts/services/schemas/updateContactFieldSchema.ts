@@ -12,6 +12,7 @@ import { z } from 'zod';
  */
 export const ALLOWED_FIELD_PATHS = [
   'names',
+  'nicknames',
   'phoneNumbers',
   'emailAddresses',
   'addresses',

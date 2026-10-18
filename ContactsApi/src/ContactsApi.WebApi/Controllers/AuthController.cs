@@ -18,6 +18,9 @@ namespace ContactsApi.WebApi.Controllers;
 [Route("api/[controller]")]
 public class AuthController : ControllerBase
 {
+    /// <summary>Read/write Google Contacts scope; required for the app to work</summary>
+    private const string ContactsScope = "https://www.googleapis.com/auth/contacts";
+
     private readonly ILogger<AuthController> _logger;
     private readonly IConfiguration _configuration;
     private readonly GoogleOAuthOptions _oauthOptions;
@@ -151,6 +154,19 @@ public class AuthController : ControllerBase
                 code,
                 redirectUri,
                 CancellationToken.None);
+
+            // Google's consent screen lets the user untick individual permissions.
+            // Without contacts access every later call fails with 403, so stop here
+            // with an explanation instead of logging in to an app that cannot work.
+            var grantedScopes = (tokenResponse.Scope ?? string.Empty)
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (!grantedScopes.Contains(ContactsScope))
+            {
+                _logger.LogWarning(
+                    "Login completed without the contacts scope (granted: {Scopes})",
+                    tokenResponse.Scope);
+                return RedirectToFrontend("/login?error=missing_scope");
+            }
 
             // Store tokens in session (temporary - will be moved to Redis/DB)
             // TODO: Encrypt tokens before storing

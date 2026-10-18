@@ -89,6 +89,28 @@ public class ContactsController : ControllerBase
     }
 
     /// <summary>
+    /// Get the user's contact groups (labels), used to show label names
+    /// </summary>
+    /// <returns>All contact groups</returns>
+    [HttpGet("groups")]
+    [ProducesResponseType(typeof(ApiResponse<List<ContactGroup>>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<List<ContactGroup>>), StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> GetContactGroups()
+    {
+        var accessToken = HttpContext.Session.GetString("AccessToken");
+        if (string.IsNullOrEmpty(accessToken))
+        {
+            return Unauthorized(ApiResponse<List<ContactGroup>>.ErrorResponse(
+                "UNAUTHORIZED",
+                "Not authenticated. Please sign in."));
+        }
+
+        var apiClient = new GooglePeopleApiClient(accessToken, _loggerFactory.CreateLogger<GooglePeopleApiClient>());
+        var groups = await apiClient.ListContactGroupsAsync();
+        return Ok(ApiResponse<List<ContactGroup>>.SuccessResponse(groups));
+    }
+
+    /// <summary>
     /// Get a single contact by resource name
     /// </summary>
     /// <param name="resourceName">Contact resource name (URL encoded)</param>

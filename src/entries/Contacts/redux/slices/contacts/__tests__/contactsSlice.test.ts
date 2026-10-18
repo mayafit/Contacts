@@ -51,10 +51,7 @@ describe('contactsSlice', () => {
   describe('fetchContacts', () => {
     it('fetchContacts_Should_SetLoadingTrue_When_Pending', () => {
       const initialState = contactsReducer(undefined, { type: '@@INIT' });
-      const pendingState = contactsReducer(
-        initialState,
-        fetchContacts.pending('', undefined),
-      );
+      const pendingState = contactsReducer(initialState, fetchContacts.pending('', undefined));
 
       expect(pendingState.isLoading).toBe(true);
       expect(pendingState.error).toBeNull();
@@ -109,11 +106,7 @@ describe('contactsSlice', () => {
 
       const updatedState = contactsReducer(
         stateWithContacts,
-        updateContact.fulfilled(
-          updatedContact,
-          '',
-          { resourceName: 'people/123', updates: {} },
-        ),
+        updateContact.fulfilled(updatedContact, '', { resourceName: 'people/123', updates: {} }),
       );
 
       expect(updatedState.entities['people/123']?.emailAddresses?.[0]?.value).toBe(
@@ -121,7 +114,7 @@ describe('contactsSlice', () => {
       );
     });
 
-    it('updateContact_Should_SetError_When_Rejected', () => {
+    it('updateContact_Should_LeaveListUsable_When_Rejected', () => {
       const initialState = contactsReducer(undefined, { type: '@@INIT' });
       const error = {
         code: ErrorCode.UPDATE_FAILED,
@@ -134,7 +127,9 @@ describe('contactsSlice', () => {
         updateContact.rejected(null, '', { resourceName: '', updates: {} }, error),
       );
 
-      expect(rejectedState.error).toEqual(error);
+      // A failed save is reported in the contact card; it must not turn the
+      // whole list into an error page.
+      expect(rejectedState.error).toBeNull();
     });
   });
 
@@ -150,14 +145,9 @@ describe('contactsSlice', () => {
         phoneNumbers: [{ value: '+9999999999', type: 'work' }],
       };
 
-      const newState = contactsReducer(
-        stateWithContacts,
-        contactUpdated(updatedContact),
-      );
+      const newState = contactsReducer(stateWithContacts, contactUpdated(updatedContact));
 
-      expect(newState.entities['people/123']?.phoneNumbers?.[0]?.value).toBe(
-        '+9999999999',
-      );
+      expect(newState.entities['people/123']?.phoneNumbers?.[0]?.value).toBe('+9999999999');
     });
   });
 
@@ -165,16 +155,11 @@ describe('contactsSlice', () => {
     it('clearContactsError_Should_ClearError_When_ErrorExists', () => {
       const stateWithError = contactsReducer(
         undefined,
-        fetchContacts.rejected(
-          null,
-          '',
-          undefined,
-          {
-            code: ErrorCode.FETCH_FAILED,
-            message: 'Error',
-            timestamp: new Date().toISOString(),
-          },
-        ),
+        fetchContacts.rejected(null, '', undefined, {
+          code: ErrorCode.FETCH_FAILED,
+          message: 'Error',
+          timestamp: new Date().toISOString(),
+        }),
       );
 
       const clearedState = contactsReducer(stateWithError, clearContactsError());
@@ -197,5 +182,4 @@ describe('contactsSlice', () => {
       expect(resetState.error).toBeNull();
     });
   });
-
 });

@@ -6,10 +6,17 @@
  * Uses entities/ids pattern for O(1) lookups and maintains referential equality
  */
 
-import { createSlice, createAsyncThunk, PayloadAction, createEntityAdapter } from '@reduxjs/toolkit';
+import {
+  createSlice,
+  createAsyncThunk,
+  PayloadAction,
+  createEntityAdapter,
+} from '@reduxjs/toolkit';
 import { GoogleContactsService } from '../../../services/GoogleContactsService';
 import type { Contact, AppError } from '../../../types';
+import type { ContactGroup, ContactPatch } from '../../../types/Contact';
 import { ErrorCode } from '../../../types';
+import { compareByName } from '../../../model/contactView';
 
 /**
  * Entity adapter for normalized contacts state
@@ -18,11 +25,7 @@ import { ErrorCode } from '../../../types';
  */
 const contactsAdapter = createEntityAdapter<Contact, string>({
   selectId: (contact) => contact.resourceName,
-  sortComparer: (a, b) => {
-    const nameA = a.names?.[0]?.displayName || '';
-    const nameB = b.names?.[0]?.displayName || '';
-    return nameA.localeCompare(nameB);
-  },
+  sortComparer: compareByName,
 });
 
 /**
@@ -36,6 +39,8 @@ export type ContactsState = ReturnType<typeof contactsAdapter.getInitialState> &
   lastFetched: string | null;
   /** Error state */
   error: AppError | null;
+  /** Labels by resource name */
+  groups: Record<string, ContactGroup>;
 };
 
 /**
@@ -45,45 +50,39 @@ const initialState: ContactsState = contactsAdapter.getInitialState({
   isLoading: false,
   lastFetched: null as string | null,
   error: null as AppError | null,
+  groups: {} as Record<string, ContactGroup>,
 });
+
+/**
+ * Async thunk to fetch label names; failure is non-fatal (labels just show empty)
+ */
+export const fetchContactGroups = createAsyncThunk<ContactGroup[], void, { rejectValue: AppError }>(
+  'contacts/fetchContactGroups',
+  async (_, { rejectWithValue }) => {
+    const response = await GoogleContactsService.fetchContactGroups();
+    if (!response.success || !response.data) {
+      return rejectWithValue({
+        code: ErrorCode.FETCH_FAILED,
+        message: response.error?.message || 'Failed to fetch labels',
+        timestamp: new Date().toISOString(),
+      });
+    }
+    return response.data;
+  },
+);
 
 /**
  * Async thunk to fetch all contacts from backend
  */
-export const fetchContacts = createAsyncThunk<
-  Contact[],
-  void,
-  { rejectValue: AppError }
->('contacts/fetchContacts', async (_, { rejectWithValue }) => {
-  const response = await GoogleContactsService.fetchAllContacts();
-
-  if (!response.success || !response.data) {
-    return rejectWithValue({
-      code: (response.error?.code as ErrorCode) || ErrorCode.FETCH_FAILED,
-      message: response.error?.message || 'Failed to fetch contacts',
-      timestamp: new Date().toISOString(),
-    });
-  }
-
-  return response.data;
-});
-
-/**
- * Async thunk to update a single contact
- */
-export const updateContact = createAsyncThunk<
-  Contact,
-  { resourceName: string; updates: Partial<Contact> },
-  { rejectValue: AppError }
->(
-  'contacts/updateContact',
-  async ({ resourceName, updates }, { rejectWithValue }) => {
-    const response = await GoogleContactsService.updateContact(resourceName, updates);
+export const fetchContacts = createAsyncThunk<Contact[], void, { rejectValue: AppError }>(
+  'contacts/fetchContacts',
+  async (_, { rejectWithValue }) => {
+    const response = await GoogleContactsService.fetchAllContacts();
 
     if (!response.success || !response.data) {
       return rejectWithValue({
-        code: (response.error?.code as ErrorCode) || ErrorCode.UPDATE_FAILED,
-        message: response.error?.message || 'Failed to update contact',
+        code: (response.error?.code as ErrorCode) || ErrorCode.FETCH_FAILED,
+        message: response.error?.message || 'Failed to fetch contacts',
         timestamp: new Date().toISOString(),
       });
     }
@@ -91,6 +90,27 @@ export const updateContact = createAsyncThunk<
     return response.data;
   },
 );
+
+/**
+ * Async thunk to update a single contact
+ */
+export const updateContact = createAsyncThunk<
+  Contact,
+  { resourceName: string; updates: ContactPatch },
+  { rejectValue: AppError }
+>('contacts/updateContact', async ({ resourceName, updates }, { rejectWithValue }) => {
+  const response = await GoogleContactsService.updateContact(resourceName, updates);
+
+  if (!response.success || !response.data) {
+    return rejectWithValue({
+      code: (response.error?.code as ErrorCode) || ErrorCode.UPDATE_FAILED,
+      message: response.error?.message || 'Failed to update contact',
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  return response.data;
+});
 
 /**
  * Contacts Redux slice
@@ -153,9 +173,8 @@ const contactsSlice = createSlice({
           timestamp: new Date().toISOString(),
         };
       })
-      // Update contact pending
-      .addCase(updateContact.pending, (state) => {
-        state.error = null;
+      .addCase(fetchContactGroups.fulfilled, (state, action) => {
+        state.groups = Object.fromEntries(action.payload.map((g) => [g.resourceName, g]));
       })
       // Update contact fulfilled
       .addCase(updateContact.fulfilled, (state, action) => {
@@ -164,15 +183,9 @@ const contactsSlice = createSlice({
           id: resourceName,
           changes: action.payload,
         });
-      })
-      // Update contact rejected
-      .addCase(updateContact.rejected, (state, action) => {
-        state.error = action.payload || {
-          code: ErrorCode.UNKNOWN_ERROR,
-          message: 'Failed to update contact',
-          timestamp: new Date().toISOString(),
-        };
       });
+    // updateContact.rejected is deliberately not handled here: the card shows the
+    // error where the edit happened instead of replacing the list with an error page.
   },
 });
 

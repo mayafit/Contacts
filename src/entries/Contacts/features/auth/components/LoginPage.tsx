@@ -27,6 +27,8 @@ const LoginPage: React.FC = () => {
     no_code: 'Authentication failed: no authorization code received',
     config_error: 'Server configuration error. Please contact support.',
     auth_failed: 'Authentication failed. Please try again.',
+    missing_scope:
+      'Google did not grant access to your contacts. Sign in again and make sure the "See, edit, download, and permanently delete your contacts" box is ticked.',
   };
 
   const errorMessage = errorParam ? errorMessages[errorParam] || 'An unknown error occurred' : null;
@@ -91,7 +93,11 @@ const LoginPage: React.FC = () => {
               >
                 Sign in with Google
               </Button>
-              <Typography variant="caption" color="text.secondary" sx={{ mt: 2, display: 'block', textAlign: 'center' }}>
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ mt: 2, display: 'block', textAlign: 'center' }}
+              >
                 You will be redirected to Google to authorize access to your contacts
               </Typography>
             </Box>

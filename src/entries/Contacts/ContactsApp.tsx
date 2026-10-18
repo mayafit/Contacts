@@ -6,8 +6,10 @@
  * OAuth flow now handled server-side
  */
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router';
+import { Box, CircularProgress, CssBaseline, ThemeProvider } from '@mui/material';
+import { createContactsTheme } from './theme/contactsTheme';
 import { useDispatch } from 'react-redux';
 import LoginPage from './features/auth/components/LoginPage';
 import AuthCallback from './routes/AuthCallback';
@@ -24,6 +26,7 @@ import { logger } from '../../shared/logger';
 const ContactsApp: React.FC = () => {
   const dispatch = useDispatch<AppDispatch>();
   const [isCheckingAuth, setIsCheckingAuth] = React.useState(true);
+  const theme = useMemo(() => createContactsTheme(), []);
 
   /**
    * Check authentication status with backend on app mount
@@ -77,28 +80,38 @@ const ContactsApp: React.FC = () => {
   // This prevents ProtectedRoute from redirecting before auth check completes
   if (isCheckingAuth) {
     return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-        <div>Checking authentication...</div>
-      </div>
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
+        <Box
+          sx={{ display: 'grid', placeItems: 'center', height: '100vh' }}
+          aria-busy="true"
+          aria-label="Checking sign-in"
+        >
+          <CircularProgress />
+        </Box>
+      </ThemeProvider>
     );
   }
 
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/auth/callback" element={<AuthCallback />} />
-        <Route
-          path="/"
-          element={
-            <ProtectedRoute>
-              <ContactsHome />
-            </ProtectedRoute>
-          }
-        />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </BrowserRouter>
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      <BrowserRouter>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/auth/callback" element={<AuthCallback />} />
+          <Route
+            path="/"
+            element={
+              <ProtectedRoute>
+                <ContactsHome />
+              </ProtectedRoute>
+            }
+          />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </BrowserRouter>
+    </ThemeProvider>
   );
 };
 

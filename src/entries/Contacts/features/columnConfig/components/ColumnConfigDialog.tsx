@@ -4,13 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import {
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  Button,
-} from '@mui/material';
+import { Dialog, DialogTitle, DialogContent, DialogActions, Button } from '@mui/material';
 import ColumnList from './ColumnList';
 import { AVAILABLE_COLUMNS } from '../columnDefinitions';
 import { useAppDispatch, useAppSelector } from '../../../types/hooks';
@@ -37,10 +31,7 @@ export interface ColumnConfigDialogProps {
  * Supports add/remove columns and drag-drop reordering
  * ESC key and overlay click close the dialog
  */
-const ColumnConfigDialog: React.FC<ColumnConfigDialogProps> = ({
-  open,
-  onClose,
-}) => {
+const ColumnConfigDialog: React.FC<ColumnConfigDialogProps> = ({ open, onClose }) => {
   const dispatch = useAppDispatch();
   const currentConfig = useAppSelector(selectColumnConfig);
 
@@ -68,9 +59,7 @@ const ColumnConfigDialog: React.FC<ColumnConfigDialogProps> = ({
     if (isCurrentlyVisible) {
       // Remove column
       setTempConfig({
-        visibleColumns: tempConfig.visibleColumns.filter(
-          (id) => id !== columnId
-        ),
+        visibleColumns: tempConfig.visibleColumns.filter((id) => id !== columnId),
         columnOrder: tempConfig.columnOrder.filter((id) => id !== columnId),
       });
     } else {
@@ -103,13 +92,8 @@ const ColumnConfigDialog: React.FC<ColumnConfigDialogProps> = ({
       maxWidth="sm"
       fullWidth
     >
-      <DialogTitle id="column-config-dialog-title">
-        Configure Columns
-      </DialogTitle>
-      <DialogContent
-        id="column-config-dialog-description"
-        sx={{ p: 0, minHeight: 400 }}
-      >
+      <DialogTitle id="column-config-dialog-title">Configure Columns</DialogTitle>
+      <DialogContent id="column-config-dialog-description" sx={{ p: 0, minHeight: 400 }}>
         <ColumnList
           columns={AVAILABLE_COLUMNS}
           visibleColumns={tempConfig.visibleColumns}

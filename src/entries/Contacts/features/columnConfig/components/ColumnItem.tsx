@@ -6,14 +6,7 @@
 import React from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import {
-  Checkbox,
-  FormControlLabel,
-  ListItem,
-  Tooltip,
-  IconButton,
-  Box,
-} from '@mui/material';
+import { Checkbox, FormControlLabel, ListItem, Tooltip, IconButton, Box } from '@mui/material';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 import type { ColumnDefinition } from '../types';
 
@@ -38,14 +31,7 @@ export interface ColumnItemProps {
  */
 const ColumnItem: React.FC<ColumnItemProps> = React.memo(
   ({ column, isVisible, onToggle, isDragDisabled = false }) => {
-    const {
-      attributes,
-      listeners,
-      setNodeRef,
-      transform,
-      transition,
-      isDragging,
-    } = useSortable({
+    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
       id: column.id,
       disabled: isDragDisabled,
     });
@@ -91,9 +77,7 @@ const ColumnItem: React.FC<ColumnItemProps> = React.memo(
           {/* Drag Handle */}
           <Tooltip
             title={
-              isDragDisabled
-                ? 'Dragging disabled'
-                : 'Drag to reorder (Space/Enter to activate)'
+              isDragDisabled ? 'Dragging disabled' : 'Drag to reorder (Space/Enter to activate)'
             }
           >
             <span>
@@ -144,7 +128,7 @@ const ColumnItem: React.FC<ColumnItemProps> = React.memo(
         </Box>
       </ListItem>
     );
-  }
+  },
 );
 
 ColumnItem.displayName = 'ColumnItem';

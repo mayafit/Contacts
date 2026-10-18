@@ -56,7 +56,9 @@ public class ExceptionHandlingMiddleware
         switch (exception)
         {
             case GoogleApiException googleApiEx:
-                response.StatusCode = (int)HttpStatusCode.BadRequest;
+                // 412 conflict, 403 missing scope, 404, 429 ... decided where the
+                // Google error was translated; 400 otherwise.
+                response.StatusCode = googleApiEx.StatusCode;
                 errorResponse.Error.Code = googleApiEx.Code;
                 errorResponse.Error.Message = googleApiEx.Message;
                 errorResponse.Error.Details = googleApiEx.Context;

@@ -45,6 +45,26 @@ function formatValue(value: unknown): string {
   if (typeof value === 'string') {
     return value || '(empty)';
   }
+  if (Array.isArray(value)) {
+    // Field groups: show each entry's meaningful text, e.g. the phone number or
+    // the name with its phonetic form, rather than raw JSON.
+    const parts = value.map((entry) => {
+      if (entry && typeof entry === 'object') {
+        const e = entry as Record<string, unknown>;
+        const name = [e.givenName, e.middleName, e.familyName].filter(Boolean).join(' ');
+        const phonetic = [e.phoneticGivenName, e.phoneticMiddleName, e.phoneticFamilyName]
+          .filter(Boolean)
+          .join(' ');
+        if (name || phonetic) {
+          return phonetic ? `${name} (${phonetic})` : name;
+        }
+        const text = e.value ?? e.name ?? e.person ?? e.formattedValue;
+        return typeof text === 'string' ? text : JSON.stringify(entry);
+      }
+      return String(entry);
+    });
+    return parts.filter(Boolean).join(', ') || '(empty)';
+  }
   return JSON.stringify(value);
 }
 

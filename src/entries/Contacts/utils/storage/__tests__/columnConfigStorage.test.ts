@@ -78,7 +78,7 @@ describe('columnConfigStorage', () => {
           context: 'columnConfigStorage/save',
           error: expect.any(Error),
         }),
-        'Failed to save column config to localStorage'
+        'Failed to save column config to localStorage',
       );
 
       setItemSpy.mockRestore();
@@ -99,7 +99,7 @@ describe('columnConfigStorage', () => {
         expect.objectContaining({
           context: 'columnConfigStorage/save',
         }),
-        'Failed to save column config to localStorage'
+        'Failed to save column config to localStorage',
       );
 
       setItemSpy.mockRestore();
@@ -134,7 +134,7 @@ describe('columnConfigStorage', () => {
           context: 'columnConfigStorage/load',
           error: expect.any(SyntaxError),
         }),
-        'Failed to load column config from localStorage, using defaults'
+        'Failed to load column config from localStorage, using defaults',
       );
     });
 
@@ -152,7 +152,7 @@ describe('columnConfigStorage', () => {
         expect.objectContaining({
           context: 'columnConfigStorage/load',
         }),
-        'Failed to load column config from localStorage, using defaults'
+        'Failed to load column config from localStorage, using defaults',
       );
     });
 
@@ -170,7 +170,7 @@ describe('columnConfigStorage', () => {
         expect.objectContaining({
           context: 'columnConfigStorage/load',
         }),
-        'Failed to load column config from localStorage, using defaults'
+        'Failed to load column config from localStorage, using defaults',
       );
     });
 
@@ -201,7 +201,13 @@ describe('columnConfigStorage', () => {
     it('should validate that column IDs match AVAILABLE_COLUMNS', () => {
       // Valid column IDs from columnDefinitions
       const validWithAllColumns: ColumnConfig = {
-        visibleColumns: ['displayName', 'phoneNumbers', 'emailAddresses', 'organizations', 'jobTitle'],
+        visibleColumns: [
+          'displayName',
+          'phoneNumbers',
+          'emailAddresses',
+          'organizations',
+          'jobTitle',
+        ],
         columnOrder: ['displayName', 'phoneNumbers', 'emailAddresses', 'organizations', 'jobTitle'],
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(validWithAllColumns));

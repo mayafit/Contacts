@@ -5,12 +5,7 @@
 
 import { useState, useCallback } from 'react';
 import type { DragEndEvent } from '@dnd-kit/core';
-import {
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-} from '@dnd-kit/core';
+import { KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import { useAppDispatch } from '../../../types/hooks';
 import { reorderColumns } from '../../../redux/slices/ui/uiSlice';
@@ -37,7 +32,7 @@ export const useColumnDragDrop = () => {
     }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
-    })
+    }),
   );
 
   /**
@@ -68,7 +63,7 @@ export const useColumnDragDrop = () => {
         dispatch(reorderColumns({ oldIndex, newIndex }));
       }
     },
-    [dispatch]
+    [dispatch],
   );
 
   /**
