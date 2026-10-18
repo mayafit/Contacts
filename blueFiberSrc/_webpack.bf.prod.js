@@ -37,6 +37,16 @@ module.exports = (env, args) => {
     {
       mode: process.env?.DEV_BUILD === 'true' ? 'development' : 'production',
 
+      // Content-hashed names: every release gets new URLs, so a browser or the
+      // Cloudflare edge can never keep serving an old bundle. With fixed names
+      // (main.js) and the year-long immutable caching below, users kept the
+      // previous release until their cache expired. remoteEntry.js keeps its
+      // fixed name (module federation contract) and is served uncached.
+      output: {
+        filename: '[name].[contenthash:8].js',
+        chunkFilename: '[name].[contenthash:8].js',
+      },
+
       module: {
         rules: [
           // Contacts application code - with full TypeScript type checking
