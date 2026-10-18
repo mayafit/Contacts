@@ -6,7 +6,7 @@
 
 import React, { useMemo, useState } from 'react';
 import { Box, Button, Chip, Link, Paper, Typography } from '@mui/material';
-import { Email, OpenInNew, Person, Phone } from '@mui/icons-material';
+import { CallMerge, DeleteOutline, Email, OpenInNew, Person, Phone } from '@mui/icons-material';
 import type { Contact } from '../../types/Contact';
 import type { DuplicateGroup, DuplicateReason } from '../../model/duplicates';
 import ContactAvatar from '../common/ContactAvatar';
@@ -24,6 +24,10 @@ export interface DuplicatesViewProps {
   groups: DuplicateGroup[];
   /** Open a contact's card */
   onOpenCard: (resourceName: string) => void;
+  /** Open the merge dialog for a group */
+  onMerge: (members: Contact[]) => void;
+  /** Ask to delete one contact */
+  onDelete: (contact: Contact) => void;
 }
 
 const PAGE = 40;
@@ -39,7 +43,11 @@ const REASON_META: Record<DuplicateReason, { label: string; icon: React.ReactEle
  * @param props - Contact and open handler
  * @returns Member element
  */
-const Member: React.FC<{ contact: Contact; onOpen: () => void }> = ({ contact, onOpen }) => {
+const Member: React.FC<{ contact: Contact; onOpen: () => void; onDelete: () => void }> = ({
+  contact,
+  onOpen,
+  onDelete,
+}) => {
   const phonetic = getPhoneticName(contact);
   const lines = [
     ...(contact.phoneNumbers ?? []).map((p) => p.value),
@@ -101,6 +109,9 @@ const Member: React.FC<{ contact: Contact; onOpen: () => void }> = ({ contact, o
         <Button size="small" onClick={onOpen} sx={{ ml: -1 }}>
           Open card
         </Button>
+        <Button size="small" color="error" startIcon={<DeleteOutline />} onClick={onDelete}>
+          Delete
+        </Button>
       </Box>
     </Box>
   );
@@ -111,7 +122,12 @@ const Member: React.FC<{ contact: Contact; onOpen: () => void }> = ({ contact, o
  * @param props - Component props
  * @returns View element
  */
-const DuplicatesView: React.FC<DuplicatesViewProps> = ({ groups, onOpenCard }) => {
+const DuplicatesView: React.FC<DuplicatesViewProps> = ({
+  groups,
+  onOpenCard,
+  onMerge,
+  onDelete,
+}) => {
   const [reason, setReason] = useState<DuplicateReason | 'all'>('all');
   const [shown, setShown] = useState(PAGE);
 
@@ -201,6 +217,15 @@ const DuplicatesView: React.FC<DuplicatesViewProps> = ({ groups, onOpenCard }) =
               >
                 {group.matchedValues.slice(0, 3).join(' · ')}
               </Typography>
+              <Box sx={{ flex: 1 }} />
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={<CallMerge />}
+                onClick={() => onMerge(group.members)}
+              >
+                Merge…
+              </Button>
             </Box>
             <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap' }}>
               {group.members.map((m) => (
@@ -208,6 +233,7 @@ const DuplicatesView: React.FC<DuplicatesViewProps> = ({ groups, onOpenCard }) =
                   key={m.resourceName}
                   contact={m}
                   onOpen={() => onOpenCard(m.resourceName)}
+                  onDelete={() => onDelete(m)}
                 />
               ))}
             </Box>

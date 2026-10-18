@@ -84,14 +84,20 @@ export const findDuplicateGroups = (contacts: Contact[]): DuplicateGroup[] => {
     const keys = new Map<string, { reason: DuplicateReason; value: string }>();
     (contact.phoneNumbers ?? []).forEach((p) => {
       const key = phoneKey(p.value, p.canonicalForm);
-      if (key) keys.set(`phone:${key}`, { reason: 'phone', value: clean(p.value) });
+      if (key) {
+        keys.set(`phone:${key}`, { reason: 'phone', value: clean(p.value) });
+      }
     });
     (contact.emailAddresses ?? []).forEach((e) => {
       const key = clean(e.value).toLowerCase();
-      if (key) keys.set(`email:${key}`, { reason: 'email', value: key });
+      if (key) {
+        keys.set(`email:${key}`, { reason: 'email', value: key });
+      }
     });
     const name = nameKey(contact);
-    if (name) keys.set(`name:${name}`, { reason: 'name', value: getDisplayName(contact) });
+    if (name) {
+      keys.set(`name:${name}`, { reason: 'name', value: getDisplayName(contact) });
+    }
     return keys;
   });
 

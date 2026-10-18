@@ -212,6 +212,168 @@ public class GooglePeopleApiClient
     }
 
     /// <summary>
+    /// Person fields this app does not edit or merge. A contact deleted by a
+    /// merge loses whatever it holds in these, so merge checks them first.
+    /// </summary>
+    private const string UnmergedPersonFields =
+        "photos,events,imClients,sipAddresses,locations,occupations,interests,skills," +
+        "miscKeywords,externalIds,calendarUrls,genders,clientData,locales";
+
+    /// <summary>
+    /// Deletes one contact
+    /// </summary>
+    /// <param name="resourceName">Contact resource name</param>
+    public async Task DeleteContactAsync(string resourceName)
+    {
+        try
+        {
+            _logger.LogInformation("Deleting contact {ResourceName}", resourceName);
+            await _peopleService.People.DeleteContact(resourceName).ExecuteAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to delete contact {ResourceName}", resourceName);
+            throw Translate(
+                ex,
+                GoogleApiErrorCodes.DeleteContactFailed,
+                $"Failed to delete contact {resourceName}",
+                new Dictionary<string, object> { { "resourceName", resourceName } });
+        }
+    }
+
+    /// <summary>
+    /// Deletes many contacts, in Google's batches of at most 500
+    /// </summary>
+    /// <param name="resourceNames">Contacts to delete</param>
+    /// <returns>Number deleted</returns>
+    public async Task<int> BatchDeleteContactsAsync(IReadOnlyList<string> resourceNames)
+    {
+        var deleted = 0;
+        try
+        {
+            foreach (var chunk in resourceNames.Chunk(500))
+            {
+                await _peopleService.People
+                    .BatchDeleteContacts(new BatchDeleteContactsRequest { ResourceNames = chunk.ToList() })
+                    .ExecuteAsync();
+                deleted += chunk.Length;
+            }
+
+            _logger.LogInformation("Deleted {Count} contacts", deleted);
+            return deleted;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Batch delete failed after {Deleted} of {Total}", deleted, resourceNames.Count);
+            throw Translate(
+                ex,
+                GoogleApiErrorCodes.DeleteContactFailed,
+                $"Failed to delete contacts ({deleted} of {resourceNames.Count} were deleted)",
+                new Dictionary<string, object> { { "deleted", deleted }, { "requested", resourceNames.Count } });
+        }
+    }
+
+    /// <summary>
+    /// Adds a contact to a contact group (label)
+    /// </summary>
+    /// <param name="groupResourceName">e.g. "contactGroups/abc"</param>
+    /// <param name="resourceName">Contact to add</param>
+    public async Task AddToGroupAsync(string groupResourceName, string resourceName)
+    {
+        try
+        {
+            await _peopleService.ContactGroups.Members
+                .Modify(new ModifyContactGroupMembersRequest { ResourceNamesToAdd = new List<string> { resourceName } },
+                    groupResourceName)
+                .ExecuteAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to add {ResourceName} to {Group}", resourceName, groupResourceName);
+            throw Translate(
+                ex,
+                GoogleApiErrorCodes.ModifyGroupFailed,
+                $"Failed to add the contact to label {groupResourceName}",
+                new Dictionary<string, object> { { "group", groupResourceName } });
+        }
+    }
+
+    /// <summary>
+    /// For each contact, the person fields it has data in that this app does
+    /// not merge (a real photo, events, IM, ...). Empty when nothing would be lost.
+    /// </summary>
+    /// <param name="resourceNames">Contacts that a merge would delete</param>
+    /// <returns>Resource name to field names, only for contacts with such data</returns>
+    public async Task<Dictionary<string, List<string>>> FindUnmergedDataAsync(IEnumerable<string> resourceNames)
+    {
+        var result = new Dictionary<string, List<string>>();
+        foreach (var resourceName in resourceNames)
+        {
+            Person person;
+            try
+            {
+                var request = _peopleService.People.Get(resourceName);
+                request.PersonFields = UnmergedPersonFields;
+                request.Sources = PeopleResource.GetRequest.SourcesEnum.READSOURCETYPECONTACT;
+                person = await request.ExecuteAsync();
+            }
+            catch (Exception ex)
+            {
+                throw Translate(
+                    ex,
+                    GoogleApiErrorCodes.GetContactFailed,
+                    $"Failed to check contact {resourceName} before merging",
+                    new Dictionary<string, object> { { "resourceName", resourceName } });
+            }
+
+            var fields = new List<string>();
+            void Check(string label, int count)
+            {
+                if (count > 0) fields.Add(label);
+            }
+
+            Check("photo", person.Photos?.Count(p => p.Default__ != true && FromContact(p.Metadata)) ?? 0);
+            Check("events", person.Events?.Count(x => FromContact(x.Metadata)) ?? 0);
+            Check("instant messaging", person.ImClients?.Count(x => FromContact(x.Metadata)) ?? 0);
+            Check("SIP addresses", person.SipAddresses?.Count(x => FromContact(x.Metadata)) ?? 0);
+            Check("locations", person.Locations?.Count(x => FromContact(x.Metadata)) ?? 0);
+            Check("occupations", person.Occupations?.Count(x => FromContact(x.Metadata)) ?? 0);
+            Check("interests", person.Interests?.Count(x => FromContact(x.Metadata)) ?? 0);
+            Check("skills", person.Skills?.Count(x => FromContact(x.Metadata)) ?? 0);
+            Check("keywords", person.MiscKeywords?.Count(x => FromContact(x.Metadata)) ?? 0);
+            Check("external IDs", person.ExternalIds?.Count(x => FromContact(x.Metadata)) ?? 0);
+            Check("calendar links", person.CalendarUrls?.Count(x => FromContact(x.Metadata)) ?? 0);
+            Check("gender", person.Genders?.Count(x => FromContact(x.Metadata)) ?? 0);
+            Check("app data", person.ClientData?.Count(x => FromContact(x.Metadata)) ?? 0);
+            Check("languages", person.Locales?.Count(x => FromContact(x.Metadata)) ?? 0);
+
+            if (fields.Count > 0)
+            {
+                result[resourceName] = fields;
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Current etag of each contact, read with the same fields as the contact list
+    /// so it is comparable with the etag the client holds.
+    /// </summary>
+    /// <param name="resourceNames">Contacts</param>
+    /// <returns>Resource name to etag</returns>
+    public async Task<Dictionary<string, string?>> GetEtagsAsync(IEnumerable<string> resourceNames)
+    {
+        var result = new Dictionary<string, string?>();
+        foreach (var resourceName in resourceNames)
+        {
+            result[resourceName] = (await GetContactAsync(resourceName)).Etag;
+        }
+
+        return result;
+    }
+
+    /// <summary>
     /// Lists the user's contact groups (labels)
     /// </summary>
     /// <returns>All contact groups</returns>
