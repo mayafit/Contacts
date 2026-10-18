@@ -9,7 +9,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { Box, ButtonBase, Chip } from '@mui/material';
+import { Box, ButtonBase, Checkbox, Chip } from '@mui/material';
 import { ArrowDownward, ArrowUpward } from '@mui/icons-material';
 import type { Contact, ContactGroup } from '../../types/Contact';
 import { selectColumnConfig } from '../../redux/slices/ui/uiSlice';
@@ -56,7 +56,14 @@ export interface ContactsTableProps {
    * top. Deliberately not the contacts array, which changes on every save.
    */
   scrollResetKey?: string;
+  /** Checked rows (resource names) */
+  checked?: Set<string>;
+  /** Replace the checked set */
+  onCheckedChange?: (next: Set<string>) => void;
 }
+
+/** Width of the checkbox column */
+const CHECK_WIDTH = 44;
 
 const PLACEHOLDERS: Record<string, string> = {
   phoneticName: 'Add phonetic',
@@ -78,8 +85,11 @@ const ContactsTable: React.FC<ContactsTableProps> = ({
   selectedResourceName,
   onOpenCard,
   scrollResetKey,
+  checked,
+  onCheckedChange,
 }) => {
   const dispatch = useAppDispatch();
+  const lastCheckedIndex = useRef<number | null>(null);
   const columnConfig = useSelector(selectColumnConfig);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [sort, setSort] = useState<SortState>({ columnId: 'displayName', desc: false });
@@ -217,10 +227,57 @@ const ContactsTable: React.FC<ContactsTableProps> = ({
       s.columnId === columnId ? { columnId, desc: !s.desc } : { columnId, desc: false },
     );
 
-  const gridTemplate = columns
-    .map((c) => `minmax(${Math.round((c.width ?? 160) * 0.7)}px, ${c.width ?? 160}fr)`)
-    .join(' ');
-  const minWidth = columns.reduce((sum, c) => sum + Math.round((c.width ?? 160) * 0.7), 0);
+  const selectable = !!checked && !!onCheckedChange;
+  const gridTemplate =
+    (selectable ? `${CHECK_WIDTH}px ` : '') +
+    columns
+      .map((c) => `minmax(${Math.round((c.width ?? 160) * 0.7)}px, ${c.width ?? 160}fr)`)
+      .join(' ');
+  const minWidth =
+    columns.reduce((sum, c) => sum + Math.round((c.width ?? 160) * 0.7), 0) +
+    (selectable ? CHECK_WIDTH : 0);
+
+  const visibleChecked = selectable ? sorted.filter((c) => checked!.has(c.resourceName)).length : 0;
+  const allChecked = sorted.length > 0 && visibleChecked === sorted.length;
+
+  const toggleAll = () => {
+    if (!selectable) {
+      return;
+    }
+    const next = new Set(checked);
+    if (allChecked) {
+      sorted.forEach((c) => next.delete(c.resourceName));
+    } else {
+      sorted.forEach((c) => next.add(c.resourceName));
+    }
+    onCheckedChange!(next);
+  };
+
+  // Shift-click checks or unchecks the whole range from the last clicked row
+  const toggleRow = (index: number, shift: boolean) => {
+    if (!selectable) {
+      return;
+    }
+    const next = new Set(checked);
+    const target = !next.has(sorted[index].resourceName);
+    const from =
+      shift && lastCheckedIndex.current !== null
+        ? Math.min(lastCheckedIndex.current, index)
+        : index;
+    const to =
+      shift && lastCheckedIndex.current !== null
+        ? Math.max(lastCheckedIndex.current, index)
+        : index;
+    for (let i = from; i <= to; i += 1) {
+      if (target) {
+        next.add(sorted[i].resourceName);
+      } else {
+        next.delete(sorted[i].resourceName);
+      }
+    }
+    lastCheckedIndex.current = index;
+    onCheckedChange!(next);
+  };
 
   const renderCell = (
     contact: Contact,
@@ -320,6 +377,19 @@ const ContactsTable: React.FC<ContactsTableProps> = ({
               borderBottom: `1px solid ${tokens.border}`,
             }}
           >
+            {selectable && (
+              <Box sx={{ display: 'grid', placeItems: 'center' }}>
+                <Checkbox
+                  size="small"
+                  checked={allChecked}
+                  indeterminate={visibleChecked > 0 && !allChecked}
+                  onChange={toggleAll}
+                  inputProps={{
+                    'aria-label': allChecked ? 'Uncheck all shown' : 'Check all shown',
+                  }}
+                />
+              </Box>
+            )}
             {columns.map((column) => {
               const active = sort.columnId === column.id;
               return (
@@ -377,11 +447,29 @@ const ContactsTable: React.FC<ContactsTableProps> = ({
                     gridTemplateColumns: gridTemplate,
                     alignItems: 'stretch',
                     borderBottom: `1px solid ${tokens.border}`,
-                    bgcolor: selected ? 'rgba(57,135,229,0.12)' : 'transparent',
+                    bgcolor: selected
+                      ? 'rgba(57,135,229,0.12)'
+                      : checked?.has(contact.resourceName)
+                        ? 'rgba(57,135,229,0.07)'
+                        : 'transparent',
                     boxShadow: selected ? `inset 3px 0 0 ${tokens.accent}` : 'none',
                     '&:hover': { bgcolor: selected ? 'rgba(57,135,229,0.16)' : tokens.hover },
                   }}
                 >
+                  {selectable && (
+                    <Box
+                      role="gridcell"
+                      sx={{ display: 'grid', placeItems: 'center', height: ROW_HEIGHT }}
+                      onDoubleClick={(e) => e.stopPropagation()}
+                    >
+                      <Checkbox
+                        size="small"
+                        checked={checked!.has(contact.resourceName)}
+                        onClick={(e) => toggleRow(item.index, e.shiftKey)}
+                        inputProps={{ 'aria-label': `Check ${getDisplayName(contact)}` }}
+                      />
+                    </Box>
+                  )}
                   {columns.map((column, colIndex) => (
                     <Box key={column.id} role="gridcell" sx={{ minWidth: 0, height: ROW_HEIGHT }}>
                       {renderCell(contact, column, item.index, colIndex)}

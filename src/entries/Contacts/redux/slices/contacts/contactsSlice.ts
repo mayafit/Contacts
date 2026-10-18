@@ -123,6 +123,10 @@ const contactsSlice = createSlice({
      * Update a single contact in the normalized state
      * Maintains referential equality for unchanged contacts
      */
+    contactsRemoved(state, action: PayloadAction<string[]>) {
+      contactsAdapter.removeMany(state, action.payload);
+    },
+
     contactUpdated(state, action: PayloadAction<Contact>) {
       const { resourceName } = action.payload;
       if (state.entities[resourceName]) {
@@ -189,7 +193,8 @@ const contactsSlice = createSlice({
   },
 });
 
-export const { contactUpdated, clearContactsError, resetContacts } = contactsSlice.actions;
+export const { contactUpdated, contactsRemoved, clearContactsError, resetContacts } =
+  contactsSlice.actions;
 
 export default contactsSlice.reducer;
 

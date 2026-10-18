@@ -1,4 +1,5 @@
 using ContactsApi.Core.Entities;
+using ContactsApi.Core.Exceptions;
 using ContactsApi.Infrastructure.Google;
 using ContactsApi.WebApi.Models.Responses;
 using Microsoft.AspNetCore.Mvc;
@@ -111,6 +112,103 @@ public class ContactsController : ControllerBase
     }
 
     /// <summary>
+    /// Delete several contacts
+    /// </summary>
+    /// <param name="request">Contacts to delete (1-500)</param>
+    /// <returns>Number deleted</returns>
+    [HttpPost("batch-delete")]
+    public async Task<IActionResult> BatchDelete([FromBody] BatchDeleteRequest request)
+    {
+        var accessToken = HttpContext.Session.GetString("AccessToken");
+        if (string.IsNullOrEmpty(accessToken))
+        {
+            return Unauthorized(ApiResponse<object>.ErrorResponse("UNAUTHORIZED", "Not authenticated. Please sign in."));
+        }
+
+        var names = request.ResourceNames.Where(n => !string.IsNullOrWhiteSpace(n)).Distinct().ToList();
+        if (names.Count is 0 or > 500)
+        {
+            return BadRequest(ApiResponse<object>.ErrorResponse("INVALID_REQUEST", "Delete between 1 and 500 contacts at a time"));
+        }
+
+        _logger.LogWarning("Deleting {Count} contacts", names.Count);
+        var apiClient = new GooglePeopleApiClient(accessToken, _loggerFactory.CreateLogger<GooglePeopleApiClient>());
+        var deleted = await apiClient.BatchDeleteContactsAsync(names);
+        return Ok(ApiResponse<object>.SuccessResponse(new { deleted }));
+    }
+
+    /// <summary>
+    /// Merge contacts: save the merged data on the kept contact, then delete the others.
+    /// Nothing is deleted unless the kept contact was saved, and nothing the app does
+    /// not merge is lost without explicit acknowledgement (409 otherwise).
+    /// </summary>
+    /// <param name="request">Merge request</param>
+    /// <returns>The kept contact and the deleted names</returns>
+    [HttpPost("merge")]
+    public async Task<IActionResult> Merge([FromBody] MergeRequest request)
+    {
+        var accessToken = HttpContext.Session.GetString("AccessToken");
+        if (string.IsNullOrEmpty(accessToken))
+        {
+            return Unauthorized(ApiResponse<MergeResult>.ErrorResponse("UNAUTHORIZED", "Not authenticated. Please sign in."));
+        }
+
+        var deletes = request.DeleteResourceNames.Where(n => !string.IsNullOrWhiteSpace(n)).Distinct().ToList();
+        if (string.IsNullOrWhiteSpace(request.PrimaryResourceName) || deletes.Count is 0 or > 50
+            || deletes.Contains(request.PrimaryResourceName))
+        {
+            return BadRequest(ApiResponse<MergeResult>.ErrorResponse(
+                "INVALID_REQUEST", "Merge needs one contact to keep and 1-50 other contacts"));
+        }
+
+        var apiClient = new GooglePeopleApiClient(accessToken, _loggerFactory.CreateLogger<GooglePeopleApiClient>());
+
+        // 1. Refuse to lose data the merge cannot carry over, unless the user accepted it
+        if (!request.AcknowledgeDataLoss)
+        {
+            var unmerged = await apiClient.FindUnmergedDataAsync(deletes);
+            if (unmerged.Count > 0)
+            {
+                throw new GoogleApiException(
+                    GoogleApiErrorCodes.MergeWouldLoseData,
+                    "Some contacts to delete hold data this app cannot merge",
+                    context: unmerged.ToDictionary(kv => kv.Key, kv => (object)kv.Value),
+                    statusCode: StatusCodes.Status409Conflict);
+            }
+        }
+
+        // 2. Save the kept contact first; if this fails nothing has been deleted
+        var kept = request.Patch != null && HasGroups(request.Patch)
+            ? await apiClient.UpdateContactAsync(request.PrimaryResourceName, request.Patch)
+            : await apiClient.GetContactAsync(request.PrimaryResourceName);
+
+        // 3. Carry over labels
+        var existing = new HashSet<string>(kept.Labels ?? new List<string>());
+        foreach (var label in request.AddLabels.Distinct().Where(l => !existing.Contains(l)
+                     && l is not "contactGroups/myContacts" and not "contactGroups/all"))
+        {
+            await apiClient.AddToGroupAsync(label, request.PrimaryResourceName);
+        }
+
+        // 4. Only now delete the merged-away contacts
+        _logger.LogWarning("Merge into {Primary}: deleting {Count} contacts", request.PrimaryResourceName, deletes.Count);
+        await apiClient.BatchDeleteContactsAsync(deletes);
+
+        if (request.AddLabels.Count > 0)
+        {
+            kept = await apiClient.GetContactAsync(request.PrimaryResourceName);
+        }
+
+        return Ok(ApiResponse<MergeResult>.SuccessResponse(new MergeResult { Contact = kept, Deleted = deletes }));
+    }
+
+    /// <summary>True when a patch carries at least one field group</summary>
+    private static bool HasGroups(Contact p) =>
+        p.Names != null || p.Nicknames != null || p.PhoneNumbers != null || p.EmailAddresses != null
+        || p.Addresses != null || p.Organizations != null || p.Birthdays != null || p.Urls != null
+        || p.Biographies != null || p.Relations != null || p.UserDefined != null;
+
+    /// <summary>
     /// Get a single contact by resource name
     /// </summary>
     /// <param name="resourceName">Contact resource name (URL encoded)</param>
@@ -150,6 +248,25 @@ public class ContactsController : ControllerBase
             _logger.LogError(ex, "Error fetching contact {ResourceName}", resourceName);
             throw;
         }
+    }
+
+    /// <summary>
+    /// Delete one contact
+    /// </summary>
+    /// <param name="resourceName">Contact resource name (URL encoded)</param>
+    [HttpDelete("{resourceName}")]
+    public async Task<IActionResult> DeleteContact(string resourceName)
+    {
+        var accessToken = HttpContext.Session.GetString("AccessToken");
+        if (string.IsNullOrEmpty(accessToken))
+        {
+            return Unauthorized(ApiResponse<object>.ErrorResponse("UNAUTHORIZED", "Not authenticated. Please sign in."));
+        }
+
+        var decoded = Uri.UnescapeDataString(resourceName);
+        var apiClient = new GooglePeopleApiClient(accessToken, _loggerFactory.CreateLogger<GooglePeopleApiClient>());
+        await apiClient.DeleteContactAsync(decoded);
+        return Ok(ApiResponse<object>.SuccessResponse(new { deleted = 1 }));
     }
 
     /// <summary>

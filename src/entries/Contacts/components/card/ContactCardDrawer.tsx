@@ -21,7 +21,7 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
-import { Close, OpenInNew } from '@mui/icons-material';
+import { Close, DeleteOutline, OpenInNew } from '@mui/icons-material';
 import type { Contact, ContactGroup } from '../../types/Contact';
 import { useAppDispatch, useAppSelector } from '../../types/hooks';
 import { contactUpdated, updateContact } from '../../redux/slices/contacts/contactsSlice';
@@ -49,6 +49,8 @@ export interface ContactCardDrawerProps {
   groups: Record<string, ContactGroup>;
   /** Close request */
   onClose: () => void;
+  /** Ask to delete this contact (opens the confirmation) */
+  onDelete?: (contact: Contact) => void;
 }
 
 type SaveState =
@@ -71,7 +73,12 @@ const googleContactsUrl = (resourceName: string): string =>
  * @param props - Component props
  * @returns Drawer element
  */
-const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({ resourceName, groups, onClose }) => {
+const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({
+  resourceName,
+  groups,
+  onClose,
+  onDelete,
+}) => {
   const dispatch = useAppDispatch();
   const entities = useAppSelector(selectContactEntities);
   const contact = (resourceName ? entities?.[resourceName] : undefined) as Contact | undefined;
@@ -283,6 +290,21 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({ resourceName, gro
                 bgcolor: tokens.surface,
               }}
             >
+              {onDelete && (
+                <Tooltip title="Delete contact">
+                  <span>
+                    <IconButton
+                      aria-label="Delete contact"
+                      color="error"
+                      onClick={() => onDelete(original)}
+                      disabled={saving}
+                      size="small"
+                    >
+                      <DeleteOutline fontSize="small" />
+                    </IconButton>
+                  </span>
+                </Tooltip>
+              )}
               <Typography variant="caption" sx={{ color: tokens.textMuted, flex: 1 }}>
                 {saveState.kind === 'saved' && !dirty
                   ? 'Saved to Google'

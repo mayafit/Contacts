@@ -37,11 +37,15 @@ export class ApiRequestError extends Error {
   /** Backend error code, e.g. CONTACT_CONFLICT */
   readonly code: string;
 
-  constructor(message: string, status: number, code: string) {
+  /** Structured details from the server (e.g. what a merge would lose) */
+  readonly details?: unknown;
+
+  constructor(message: string, status: number, code: string, details?: unknown) {
     super(status ? `${message} [HTTP ${status}]` : message);
     this.name = 'ApiRequestError';
     this.status = status;
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -57,9 +61,26 @@ function unwrap<T>(response: ApiResponse<T>, fallback: string): T {
       response.error?.message || fallback,
       response.status ?? 0,
       response.error?.code || 'UNKNOWN_ERROR',
+      response.error?.details,
     );
   }
   return response.data;
+}
+
+/**
+ * Merge request sent to the backend
+ */
+export interface MergeRequest {
+  /** Contact that is kept */
+  primaryResourceName: string;
+  /** Etag plus merged groups for the kept contact; null when it needs no change */
+  patch: ContactPatch | null;
+  /** Contacts folded in and then deleted */
+  deleteResourceNames: string[];
+  /** Labels to add to the kept contact */
+  addLabels: string[];
+  /** The user accepted losing data the app cannot merge */
+  acknowledgeDataLoss: boolean;
 }
 
 /**
@@ -338,6 +359,56 @@ export class BackendApiClient {
     );
 
     return contact;
+  }
+
+  /**
+   * Delete contacts (one request per 500)
+   * @param resourceNames - Contacts to delete
+   * @returns Number deleted
+   */
+  async deleteContacts(resourceNames: string[]): Promise<number> {
+    logger.warn(
+      { context: 'BackendApiClient', metadata: { count: resourceNames.length } },
+      'Deleting contacts',
+    );
+    let deleted = 0;
+    for (let i = 0; i < resourceNames.length; i += 500) {
+      const response = await this.request<{ deleted: number }>('/contacts/batch-delete', {
+        method: 'POST',
+        body: JSON.stringify({ resourceNames: resourceNames.slice(i, i + 500) }),
+      });
+      deleted += unwrap(response, 'Failed to delete contacts').deleted;
+    }
+    return deleted;
+  }
+
+  /**
+   * Merge contacts: the server saves the kept contact, then deletes the others.
+   * Throws ApiRequestError with code MERGE_WOULD_LOSE_DATA (409) and details
+   * { resourceName: fieldNames[] } when deleting would lose data the app does
+   * not merge and acknowledgeDataLoss is false.
+   * @param request - Merge request
+   * @returns The kept contact and the deleted names
+   */
+  async mergeContacts(request: MergeRequest): Promise<{ contact: Contact; deleted: string[] }> {
+    logger.warn(
+      {
+        context: 'BackendApiClient',
+        metadata: {
+          primary: request.primaryResourceName,
+          deleting: request.deleteResourceNames.length,
+        },
+      },
+      'Merging contacts',
+    );
+    const response = await this.request<{ contact: Contact; deleted: string[] }>(
+      '/contacts/merge',
+      {
+        method: 'POST',
+        body: JSON.stringify(request),
+      },
+    );
+    return unwrap(response, 'Failed to merge contacts');
   }
 
   /**
