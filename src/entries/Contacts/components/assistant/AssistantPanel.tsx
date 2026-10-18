@@ -86,6 +86,14 @@ const stepLabel = (s: ToolStep): { icon: React.ReactNode; text: string } => {
     return { icon: <ErrorOutline sx={{ fontSize: 14 }} />, text: `${s.name}: ${String(r.error)}` };
   }
   switch (s.name) {
+    case 'find_person': {
+      const mail = Array.isArray(r.mailAndCalendar) ? r.mailAndCalendar.length : null;
+      const found = Array.isArray(r.contacts) ? r.contacts.length : 0;
+      return {
+        icon: <Search sx={{ fontSize: 14 }} />,
+        text: `Looked for “${String((s.args.names as string[] | undefined)?.[0] ?? '')}” · ${found} in contacts${mail === null ? '' : ` · ${mail} in mail & calendar`}`,
+      };
+    }
     case 'search_contacts':
       return {
         icon: <Search sx={{ fontSize: 14 }} />,

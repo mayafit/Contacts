@@ -29,17 +29,26 @@ public class ActivityAggregator
     /// <summary>Activity per lower-case address</summary>
     public Dictionary<string, PersonActivity> People { get; }
 
+    /// <summary>Everyone seen in headers or as a guest, with their display names</summary>
+    public Dictionary<string, DirectoryEntry> Directory { get; }
+
+    /// <summary>Most entries kept in the directory (the most frequent ones)</summary>
+    public const int MaxDirectory = 5000;
+
     /// <summary>
     /// Creates an aggregator.
     /// </summary>
     /// <param name="contactEmails">The user's contacts' addresses</param>
     /// <param name="myEmails">The user's own addresses</param>
     /// <param name="existing">Activity to add to (incremental scans), or null</param>
+    /// <param name="directory">Directory to add to (incremental scans), or null</param>
     public ActivityAggregator(
         IEnumerable<string> contactEmails,
         IEnumerable<string> myEmails,
-        Dictionary<string, PersonActivity>? existing = null)
+        Dictionary<string, PersonActivity>? existing = null,
+        Dictionary<string, DirectoryEntry>? directory = null)
     {
+        Directory = directory ?? new Dictionary<string, DirectoryEntry>();
         _contactEmails = new HashSet<string>(contactEmails.Select(Normalize).Where(e => e.Length > 0));
         _myEmails = new HashSet<string>(myEmails.Select(Normalize).Where(e => e.Length > 0));
         People = existing ?? new Dictionary<string, PersonActivity>();
@@ -59,6 +68,108 @@ public class ActivityAggregator
             : EmailPattern.Matches(header).Select(m => Normalize(m.Value)).Distinct();
 
     /// <summary>
+    /// Name and address of each mailbox in a header such as
+    /// <c>"Cohen, Dana" &lt;dana@x.com&gt;, b@y.com</c> (commas inside quotes or
+    /// angle brackets do not split).
+    /// </summary>
+    /// <param name="header">Header value</param>
+    /// <returns>Display name ('' when none) and normalized address</returns>
+    public static IEnumerable<(string Name, string Address)> ParseMailboxes(string? header)
+    {
+        if (string.IsNullOrEmpty(header))
+        {
+            yield break;
+        }
+
+        var parts = new List<string>();
+        var current = new System.Text.StringBuilder();
+        bool quoted = false, angled = false;
+        foreach (var ch in header)
+        {
+            if (ch == '"')
+            {
+                quoted = !quoted;
+            }
+            else if (ch == '<' && !quoted)
+            {
+                angled = true;
+            }
+            else if (ch == '>' && !quoted)
+            {
+                angled = false;
+            }
+
+            if (ch == ',' && !quoted && !angled)
+            {
+                parts.Add(current.ToString());
+                current.Clear();
+            }
+            else
+            {
+                current.Append(ch);
+            }
+        }
+
+        parts.Add(current.ToString());
+        foreach (var part in parts)
+        {
+            var match = EmailPattern.Match(part);
+            if (!match.Success)
+            {
+                continue;
+            }
+
+            var name = Regex.Replace(part, @"<[^>]*>", string.Empty).Replace(match.Value, string.Empty)
+                .Trim().Trim('"', '\'', ' ').Trim();
+            yield return (name, Normalize(match.Value));
+        }
+    }
+
+    /// <summary>Records an address (and its display name) in the directory</summary>
+    private void Note(string address, string? name, DateTime at, Action<DirectoryEntry> count)
+    {
+        if (address.Length == 0 || _myEmails.Contains(address))
+        {
+            return;
+        }
+
+        if (!Directory.TryGetValue(address, out var entry))
+        {
+            Directory[address] = entry = new DirectoryEntry();
+        }
+
+        count(entry);
+        entry.LastSeen = Max(entry.LastSeen, at);
+        var clean = (name ?? string.Empty).Trim();
+        if (clean.Length > 0 && !string.Equals(clean, address, StringComparison.OrdinalIgnoreCase)
+            && entry.Names.Count < 3
+            && !entry.Names.Contains(clean, StringComparer.OrdinalIgnoreCase))
+        {
+            entry.Names.Add(clean);
+        }
+    }
+
+    /// <summary>Keeps the most frequent directory entries</summary>
+    public void PruneDirectory()
+    {
+        if (Directory.Count <= MaxDirectory)
+        {
+            return;
+        }
+
+        var keep = Directory
+            .OrderByDescending(kv => kv.Value.Sent * 3 + kv.Value.Meetings * 3 + kv.Value.Received + kv.Value.CopiedTogether)
+            .ThenByDescending(kv => kv.Value.LastSeen)
+            .Take(MaxDirectory)
+            .Select(kv => kv.Key)
+            .ToHashSet();
+        foreach (var key in Directory.Keys.Where(k => !keep.Contains(k)).ToList())
+        {
+            Directory.Remove(key);
+        }
+    }
+
+    /// <summary>
     /// Adds one email.
     /// </summary>
     /// <param name="at">When it was sent or received</param>
@@ -70,6 +181,28 @@ public class ActivityAggregator
     {
         var sender = ParseAddresses(from).FirstOrDefault();
         var sent = isSent || (sender != null && _myEmails.Contains(sender));
+
+        // Directory: everyone in the headers, under the names they were given
+        var recipients = ParseMailboxes(to).Concat(ParseMailboxes(cc)).ToList();
+        if (sent)
+        {
+            foreach (var (name, address) in recipients.DistinctBy(r => r.Address))
+            {
+                Note(address, name, at, e => e.Sent++);
+            }
+        }
+        else
+        {
+            foreach (var (name, address) in ParseMailboxes(from).Take(1))
+            {
+                Note(address, name, at, e => e.Received++);
+            }
+
+            foreach (var (name, address) in recipients.DistinctBy(r => r.Address))
+            {
+                Note(address, name, at, e => e.CopiedTogether++);
+            }
+        }
         if (sent)
         {
             foreach (var address in ParseAddresses(to).Concat(ParseAddresses(cc)).Distinct())
@@ -139,11 +272,23 @@ public class ActivityAggregator
     /// </summary>
     /// <param name="start">Start time</param>
     /// <param name="title">Event title</param>
-    /// <param name="attendees">Other attendees' addresses</param>
+    /// <param name="attendees">Other attendees' addresses and display names</param>
     /// <param name="now">Current time; later events count as upcoming</param>
-    public void AddMeeting(DateTime start, string? title, IEnumerable<string> attendees, DateTime now)
+    public void AddMeeting(DateTime start, string? title, IEnumerable<(string Email, string? Name)> attendees, DateTime now)
     {
-        foreach (var address in attendees.Select(Normalize).Distinct())
+        var guests = attendees.Select(a => (Address: Normalize(a.Email), a.Name)).DistinctBy(a => a.Address).ToList();
+        foreach (var (address, name) in guests)
+        {
+            Note(address, name, start, e =>
+            {
+                if (start <= now)
+                {
+                    e.Meetings++;
+                }
+            });
+        }
+
+        foreach (var address in guests.Select(g => g.Address))
         {
             if (address.Length == 0 || _myEmails.Contains(address)
                 || !(_contactEmails.Contains(address) || People.ContainsKey(address)))

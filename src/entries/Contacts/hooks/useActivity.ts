@@ -137,6 +137,9 @@ export const useActivity = (): ActivityState => {
             Date.now() - Date.parse(current.updatedAt) > STALE_AFTER_MS)
         ) {
           await refresh();
+        } else if (connected && current.status === 'ready' && current.hasDirectory === false) {
+          // Snapshot made before names were collected: one full scan builds them
+          await refresh(true);
         }
       } catch (e) {
         // Activity is optional; the rest of the app works without it

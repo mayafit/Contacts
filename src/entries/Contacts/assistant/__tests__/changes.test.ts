@@ -1,5 +1,6 @@
 import { newContactPatch, parseBirthday, resolveChange } from '../changes';
 import { buildPatch } from '../../components/card/cardModel';
+import { closeMatches } from '../tools';
 import type { Contact, ContactGroup } from '../../types/Contact';
 
 const groups: Record<string, ContactGroup> = {
@@ -101,5 +102,22 @@ describe('assistant changes', () => {
     expect(patch.emailAddresses).toEqual([{ value: 'avi@iai.co.il', type: 'other' }]);
     expect(patch.organizations).toEqual([{ name: 'IAI' }]);
     expect(diff.length).toBe(4);
+  });
+
+  it('finds close matches when not every word matches', () => {
+    const motti = {
+      ...dana,
+      resourceName: 'people/m',
+      names: [{ givenName: 'מוטי', familyName: 'גת' }],
+    } as Contact;
+    const other = {
+      ...dana,
+      resourceName: 'people/o',
+      names: [{ givenName: 'Moti', familyName: 'Levi' }],
+      emailAddresses: [],
+    } as Contact;
+    expect(
+      closeMatches([dana, motti, other], ['מוטי גתי', 'Moti Gat']).map((c) => c.resourceName),
+    ).toEqual(['people/m', 'people/o']);
   });
 });
