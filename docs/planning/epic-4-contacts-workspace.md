@@ -113,3 +113,57 @@ Google Contacts; a concurrent edit yields 412, not a silent overwrite.
 
 **AC:** a merge never deletes a contact unless the merged contact was
 saved; nothing is lost silently.
+
+---
+
+# Epic 6 — Relationship insights and enrichment
+
+| Version | Date       | Author | Change |
+|---------|------------|--------|--------|
+| 1.0     | 2026-10-18 | Alon (with Claude) | Requested after Epic 4; feasibility checked per item |
+
+### 6.1 Organization from work email — feasible now
+- Group contacts by email domain, ignoring free-mail providers (gmail,
+  outlook/hotmail/live, yahoo, icloud, walla, bezeqint, netvision, 012,
+  protonmail, ...).
+- Per corporate domain: its contacts, the organization each has, and a
+  suggested organization name (the most common name already used for that
+  domain, else one derived from the domain, e.g. elta.co.il → "Elta").
+- Flag contacts whose organization is missing or different; apply the
+  suggestion one by one or for the whole domain (writes only the
+  organizations group).
+
+### 6.2 Last contact and activity — feasible for email and meetings only
+- Email: Gmail API with the `gmail.metadata` scope (headers only, never
+  bodies): last message to/from each contact address, and message count
+  in the last 12 months. This is a Google "restricted" scope: it works for
+  the account owner while the OAuth app is in Testing mode; publishing it
+  for other users needs Google's security assessment.
+- Meetings: Calendar API (`calendar.readonly`): last and next event with
+  the contact as attendee.
+- **Not possible from a web app:** phone calls, SMS and WhatsApp. Google
+  exposes no API for the Android call log or messages, and WhatsApp has no
+  API for personal chats. That would need a companion Android app reading
+  the device call log (separate epic, if wanted).
+
+### 6.3 Most and least active contacts — depends on 6.2
+- Insights: top contacts by recent activity; contacts not in touch for
+  1y / 3y / never; filter chips linking to them.
+
+### 6.4 Look someone up — feasible now
+- Contact card: one-click searches (Google, LinkedIn people search,
+  Facebook) prefilled with name and organization, opening in a new tab.
+- Optional later: automatic web suggestions through Google Programmable
+  Search (needs an API key; 100 free queries/day), shown as suggestions,
+  never applied automatically (common names give wrong matches).
+
+### 6.5 LinkedIn / Facebook cross-reference — via data export, not API
+- LinkedIn's API only returns the signed-in member's own profile;
+  connections' profiles are limited to approved partners. Facebook's
+  Graph API has not exposed friends' data since 2018. Scraping either
+  violates their terms, so the app will not do it.
+- Feasible route: the user downloads their own data (LinkedIn → Settings →
+  Data privacy → "Get a copy of your data" → Connections.csv with name,
+  company, position, connected-on and, when shared, email). Upload it;
+  the app matches connections to contacts by email, then name, and
+  suggests organization/title updates for review.
