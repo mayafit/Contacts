@@ -245,6 +245,15 @@ export const planMerge = (primary: Contact, others: Contact[]): MergePlan => {
           `${getDisplayName(o)}: English name "${theirFull}" (phonetic name is "${ourPhonetic}")`,
         );
       }
+      // Prefix/suffix of the English contact are not part of the phonetic name
+      (['honorificPrefix', 'honorificSuffix'] as const).forEach((part) => {
+        const theirs = clean(n[part]);
+        if (theirs && !clean(name[part])) {
+          name[part] = n[part];
+        } else if (theirs && clean(name[part]).toLowerCase() !== theirs.toLowerCase()) {
+          dropped.push(`${getDisplayName(o)}: ${NAME_PART_LABELS[part]} "${theirs}"`);
+        }
+      });
       return;
     }
     NAME_PARTS.forEach((part) => {

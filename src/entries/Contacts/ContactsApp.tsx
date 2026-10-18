@@ -9,7 +9,7 @@
 import React, { useEffect, useMemo } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router';
 import { SESSION_EXPIRED_EVENT } from '../../services/api/BackendApiClient';
-import { logout } from './redux/slices/auth/authSlice';
+import { logout, logoutUser } from './redux/slices/auth/authSlice';
 import { Box, CircularProgress, CssBaseline, ThemeProvider } from '@mui/material';
 import { createContactsTheme } from './theme/contactsTheme';
 import { useDispatch } from 'react-redux';
@@ -33,6 +33,8 @@ const SessionWatcher: React.FC = () => {
     const onExpired = () => {
       if (window.location.pathname !== '/login') {
         dispatch(logout());
+        // Also end the server session, so a reload cannot look signed in
+        void dispatch(logoutUser());
         navigate('/login?error=session_expired', { replace: true });
       }
     };

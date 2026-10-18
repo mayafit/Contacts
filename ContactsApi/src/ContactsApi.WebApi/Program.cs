@@ -97,7 +97,12 @@ builder.Services.AddSession(options =>
 {
     options.IdleTimeout = TimeSpan.FromDays(7); // Session expires after 7 days
     options.Cookie.HttpOnly = true; // Prevent JavaScript access
-    options.Cookie.SecurePolicy = CookieSecurePolicy.None; // Allow HTTP for development (use Always in production with HTTPS)
+    // Secure outside local development: the app is served over HTTPS (TLS ends at
+    // Cloudflare/nginx, so the request scheme here is http and SameAsRequest
+    // would never set it). Browsers treat http://localhost as secure anyway.
+    options.Cookie.SecurePolicy = builder.Environment.IsDevelopment()
+        ? CookieSecurePolicy.SameAsRequest
+        : CookieSecurePolicy.Always;
     options.Cookie.SameSite = SameSiteMode.Lax; // Allow OAuth redirects while maintaining CSRF protection
     options.Cookie.IsEssential = true; // Required for GDPR compliance
     options.Cookie.Name = ".ContactsApi.Session";

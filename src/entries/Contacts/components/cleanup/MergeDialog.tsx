@@ -144,6 +144,9 @@ const MergeDialog: React.FC<MergeDialogProps> = ({ contacts, groups, onClose, on
       }),
     );
     setRefreshed(fresh);
+    // Edits were made on the old versions; keeping them would write them over
+    // the newer data the reload just brought in
+    setEdited(null);
     setError(null);
     setNotice('Reloaded the latest versions from Google. Review the result and merge again.');
   };

@@ -208,7 +208,6 @@ public class AuthController : ControllerBase
             }
 
             HttpContext.Session.SetString(GoogleTokenService.AccessTokenKey, tokenResponse.AccessToken);
-            HttpContext.Session.SetString(GoogleTokenService.RefreshTokenKey, refreshToken);
             HttpContext.Session.SetString(GoogleTokenService.UserIdKey, payload.Subject);
             HttpContext.Session.SetString("UserEmail", payload.Email ?? string.Empty);
             HttpContext.Session.SetString("UserName", payload.Name ?? payload.Email ?? string.Empty);
@@ -330,70 +329,21 @@ public class AuthController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> RefreshToken()
     {
-        try
+        // Same path every contacts call takes: refreshes only when needed, and
+        // ends the session when Google no longer accepts the refresh token.
+        var accessToken = await _tokens.GetAccessTokenAsync(HttpContext);
+        if (string.IsNullOrEmpty(accessToken))
         {
-            _logger.LogInformation("Refreshing access token");
-
-            var refreshToken = HttpContext.Session.GetString("RefreshToken");
-            if (string.IsNullOrEmpty(refreshToken))
-            {
-                _logger.LogWarning("No refresh token found");
-                return Unauthorized(ApiResponse<object>.ErrorResponse(
-                    "NO_REFRESH_TOKEN",
-                    "No refresh token available. Please sign in again."));
-            }
-
-            var clientId = _oauthOptions.ClientId;
-            var clientSecret = _oauthOptions.ClientSecret;
-
-            if (string.IsNullOrEmpty(clientSecret))
-            {
-                _logger.LogError("Client secret not configured or not loaded from Vault");
-                return StatusCode(500, ApiResponse<object>.ErrorResponse(
-                    "CONFIG_ERROR",
-                    "OAuth configuration error"));
-            }
-
-            // Create OAuth flow
-            var flow = new GoogleAuthorizationCodeFlow(new GoogleAuthorizationCodeFlow.Initializer
-            {
-                ClientSecrets = new ClientSecrets
-                {
-                    ClientId = clientId,
-                    ClientSecret = clientSecret
-                }
-            });
-
-            // Refresh the token
-            var tokenResponse = await flow.RefreshTokenAsync(
-                "user",
-                refreshToken,
-                CancellationToken.None);
-
-            // Update session with new access token
-            HttpContext.Session.SetString("AccessToken", tokenResponse.AccessToken);
-            var expiresAt = DateTime.UtcNow.AddSeconds(tokenResponse.ExpiresInSeconds ?? 3600);
-            HttpContext.Session.SetString("TokenExpiresAt", expiresAt.ToString("o"));
-
-            _logger.LogInformation("Access token refreshed successfully");
-
-            return Ok(ApiResponse<object>.SuccessResponse(new
-            {
-                success = true,
-                expiresAt = expiresAt.ToString("o")
-            }));
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error refreshing token");
-
-            // If refresh fails, user needs to re-authenticate
-            HttpContext.Session.Clear();
-
             return Unauthorized(ApiResponse<object>.ErrorResponse(
-                "REFRESH_FAILED",
-                "Token refresh failed. Please sign in again."));
+                "SESSION_EXPIRED",
+                "Your Google session expired. Please sign in again."));
         }
+
+        return Ok(ApiResponse<object>.SuccessResponse(new
+        {
+            success = true,
+            expiresAt = HttpContext.Session.GetString(GoogleTokenService.ExpiresAtKey)
+        }));
     }
 
     /// <summary>

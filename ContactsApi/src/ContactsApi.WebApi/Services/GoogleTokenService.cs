@@ -21,7 +21,6 @@ public class GoogleTokenService
 {
     /// <summary>Session keys</summary>
     public const string AccessTokenKey = "AccessToken";
-    public const string RefreshTokenKey = "RefreshToken";
     public const string ExpiresAtKey = "TokenExpiresAt";
     public const string UserIdKey = "UserId";
 
@@ -67,12 +66,9 @@ public class GoogleTokenService
             return accessToken;
         }
 
-        var refreshToken = session.GetString(RefreshTokenKey);
-        if (string.IsNullOrEmpty(refreshToken))
-        {
-            var userId = session.GetString(UserIdKey);
-            refreshToken = userId == null ? null : await GetStoredRefreshTokenAsync(userId);
-        }
+        // Only the encrypted copy exists; the session holds just the account id
+        var userId = session.GetString(UserIdKey);
+        var refreshToken = userId == null ? null : await GetStoredRefreshTokenAsync(userId);
 
         if (string.IsNullOrEmpty(refreshToken))
         {
@@ -83,6 +79,10 @@ public class GoogleTokenService
         var refreshed = await RefreshAsync(refreshToken);
         if (refreshed == null)
         {
+            // Google refused (revoked, or 7 days old while the app is in Testing):
+            // end the session so the status check stops reporting "signed in".
+            session.Clear();
+            await session.CommitAsync();
             return null;
         }
 
