@@ -369,6 +369,69 @@ const SignedInHome: React.FC = () => {
     ],
   );
 
+  /**
+   * The search box: in the top bar on wider screens, and as its own full-width
+   * row under it on phones (a 110px box in the bar was too small to use).
+   * @param phone - The phone row version
+   * @returns Search box
+   */
+  const renderSearch = (phone: boolean) => (
+    <Box
+      sx={{
+        display: phone ? { xs: 'flex', sm: 'none' } : { xs: 'none', sm: 'flex' },
+        alignItems: 'center',
+        gap: 1,
+        px: 1.5,
+        height: phone ? 44 : 38,
+        width: phone ? '100%' : { sm: 260, md: 380 },
+        flexShrink: 1,
+        minWidth: 0,
+        borderRadius: '10px',
+        bgcolor: tokens.page,
+        border: `1px solid ${tokens.border}`,
+        '&:focus-within': { borderColor: tokens.accent },
+      }}
+    >
+      <Search sx={{ fontSize: 20, color: tokens.textMuted }} />
+      <InputBase
+        inputRef={phone ? undefined : searchRef}
+        value={query}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setView('contacts');
+        }}
+        onKeyDown={(e) => e.key === 'Escape' && setQuery('')}
+        placeholder={phone ? 'Search contacts' : 'Search name, phonetic, phone, email…'}
+        inputProps={{ 'aria-label': 'Search contacts', dir: 'auto', enterKeyHint: 'search' }}
+        // 16px on phones: iOS zooms the page into any smaller input
+        sx={{ flex: 1, fontSize: phone ? 16 : 14 }}
+      />
+      {query ? (
+        <IconButton
+          size={phone ? 'medium' : 'small'}
+          onClick={() => setQuery('')}
+          aria-label="Clear search"
+        >
+          <Close sx={{ fontSize: phone ? 20 : 16 }} />
+        </IconButton>
+      ) : (
+        <Box
+          component="kbd"
+          sx={{
+            fontSize: 11,
+            color: tokens.textMuted,
+            border: `1px solid ${tokens.borderStrong}`,
+            borderRadius: '5px',
+            px: 0.75,
+            display: { xs: 'none', md: 'block' },
+          }}
+        >
+          /
+        </Box>
+      )}
+    </Box>
+  );
+
   const handleSignOut = () => {
     logger.info({ context: 'ContactsHome/handleSignOut' }, 'User initiated sign out');
     setAccountAnchor(null);
@@ -804,55 +867,7 @@ const SignedInHome: React.FC = () => {
 
         <Box sx={{ flex: 1 }} />
 
-        <Box
-          sx={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 1,
-            px: 1.5,
-            height: 38,
-            width: { xs: 110, sm: 260, md: 380 },
-            flexShrink: 1,
-            minWidth: 0,
-            borderRadius: '10px',
-            bgcolor: tokens.page,
-            border: `1px solid ${tokens.border}`,
-            '&:focus-within': { borderColor: tokens.accent },
-          }}
-        >
-          <Search sx={{ fontSize: 20, color: tokens.textMuted }} />
-          <InputBase
-            inputRef={searchRef}
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              setView('contacts');
-            }}
-            onKeyDown={(e) => e.key === 'Escape' && setQuery('')}
-            placeholder="Search name, phonetic, phone, email…"
-            inputProps={{ 'aria-label': 'Search contacts', dir: 'auto' }}
-            sx={{ flex: 1, fontSize: 14 }}
-          />
-          {query ? (
-            <IconButton size="small" onClick={() => setQuery('')} aria-label="Clear search">
-              <Close sx={{ fontSize: 16 }} />
-            </IconButton>
-          ) : (
-            <Box
-              component="kbd"
-              sx={{
-                fontSize: 11,
-                color: tokens.textMuted,
-                border: `1px solid ${tokens.borderStrong}`,
-                borderRadius: '5px',
-                px: 0.75,
-                display: { xs: 'none', md: 'block' },
-              }}
-            >
-              /
-            </Box>
-          )}
-        </Box>
+        {renderSearch(false)}
 
         {assistantInfo?.enabled && (
           <Tooltip title="Assistant">
@@ -942,6 +957,19 @@ const SignedInHome: React.FC = () => {
             <LogoutIcon fontSize="small" />
           </IconButton>
         </Tooltip>
+      </Box>
+
+      {/* Phones: search on its own row */}
+      <Box
+        sx={{
+          display: { xs: 'block', sm: 'none' },
+          px: 1.5,
+          py: 1,
+          borderBottom: `1px solid ${tokens.border}`,
+          bgcolor: tokens.surface,
+        }}
+      >
+        {renderSearch(true)}
       </Box>
 
       {/* Views, with the assistant beside them */}
