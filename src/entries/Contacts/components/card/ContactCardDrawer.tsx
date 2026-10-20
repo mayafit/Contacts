@@ -21,7 +21,9 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
-import { Close, DeleteOutline, OpenInNew } from '@mui/icons-material';
+import { Close, DeleteOutline, OpenInNew, SaveAlt } from '@mui/icons-material';
+import ContactActions from '../device/ContactActions';
+import { saveToDevice } from '../../device/device';
 import type { Contact, ContactGroup } from '../../types/Contact';
 import { useAppDispatch, useAppSelector } from '../../types/hooks';
 import { contactUpdated, updateContact } from '../../redux/slices/contacts/contactsSlice';
@@ -287,6 +289,17 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({
                     {orgLine}
                   </Typography>
                 )}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.25, mt: 0.75, ml: -1 }}>
+                  <ContactActions contact={original} size="medium" />
+                  <Tooltip title="Save this contact to the device (.vcf)">
+                    <IconButton
+                      aria-label="Save to device"
+                      onClick={() => void saveToDevice([original], getDisplayName(original))}
+                    >
+                      <SaveAlt />
+                    </IconButton>
+                  </Tooltip>
+                </Box>
                 <Box
                   sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap', mt: 1, alignItems: 'center' }}
                 >

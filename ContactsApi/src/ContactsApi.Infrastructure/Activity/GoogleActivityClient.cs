@@ -267,6 +267,7 @@ public class GoogleActivityClient
         }
 
         aggregator.AddEmail(at, Header("From"), Header("To"), Header("Cc"), labels.Contains("SENT"));
+        aggregator.MessagesWithoutRecipients += string.IsNullOrEmpty(Header("To")) && string.IsNullOrEmpty(Header("Cc")) ? 1 : 0;
     }
 
     /// <summary>Message headers for the ids, in paced batches, retrying rate-limited items</summary>

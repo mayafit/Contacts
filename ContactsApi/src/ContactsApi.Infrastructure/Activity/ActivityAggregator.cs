@@ -32,6 +32,12 @@ public class ActivityAggregator
     /// <summary>Everyone seen in headers or as a guest, with their display names</summary>
     public Dictionary<string, DirectoryEntry> Directory { get; }
 
+    /// <summary>Messages with neither To nor Cc (diagnostics: Bcc, mailing lists)</summary>
+    public int MessagesWithoutRecipients { get; set; }
+
+    /// <summary>Directory names that are still encoded after decoding (diagnostics)</summary>
+    public int UndecodedNames => Directory.Values.Sum(e => e.Names.Count(n => n.Contains("=?", StringComparison.Ordinal)));
+
     /// <summary>Most entries kept in the directory (the most frequent ones)</summary>
     public const int MaxDirectory = 5000;
 
@@ -81,6 +87,7 @@ public class ActivityAggregator
             yield break;
         }
 
+        header = EncodedWords.Decode(header);
         var parts = new List<string>();
         var current = new System.Text.StringBuilder();
         bool quoted = false, angled = false;

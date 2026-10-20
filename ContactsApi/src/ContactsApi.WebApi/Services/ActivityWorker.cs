@@ -95,6 +95,15 @@ public class ActivityWorker : BackgroundService
     /// <inheritdoc />
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Several users can scan at once; each scan is paced to its own user's quota
+        await Task.WhenAll(Enumerable.Range(0, Concurrency).Select(_ => ConsumeAsync(stoppingToken)));
+    }
+
+    /// <summary>Scans run in parallel (one per user at a time)</summary>
+    private const int Concurrency = 3;
+
+    private async Task ConsumeAsync(CancellationToken stoppingToken)
+    {
         await foreach (var job in _jobs.Reader.ReadAllAsync(stoppingToken))
         {
             try
@@ -213,9 +222,14 @@ public class ActivityWorker : BackgroundService
             snapshot.Progress = null;
             snapshot.Error = null;
             snapshot.ErrorCode = null;
+            // Counts only, no addresses: enough to see whether headers parse
             _logger.LogInformation(
-                "Activity scan done ({Mode}, {Messages} messages, {People} addresses)",
-                full ? "full" : "incremental", snapshot.MessagesScanned, snapshot.People.Count);
+                "Activity scan done ({Mode}, {Messages} messages, {People} addresses with activity, " +
+                "{Directory} in directory, {Named} with names, {Undecoded} undecoded names, " +
+                "{NoRecipients} messages without To/Cc, {ContactEmails} contact emails, since {Since:yyyy-MM-dd})",
+                full ? "full" : "incremental", snapshot.MessagesScanned, snapshot.People.Count,
+                aggregator.Directory.Count, aggregator.Directory.Values.Count(e => e.Names.Count > 0),
+                aggregator.UndecodedNames, aggregator.MessagesWithoutRecipients, contactEmails.Count, snapshot.Since);
         }
         catch (ActivityScanException ex)
         {
