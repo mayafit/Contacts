@@ -23,6 +23,9 @@ public class GeminiOptions
     /// are retired and then answer 404.
     /// </summary>
     public string Model { get; set; } = "gemini-flash-latest";
+
+    /// <summary>Calls per day across all users: one shared key pays for everyone</summary>
+    public int GlobalDailyLimit { get; set; } = 3000;
 }
 
 /// <summary>Web search request</summary>
@@ -189,6 +192,24 @@ public class AssistantController : ControllerBase
         }
 
         var user = HttpContext.Session.GetString(GoogleTokenService.UserIdKey) ?? string.Empty;
+        var everyone = Calls.GetOrAdd("day:*", _ => new Queue<DateTime>());
+        lock (everyone)
+        {
+            while (everyone.Count > 0 && DateTime.UtcNow - everyone.Peek() > TimeSpan.FromDays(1))
+            {
+                everyone.Dequeue();
+            }
+
+            if (everyone.Count >= _options.GlobalDailyLimit)
+            {
+                _logger.LogWarning("Assistant global daily limit reached ({Limit})", _options.GlobalDailyLimit);
+                return StatusCode(StatusCodes.Status429TooManyRequests,
+                    ApiResponse<object>.ErrorResponse("RATE_LIMITED", "The assistant is busy today. Try again tomorrow."));
+            }
+
+            everyone.Enqueue(DateTime.UtcNow);
+        }
+
         var day = Calls.GetOrAdd($"day:{user}", _ => new Queue<DateTime>());
         lock (day)
         {

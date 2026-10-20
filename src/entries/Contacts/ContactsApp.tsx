@@ -7,15 +7,12 @@
  */
 
 import React, { useEffect, useMemo } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router';
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router';
 import { SESSION_EXPIRED_EVENT } from '../../services/api/BackendApiClient';
 import { logout, logoutUser } from './redux/slices/auth/authSlice';
 import { Box, CircularProgress, CssBaseline, ThemeProvider } from '@mui/material';
 import { createContactsTheme } from './theme/contactsTheme';
 import { useDispatch } from 'react-redux';
-import LoginPage from './features/auth/components/LoginPage';
-import AuthCallback from './routes/AuthCallback';
-import ProtectedRoute from './routes/ProtectedRoute';
 import ContactsHome from './components/ContactsHome';
 import { checkAuthStatus } from './redux/slices/auth/authSlice';
 import type { AppDispatch } from './types/store';
@@ -31,12 +28,10 @@ const SessionWatcher: React.FC = () => {
   const dispatch = useDispatch<AppDispatch>();
   useEffect(() => {
     const onExpired = () => {
-      if (window.location.pathname !== '/login') {
-        dispatch(logout());
-        // Also end the server session, so a reload cannot look signed in
-        void dispatch(logoutUser());
-        navigate('/login?error=session_expired', { replace: true });
-      }
+      dispatch(logout());
+      // Also end the server session, so a reload cannot look signed in
+      void dispatch(logoutUser());
+      navigate('/?error=session_expired', { replace: true });
     };
     window.addEventListener(SESSION_EXPIRED_EVENT, onExpired);
     return () => window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired);
@@ -48,6 +43,12 @@ const SessionWatcher: React.FC = () => {
  * Contacts application component
  * Sets up routing and checks authentication status with backend on load
  */
+/** Redirects to the home page, keeping the query (e.g. ?error=session_expired) */
+const ToHome: React.FC = () => {
+  const { search } = useLocation();
+  return <Navigate to={`/${search}`} replace />;
+};
+
 const ContactsApp: React.FC = () => {
   const dispatch = useDispatch<AppDispatch>();
   const [isCheckingAuth, setIsCheckingAuth] = React.useState(true);
@@ -124,16 +125,10 @@ const ContactsApp: React.FC = () => {
       <BrowserRouter>
         <SessionWatcher />
         <Routes>
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/auth/callback" element={<AuthCallback />} />
-          <Route
-            path="/"
-            element={
-              <ProtectedRoute>
-                <ContactsHome />
-              </ProtectedRoute>
-            }
-          />
+          {/* Old links (and the backend's error redirects) land on the home page */}
+          <Route path="/login" element={<ToHome />} />
+          <Route path="/auth/callback" element={<ToHome />} />
+          <Route path="/" element={<ContactsHome />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>

@@ -174,6 +174,8 @@ module.exports = {
       patterns: [
         { from: 'env.config.json', to: './env.config.json' },
         { from: 'src/assets', to: 'assets', toType: 'dir' },
+        // Web app manifest and icons (installable on phones)
+        { from: 'public', to: '.', globOptions: { ignore: ['**/index.html'] } },
       ],
     }),
 

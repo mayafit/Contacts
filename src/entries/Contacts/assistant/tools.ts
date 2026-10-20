@@ -93,6 +93,16 @@ export interface AssistantContext {
   openMerge: (contacts: Contact[]) => void;
   /** Add a proposal for the user to review */
   propose: (proposal: Proposal) => void;
+  /** Offer a button that calls / messages / emails a contact (the user taps it) */
+  offerContact?: (offer: ContactOffer) => void;
+}
+
+/** A ready-to-send message or call, shown as a button in the chat */
+export interface ContactOffer {
+  contact: Contact;
+  channel: 'call' | 'sms' | 'whatsapp' | 'email';
+  message?: string;
+  subject?: string;
 }
 
 /** Results of earlier searches in the conversation, by id */
@@ -317,6 +327,25 @@ export const TOOL_DECLARATIONS = [
       type: 'object',
       properties: { ids: ARR({ type: 'string' }, 'Contact ids') },
       required: ['ids'],
+    },
+  },
+  {
+    name: 'contact_person',
+    description:
+      'Offer to call, text, WhatsApp or email a contact: shows a button that opens the phone dialer, messages, WhatsApp or the mail app with your drafted text. The user taps it to send; you cannot send anything yourself.',
+    parameters: {
+      type: 'object',
+      properties: {
+        id: S('Contact id'),
+        channel: {
+          type: 'string',
+          enum: ['call', 'sms', 'whatsapp', 'email'],
+          description: 'How to reach them',
+        },
+        message: S('Drafted message text (in the language the user writes to this person in)'),
+        subject: S('Email subject'),
+      },
+      required: ['id', 'channel'],
     },
   },
   {
@@ -861,6 +890,27 @@ export const executeTool = async (
       }
       ctx.openMerge(contacts);
       return { status: 'merge dialog opened; the user reviews and merges there' };
+    }
+    case 'contact_person': {
+      const c = findContact(ctx, args.id);
+      const channel = String(args.channel) as ContactOffer['channel'];
+      if (!c) {
+        return { error: `No contact ${String(args.id)}` };
+      }
+      const hasPhone = !!c.phoneNumbers?.some((p) => clean(p.value));
+      const hasEmail = !!c.emailAddresses?.some((e) => clean(e.value));
+      if (channel === 'email' ? !hasEmail : !hasPhone) {
+        return {
+          error: `${getDisplayName(c)} has no ${channel === 'email' ? 'email address' : 'phone number'}`,
+        };
+      }
+      ctx.offerContact?.({
+        contact: c,
+        channel,
+        message: typeof args.message === 'string' ? args.message : undefined,
+        subject: typeof args.subject === 'string' ? args.subject : undefined,
+      });
+      return { status: 'button shown; the user taps it to send' };
     }
     case 'open_contact': {
       const c = findContact(ctx, args.id);

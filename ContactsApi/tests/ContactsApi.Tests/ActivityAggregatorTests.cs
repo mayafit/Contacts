@@ -137,4 +137,22 @@ public class ActivityAggregatorTests
         };
         Assert.Equal(expected, GoogleActivityClient.IsRetryable(error));
     }
+
+    [Theory]
+    [InlineData("=?UTF-8?B?157XldeY15kg15LXqg==?= <m@x.com>", "מוטי גת <m@x.com>")]
+    [InlineData("=?windows-1255?Q?=EE=E5=E8=E9_=E2=FA?= <m@x.com>", "מוטי גת <m@x.com>")]
+    [InlineData("=?UTF-8?B?157XldeY15k=?= =?UTF-8?B?INeS16o=?= <m@x.com>", "מוטי גת <m@x.com>")]
+    [InlineData("Plain Name <p@x.com>", "Plain Name <p@x.com>")]
+    [InlineData("=?bogus-charset?B?AAAA?= <b@x.com>", "=?bogus-charset?B?AAAA?= <b@x.com>")]
+    public void Decodes_encoded_words(string raw, string expected) =>
+        Assert.Equal(expected, EncodedWords.Decode(raw));
+
+    [Fact]
+    public void Directory_gets_decoded_hebrew_names()
+    {
+        var a = Create();
+        a.AddEmail(Now, "=?UTF-8?B?157XldeY15kg15LXqg==?= <motti@corp.com>", "me@gmail.com", null, isSent: false);
+        Assert.Equal(new[] { "מוטי גת" }, a.Directory["motti@corp.com"].Names);
+        Assert.Equal(0, a.UndecodedNames);
+    }
 }

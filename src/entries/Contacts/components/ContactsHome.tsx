@@ -30,10 +30,14 @@ import {
   Tabs,
   Tooltip,
   Typography,
+  useMediaQuery,
+  useTheme,
 } from '@mui/material';
 import {
   AutoAwesome,
   CallMerge,
+  PhonelinkRing,
+  SaveAlt,
   Close,
   ContactPhone,
   DeleteOutline,
@@ -45,7 +49,8 @@ import {
 import { logoutUser } from '../redux/slices/auth/authSlice';
 import TrashView from './cleanup/TrashView';
 import { trashContacts } from '../redux/thunks/cleanupThunks';
-import { selectUser } from '../redux/slices/auth/selectors';
+import { selectIsAuthenticated, selectUser } from '../redux/slices/auth/selectors';
+import SignedOutHome from './SignedOutHome';
 import { selectConflictedOperations } from '../redux/slices/syncQueue/selectors';
 import { operationSuccess, operationFailed } from '../redux/slices/syncQueue/syncQueueSlice';
 import {
@@ -90,6 +95,9 @@ import { useActivity } from '../hooks/useActivity';
 import { buildActivityIndex } from '../model/activity';
 import ActivitySection from './insights/ActivitySection';
 import AssistantPanel from './assistant/AssistantPanel';
+import MobileContactList from './table/MobileContactList';
+import DeviceSyncDialog from './device/DeviceSyncDialog';
+import { platformOf, saveToDevice } from '../device/device';
 import { backendApiClient } from '../../../services/api/BackendApiClient';
 import { selectColumnConfig, setColumnConfig } from '../redux/slices/ui/uiSlice';
 
@@ -113,7 +121,7 @@ const fmt = new Intl.NumberFormat('en-US');
  * Contacts workspace page.
  * @returns Page element
  */
-const ContactsHome: React.FC = () => {
+const SignedInHome: React.FC = () => {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
   const user = useSelector(selectUser);
@@ -156,6 +164,11 @@ const ContactsHome: React.FC = () => {
   // A set of contacts shown in the table (from Insights or the assistant)
   const [selection, setSelection] = useState<{ title: string; ids: Set<string> } | null>(null);
   const [assistantOpen, setAssistantOpen] = useState(false);
+  const [phoneSyncOpen, setPhoneSyncOpen] = useState(false);
+  // Phone screens get a list with call buttons instead of the table
+  const theme = useTheme();
+  const isPhone = useMediaQuery(theme.breakpoints.down('sm'));
+  const onMobileDevice = platformOf() !== 'desktop';
   const [assistantInfo, setAssistantInfo] = useState<{ enabled: boolean; model: string } | null>(
     null,
   );
@@ -361,7 +374,7 @@ const ContactsHome: React.FC = () => {
     setAccountAnchor(null);
     // Ends the server session as well; the page alone forgetting the user
     // left the session alive, so a reload signed straight back in.
-    void dispatch(logoutUser()).finally(() => navigate('/login'));
+    void dispatch(logoutUser()).finally(() => navigate('/', { replace: true }));
   };
 
   /**
@@ -535,6 +548,20 @@ const ContactsHome: React.FC = () => {
           >
             Delete
           </Button>
+          <Button
+            size="small"
+            startIcon={<SaveAlt />}
+            onClick={async () => {
+              const how = await saveToDevice(checkedContacts, `${checkedContacts.length} contacts`);
+              setToast(
+                how === 'shared'
+                  ? 'Choose Contacts in the share sheet'
+                  : 'Downloaded as a .vcf file',
+              );
+            }}
+          >
+            Save to device
+          </Button>
           <Box sx={{ flex: 1 }} />
           <Button size="small" color="inherit" onClick={() => setChecked(new Set())}>
             Clear
@@ -666,6 +693,8 @@ const ContactsHome: React.FC = () => {
               </Button>
             )}
           </Box>
+        ) : isPhone ? (
+          <MobileContactList contacts={visible} onOpenCard={setCardFor} activity={activityIndex} />
         ) : (
           <ContactsTable
             contacts={visible}
@@ -679,7 +708,10 @@ const ContactsHome: React.FC = () => {
           />
         )}
       </Paper>
-      <Typography variant="caption" sx={{ color: tokens.textMuted, textAlign: 'center' }}>
+      <Typography
+        variant="caption"
+        sx={{ color: tokens.textMuted, textAlign: 'center', display: { xs: 'none', sm: 'block' } }}
+      >
         Click a cell to edit · Double-click a row for the full card · Enter saves and moves down ·
         Tab moves right · Esc cancels
       </Typography>
@@ -844,6 +876,14 @@ const ContactsHome: React.FC = () => {
           </Tooltip>
         )}
 
+        {onMobileDevice && (
+          <Tooltip title="Phone sync">
+            <IconButton onClick={() => setPhoneSyncOpen(true)} aria-label="Phone sync">
+              <PhonelinkRing />
+            </IconButton>
+          </Tooltip>
+        )}
+
         <Tooltip title="Reload from Google">
           <span>
             <IconButton onClick={load} disabled={loading} aria-label="Reload contacts">
@@ -878,6 +918,17 @@ const ContactsHome: React.FC = () => {
                 {user.email}
               </Typography>
             )}
+          </MenuItem>
+          <MenuItem
+            onClick={() => {
+              setAccountAnchor(null);
+              setPhoneSyncOpen(true);
+            }}
+          >
+            <ListItemIcon>
+              <PhonelinkRing fontSize="small" />
+            </ListItemIcon>
+            Phone sync
           </MenuItem>
           <MenuItem onClick={handleSignOut}>
             <ListItemIcon>
@@ -979,6 +1030,14 @@ const ContactsHome: React.FC = () => {
           handleDeleted(count, permanent);
         }}
       />
+      <DeviceSyncDialog
+        open={phoneSyncOpen}
+        onClose={() => setPhoneSyncOpen(false)}
+        allContacts={allContacts}
+        groups={groups}
+        viewContacts={visible}
+        onDone={setToast}
+      />
       <MergeDialog
         contacts={mergeTargets}
         groups={groups}
@@ -1007,6 +1066,16 @@ const ContactsHome: React.FC = () => {
       )}
     </Box>
   );
+};
+
+/**
+ * Home: the contacts workspace when signed in, otherwise the same page with a
+ * sign-in button (there is no separate login page).
+ * @returns Page element
+ */
+const ContactsHome: React.FC = () => {
+  const isAuthenticated = useSelector(selectIsAuthenticated);
+  return isAuthenticated ? <SignedInHome /> : <SignedOutHome />;
 };
 
 export default ContactsHome;
