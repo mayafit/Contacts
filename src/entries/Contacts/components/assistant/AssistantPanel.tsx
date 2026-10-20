@@ -32,7 +32,13 @@ import {
 import type { Contact, ContactGroup } from '../../types/Contact';
 import type { GeminiContent } from '../../../../services/api/BackendApiClient';
 import { runAgent, type ToolStep } from '../../assistant/agent';
-import { type AssistantContext, type Proposal, type SearchMemory } from '../../assistant/tools';
+import {
+  type AssistantContext,
+  type ContactOffer,
+  type Proposal,
+  type SearchMemory,
+} from '../../assistant/tools';
+import { mailtoHref, smsHref, telHref, whatsappHref } from '../../device/device';
 import { applyProposal, type ApplyResult } from '../../assistant/apply';
 import { proposalName } from '../../assistant/changes';
 import { useAppDispatch } from '../../types/hooks';
@@ -69,6 +75,7 @@ type ChatItem =
       result?: ApplyResult;
       error?: string;
     }
+  | { kind: 'contact'; offer: ContactOffer }
   | { kind: 'error'; text: string };
 
 const SUGGESTIONS = [
@@ -121,6 +128,60 @@ const stepLabel = (s: ToolStep): { icon: React.ReactNode; text: string } => {
     default:
       return { icon: <InsightsIcon sx={{ fontSize: 14 }} />, text: s.name.replace(/_/g, ' ') };
   }
+};
+
+/** A drafted call / message / email with the button that opens the right app */
+const ContactOfferCard: React.FC<{ offer: ContactOffer }> = ({ offer }) => {
+  const { contact, channel, message, subject } = offer;
+  const phone = contact.phoneNumbers?.find((p) => p.value);
+  const email = contact.emailAddresses?.find((e) => e.value);
+  const href =
+    channel === 'call'
+      ? telHref(phone?.value ?? '')
+      : channel === 'sms'
+        ? smsHref(phone?.value ?? '', message)
+        : channel === 'whatsapp'
+          ? whatsappHref(phone?.value ?? '', phone?.canonicalForm, message)
+          : mailtoHref(email?.value ?? '', subject, message);
+  const label = { call: 'Call', sms: 'Text', whatsapp: 'WhatsApp', email: 'Email' }[channel];
+  return (
+    <Paper variant="outlined" sx={{ p: 1.5, borderColor: tokens.accent, bgcolor: tokens.surface }}>
+      <Typography variant="caption" sx={{ color: tokens.textMuted }}>
+        {label} · {channel === 'email' ? email?.value : phone?.value}
+      </Typography>
+      <Typography variant="body2" dir="auto" sx={{ fontWeight: 600, mb: message ? 0.5 : 1 }}>
+        {getDisplayName(contact)}
+      </Typography>
+      {subject && (
+        <Typography
+          variant="caption"
+          dir="auto"
+          sx={{ display: 'block', color: tokens.textSecondary }}
+        >
+          {subject}
+        </Typography>
+      )}
+      {message && (
+        <Typography
+          variant="body2"
+          dir="auto"
+          sx={{ whiteSpace: 'pre-wrap', color: tokens.textSecondary, mb: 1 }}
+        >
+          {message}
+        </Typography>
+      )}
+      <Button
+        size="small"
+        variant="contained"
+        href={href || '#'}
+        disabled={!href}
+        target={href.startsWith('https:') ? '_blank' : undefined}
+        rel="noopener noreferrer"
+      >
+        {label} {getDisplayName(contact)}
+      </Button>
+    </Paper>
+  );
 };
 
 /** A proposal: what would change, with Apply / Discard */
@@ -341,6 +402,7 @@ const AssistantPanel: React.FC<AssistantPanelProps> = ({
           {
             ...context,
             propose: (proposal) => add({ kind: 'proposal', proposal, status: 'pending' }),
+            offerContact: (offer) => add({ kind: 'contact', offer }),
           },
           memory.current,
           (step) => {
@@ -552,6 +614,9 @@ const AssistantPanel: React.FC<AssistantPanelProps> = ({
                 )}
               </Box>
             );
+          }
+          if (item.kind === 'contact') {
+            return <ContactOfferCard key={i} offer={item.offer} />;
           }
           if (item.kind === 'proposal') {
             return (
