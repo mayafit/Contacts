@@ -54,7 +54,8 @@ internal sealed class FreshTokenInitializer : IConfigurableHttpClientInitializer
 
 /// <summary>
 /// Gmail (metadata only: From/To/Cc, date, labels) and Calendar (start, attendees,
-/// title) reads for the activity snapshot. Never reads message subjects or bodies.
+/// title) reads for the activity snapshot. Subjects are kept only for recent
+/// one-to-few threads (replies owed / awaited); message bodies are never read.
 /// </summary>
 public class GoogleActivityClient
 {
@@ -267,6 +268,13 @@ public class GoogleActivityClient
         }
 
         aggregator.AddEmail(at, Header("From"), Header("To"), Header("Cc"), labels.Contains("SENT"));
+        var bulk = !string.IsNullOrEmpty(Header("List-Id")) || !string.IsNullOrEmpty(Header("List-Unsubscribe"))
+            || (Header("Auto-Submitted") ?? string.Empty).StartsWith("auto", StringComparison.OrdinalIgnoreCase)
+            || (Header("Precedence") ?? string.Empty) is "bulk" or "list" or "junk"
+            || labels.Any(l => l is "CATEGORY_PROMOTIONS" or "CATEGORY_SOCIAL" or "CATEGORY_UPDATES" or "CATEGORY_FORUMS");
+        aggregator.AddThreadMessage(
+            m.ThreadId, at, Header("From"), Header("To"), Header("Cc"), Header("Subject"),
+            labels.Contains("SENT"), labels.Contains("INBOX"), bulk, DateTime.UtcNow);
         aggregator.MessagesWithoutRecipients += string.IsNullOrEmpty(Header("To")) && string.IsNullOrEmpty(Header("Cc")) ? 1 : 0;
     }
 
@@ -292,8 +300,11 @@ public class GoogleActivityClient
             {
                 var get = _gmail.Users.Messages.Get("me", id);
                 get.Format = UsersResource.MessagesResource.GetRequest.FormatEnum.Metadata;
-                get.MetadataHeaders = new global::Google.Apis.Util.Repeatable<string>(new[] { "From", "To", "Cc" });
-                get.Fields = "id,historyId,internalDate,labelIds,payload/headers";
+                get.MetadataHeaders = new global::Google.Apis.Util.Repeatable<string>(new[]
+                {
+                    "From", "To", "Cc", "Subject", "List-Id", "List-Unsubscribe", "Auto-Submitted", "Precedence"
+                });
+                get.Fields = "id,threadId,historyId,internalDate,labelIds,payload/headers";
                 batch.Queue<Message>(get, (message, error, _, _) =>
                 {
                     if (error == null)

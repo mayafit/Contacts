@@ -73,6 +73,28 @@ public class DirectoryEntry
     public DateTime? LastSeen { get; set; }
 }
 
+/// <summary>
+/// The state of a recent email thread with a person: who wrote last, and when.
+/// Used for "you owe a reply" and "waiting for an answer".
+/// </summary>
+public class ThreadState
+{
+    /// <summary>Gmail thread id (for the link to the thread)</summary>
+    public string ThreadId { get; set; } = string.Empty;
+    /// <summary>When the last message was sent or received</summary>
+    public DateTime LastAt { get; set; }
+    /// <summary>The user wrote the last message</summary>
+    public bool LastFromMe { get; set; }
+    /// <summary>The people on the last message other than the user (sender, or recipients)</summary>
+    public List<string> Counterparts { get; set; } = new();
+    /// <summary>Subject of the last message</summary>
+    public string? Subject { get; set; }
+    /// <summary>The last message is in the inbox (not archived)</summary>
+    public bool InInbox { get; set; }
+    /// <summary>Messages seen in the thread</summary>
+    public int Messages { get; set; }
+}
+
 /// <summary>Everything known about a user's activity, kept per Google account</summary>
 public class ActivitySnapshot
 {
@@ -104,4 +126,10 @@ public class ActivitySnapshot
     /// made before it existed (a full scan builds it).
     /// </summary>
     public Dictionary<string, DirectoryEntry>? Directory { get; set; }
+
+    /// <summary>
+    /// Recent one-to-few threads with people (last 45 days). Null in snapshots
+    /// made before it existed (a full scan builds it).
+    /// </summary>
+    public Dictionary<string, ThreadState>? Threads { get; set; }
 }

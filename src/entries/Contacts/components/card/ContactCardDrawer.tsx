@@ -40,7 +40,12 @@ import {
   getPhoneticName,
 } from '../../model/contactView';
 import { tokens } from '../../theme/contactsTheme';
-import { formatRelative, type ActivityIndex, type ContactActivity } from '../../model/activity';
+import {
+  describeGap,
+  formatRelative,
+  type ActivityIndex,
+  type ContactActivity,
+} from '../../model/activity';
 import { logger } from '../../../../shared/logger';
 import type { AppError } from '../../types';
 
@@ -78,6 +83,9 @@ const activityLine = (a: ContactActivity | undefined): string => {
     parts.push(
       `met ${formatRelative(a.lastMeetingAt)}${a.lastMeetingTitle ? ` – “${a.lastMeetingTitle}”` : ''}`,
     );
+  }
+  if (a.typicalGapDays) {
+    parts.push(`usually ${describeGap(a.typicalGapDays)}`);
   }
   if (a.nextMeetingAt) {
     parts.push(

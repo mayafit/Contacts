@@ -115,9 +115,22 @@ export interface DirectoryMatch {
   lastSeen?: string | null;
 }
 
+/** A recent email thread with a person: who wrote last, and when */
+export interface ThreadState {
+  threadId: string;
+  lastAt: string;
+  lastFromMe: boolean;
+  counterparts: string[];
+  subject?: string | null;
+  inInbox: boolean;
+  messages: number;
+}
+
 /** Activity snapshot with the data */
 export interface ActivityResponse extends ActivityStatusResponse {
   people: Record<string, PersonActivity>;
+  /** Recent threads, newest first */
+  threads?: ThreadState[];
 }
 
 /** Gemini content part (only the shapes the assistant uses are typed) */
@@ -613,6 +626,23 @@ export class BackendApiClient {
         `/activity/directory?q=${q}&limit=${limit}`,
       ),
       'Failed to search mail and calendar',
+    );
+  }
+
+  /**
+   * Addresses from mail and meetings that match contacts without an email, by name
+   * @param contacts - Contact ids and their name variants
+   * @returns Candidates per contact id, best first
+   */
+  async suggestEmails(
+    contacts: { id: string; names: string[] }[],
+  ): Promise<{ available: boolean; suggestions: Record<string, DirectoryMatch[]> }> {
+    return unwrap(
+      await this.request<{ available: boolean; suggestions: Record<string, DirectoryMatch[]> }>(
+        '/activity/suggest-emails',
+        { method: 'POST', body: JSON.stringify({ contacts }) },
+      ),
+      'Failed to look for email addresses',
     );
   }
 
