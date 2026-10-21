@@ -28,7 +28,76 @@ export interface ContactActivity {
   received: number;
   /** Ranking weight: emails + 3 x meetings, last 12 months */
   score: number;
+  /** Months ("yyyy-MM") with any email or meeting, oldest first */
+  activeMonths: string[];
+  /** Usual time between contacts in days (from active months), null when too little history */
+  typicalGapDays: number | null;
 }
+
+/**
+ * The usual rhythm of a relationship: the median gap between months with
+ * contact. Monthly data, so the shortest rhythm is "about monthly".
+ * Needs at least 3 active months.
+ * @param months - Active months, oldest first
+ * @returns Typical gap in days, or null
+ */
+export const typicalGapOf = (months: string[]): number | null => {
+  if (months.length < 3) {
+    return null;
+  }
+  const index = months.map((m) => {
+    const [y, mo] = m.split('-').map(Number);
+    return y * 12 + (mo - 1);
+  });
+  const gaps = index
+    .slice(1)
+    .map((v, i) => v - index[i])
+    .sort((a, b) => a - b);
+  const median = gaps[Math.floor(gaps.length / 2)];
+  return Math.max(1, median) * 30;
+};
+
+/** How overdue a contact is against its usual rhythm */
+export interface Overdue {
+  typicalGapDays: number;
+  daysSince: number;
+  /** daysSince / typicalGapDays */
+  ratio: number;
+}
+
+/**
+ * Whether a contact is overdue: more than 1.5 x the usual gap and at least
+ * three weeks since the last email or meeting.
+ * @param a - Contact activity
+ * @param now - Current time
+ * @returns How overdue, or null when not
+ */
+export const overdueOf = (
+  a: ContactActivity | undefined,
+  now: Date = new Date(),
+): Overdue | null => {
+  if (!a?.lastInTouch || !a.typicalGapDays) {
+    return null;
+  }
+  const daysSince = Math.floor((now.getTime() - Date.parse(a.lastInTouch)) / 86_400_000);
+  const ratio = daysSince / a.typicalGapDays;
+  return ratio > 1.5 && daysSince >= 21
+    ? { typicalGapDays: a.typicalGapDays, daysSince, ratio }
+    : null;
+};
+
+/**
+ * "about monthly", "every ~3 months"...
+ * @param days - Gap in days
+ * @returns Description
+ */
+export const describeGap = (days: number): string => {
+  const months = Math.round(days / 30);
+  if (months <= 1) {
+    return 'about monthly';
+  }
+  return months >= 12 ? 'about yearly' : `every ~${months} months`;
+};
 
 /** Activity per contact resource name */
 export type ActivityIndex = Map<string, ContactActivity>;
@@ -112,6 +181,8 @@ export const buildActivityIndex = (
         sent: 0,
         received: 0,
         score: 0,
+        activeMonths: [],
+        typicalGapDays: null,
       };
       a.lastEmailAt = later(a.lastEmailAt, p.lastEmailAt);
       a.lastSentAt = later(a.lastSentAt, p.lastSentAt);
@@ -128,11 +199,16 @@ export const buildActivityIndex = (
       a.meetings12m += sumMonths(p.meetingMonths, year);
       a.sent += p.sentCount ?? 0;
       a.received += p.receivedCount ?? 0;
+      [p.emailMonths, p.meetingMonths].forEach((months) =>
+        Object.entries(months ?? {}).forEach(([m, n]) => n > 0 && a!.activeMonths.push(m)),
+      );
     });
     if (a) {
       const found: ContactActivity = a;
       found.lastInTouch = later(found.lastEmailAt, found.lastMeetingAt);
       found.score = found.emails12m + MEETING_WEIGHT * found.meetings12m;
+      found.activeMonths = [...new Set(found.activeMonths)].sort();
+      found.typicalGapDays = typicalGapOf(found.activeMonths);
       index.set(c.resourceName, found);
     }
   });

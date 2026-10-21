@@ -60,6 +60,8 @@ export interface AssistantPanelProps {
   groups: Record<string, ContactGroup>;
   /** Model name, shown in the header */
   model?: string;
+  /** A message to send right away (changes of id resend) */
+  request?: { text: string; id: number } | null;
 }
 
 type ProposalStatus = 'pending' | 'applying' | 'applied' | 'discarded' | 'failed';
@@ -351,6 +353,7 @@ const AssistantPanel: React.FC<AssistantPanelProps> = ({
   entities,
   groups,
   model,
+  request,
 }) => {
   const dispatch = useAppDispatch();
   const [items, setItems] = useState<ChatItem[]>([]);
@@ -421,6 +424,15 @@ const AssistantPanel: React.FC<AssistantPanelProps> = ({
     },
     [busy, context],
   );
+
+  // Requests from elsewhere in the app ("Draft" on Reach out)
+  const lastRequest = useRef<number | null>(null);
+  useEffect(() => {
+    if (request && request.id !== lastRequest.current && !busy) {
+      lastRequest.current = request.id;
+      void send(request.text);
+    }
+  }, [request, busy, send]);
 
   const setProposal = (id: string, patch: Partial<Extract<ChatItem, { kind: 'proposal' }>>) =>
     setItems((list) =>

@@ -182,9 +182,10 @@ const ActivitySection: React.FC<ActivitySectionProps> = ({
       <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
         <Box sx={{ flex: 1, minWidth: 260 }}>
           <Typography variant="body2" sx={{ color: tokens.textSecondary }}>
-            See when you last emailed or met each contact, who you are most in touch with, and who
-            has gone quiet. The app reads only senders, recipients and dates from Gmail (never
-            subjects or content), and meeting times, titles and guests from Google Calendar.
+            See when you last emailed or met each contact, who you are most in touch with, who has
+            gone quiet, and which emails wait for a reply. From Gmail the app reads senders,
+            recipients, dates and subjects, never message content; from Google Calendar, meeting
+            times, titles and guests.
           </Typography>
         </Box>
         <Button variant="contained" onClick={activity.connect} startIcon={<MailOutline />}>

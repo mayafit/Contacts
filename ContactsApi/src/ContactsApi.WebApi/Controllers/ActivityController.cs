@@ -67,6 +67,25 @@ public class ActivityResponse : ActivityStatusResponse
 {
     /// <summary>Activity per lower-case email address</summary>
     public Dictionary<string, PersonActivity> People { get; set; } = new();
+
+    /// <summary>Recent threads with people, newest first</summary>
+    public List<ThreadState> Threads { get; set; } = new();
+}
+
+/// <summary>A contact without an email, with the names to look for</summary>
+public class NameQuery
+{
+    /// <summary>Contact id</summary>
+    public string Id { get; set; } = string.Empty;
+    /// <summary>Name variants (Hebrew name, phonetic name, nickname)</summary>
+    public List<string> Names { get; set; } = new();
+}
+
+/// <summary>Request for email suggestions</summary>
+public class SuggestEmailsRequest
+{
+    /// <summary>Contacts to find addresses for (at most 2,000)</summary>
+    public List<NameQuery> Contacts { get; set; } = new();
 }
 
 /// <summary>
@@ -118,6 +137,7 @@ public class ActivityController : ControllerBase
         var snapshot = await _store.GetAsync(userId);
         var response = Fill(new ActivityResponse(), snapshot);
         response.People = snapshot.People;
+        response.Threads = (snapshot.Threads ?? new()).Values.OrderByDescending(t => t.LastAt).ToList();
         return Ok(ApiResponse<ActivityResponse>.SuccessResponse(response));
     }
 
@@ -165,6 +185,59 @@ public class ActivityController : ControllerBase
             })
             .ToList();
         return Ok(ApiResponse<object>.SuccessResponse(new { available = snapshot.Directory != null, matches }));
+    }
+
+    /// <summary>
+    /// For contacts without an email, addresses from mail and meetings whose
+    /// display name (or the address itself, e.g. dana.cohen@) matches one of the
+    /// contact's names. Exact name matches first.
+    /// </summary>
+    /// <param name="request">Contacts and their name variants</param>
+    /// <returns>Candidates per contact id</returns>
+    [HttpPost("suggest-emails")]
+    public async Task<IActionResult> SuggestEmails([FromBody] SuggestEmailsRequest request)
+    {
+        var userId = await SignedInUserAsync();
+        if (userId == null)
+        {
+            return SessionExpired();
+        }
+
+        var snapshot = await _store.GetAsync(userId);
+        var directory = snapshot.Directory ?? new Dictionary<string, DirectoryEntry>();
+        var result = new Dictionary<string, List<DirectoryMatch>>();
+        foreach (var c in (request.Contacts ?? new()).Take(2000))
+        {
+            var variants = c.Names.Select(NameMatcher.Normalize).Where(v => v.Contains(' ')).Distinct().ToList();
+            if (variants.Count == 0)
+            {
+                continue;
+            }
+
+            var found = directory
+                .Select(kv => (kv, score: NameMatcher.Score(variants, kv.Key, kv.Value.Names)))
+                .Where(x => x.score > 0)
+                .OrderByDescending(x => x.score)
+                .ThenByDescending(x => x.kv.Value.Sent * 3 + x.kv.Value.Meetings * 3 + x.kv.Value.Received)
+                .Take(3)
+                .Select(x => new DirectoryMatch
+                {
+                    Email = x.kv.Key,
+                    Names = x.kv.Value.Names,
+                    Sent = x.kv.Value.Sent,
+                    Received = x.kv.Value.Received,
+                    CopiedTogether = x.kv.Value.CopiedTogether,
+                    Meetings = x.kv.Value.Meetings,
+                    LastSeen = x.kv.Value.LastSeen
+                })
+                .ToList();
+            if (found.Count > 0)
+            {
+                result[c.Id] = found;
+            }
+        }
+
+        return Ok(ApiResponse<object>.SuccessResponse(new { available = snapshot.Directory != null, suggestions = result }));
     }
 
     /// <summary>Starts bringing the snapshot up to date (no-op while a scan runs)</summary>

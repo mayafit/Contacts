@@ -8,6 +8,7 @@ import {
   backendApiClient,
   type ActivityStatusResponse,
   type PersonActivity,
+  type ThreadState,
 } from '../../../services/api/BackendApiClient';
 import { logger } from '../../../shared/logger';
 
@@ -26,6 +27,8 @@ export interface ActivityState {
   status: ActivityStatusResponse | null;
   /** Activity per address, null until there is data */
   people: Record<string, PersonActivity> | null;
+  /** Recent email threads (replies owed / awaited) */
+  threads: ThreadState[];
   /** Gmail or Calendar granted */
   connected: boolean;
   /** Last request error */
@@ -46,6 +49,7 @@ export interface ActivityState {
 export const useActivity = (): ActivityState => {
   const [status, setStatus] = useState<ActivityStatusResponse | null>(null);
   const [people, setPeople] = useState<Record<string, PersonActivity> | null>(null);
+  const [threads, setThreads] = useState<ThreadState[]>([]);
   const [error, setError] = useState<string | null>(null);
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const alive = useRef(true);
@@ -57,6 +61,7 @@ export const useActivity = (): ActivityState => {
     }
     setStatus(full);
     setPeople(full.peopleCount > 0 || full.status === 'ready' ? full.people : null);
+    setThreads(full.threads ?? []);
   }, []);
 
   const poll = useCallback(
@@ -162,6 +167,7 @@ export const useActivity = (): ActivityState => {
   return {
     status,
     people,
+    threads,
     connected: !!status && (status.connected.gmail || status.connected.calendar),
     error,
     connect: () => backendApiClient.connectActivity(),

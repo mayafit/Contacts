@@ -167,6 +167,7 @@ public class ActivityWorker : BackgroundService
             var full = !job.Gmail
                 || job.Full
                 || snapshot.Directory == null
+                || snapshot.Threads == null
                 || snapshot.GmailHistoryId == null
                 || snapshot.FullScanAt == null
                 || now - snapshot.FullScanAt > FullScanEvery;
@@ -180,6 +181,7 @@ public class ActivityWorker : BackgroundService
                 var directoryCopy = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, DirectoryEntry>>(
                     System.Text.Json.JsonSerializer.Serialize(snapshot.Directory))!;
                 aggregator = new ActivityAggregator(contactEmails, mine, copy, directoryCopy);
+                aggregator.SeedThreads(snapshot.Threads);
                 var read = await client.ScanMailChangesAsync(
                     aggregator, snapshot.GmailHistoryId!.Value, historyId, n => Beat("gmail", n), ct);
                 full = read == null;
@@ -214,6 +216,8 @@ public class ActivityWorker : BackgroundService
             }
 
             aggregator.PruneDirectory();
+            aggregator.PruneThreads(DateTime.UtcNow);
+            snapshot.Threads = aggregator.Threads;
             snapshot.People = aggregator.People;
             snapshot.Directory = aggregator.Directory;
             snapshot.GmailHistoryId = historyId;

@@ -38,6 +38,97 @@ public class ActivityAggregator
     /// <summary>Directory names that are still encoded after decoding (diagnostics)</summary>
     public int UndecodedNames => Directory.Values.Sum(e => e.Names.Count(n => n.Contains("=?", StringComparison.Ordinal)));
 
+    /// <summary>Recent threads by id (see <see cref="AddThreadMessage"/>)</summary>
+    public Dictionary<string, ThreadState> Threads { get; private set; } = new();
+
+    /// <summary>Threads older than this are not kept</summary>
+    public static readonly TimeSpan ThreadWindow = TimeSpan.FromDays(45);
+
+    /// <summary>
+    /// Records a message of a thread. Only the latest message of each thread
+    /// counts; bulk mail (lists, newsletters, automatic mail) and threads with
+    /// many people are skipped.
+    /// </summary>
+    /// <param name="threadId">Gmail thread id</param>
+    /// <param name="at">Message time</param>
+    /// <param name="from">From header</param>
+    /// <param name="to">To header</param>
+    /// <param name="cc">Cc header</param>
+    /// <param name="subject">Subject header</param>
+    /// <param name="isSent">Filed as sent</param>
+    /// <param name="inInbox">In the inbox</param>
+    /// <param name="isBulk">List-Id / List-Unsubscribe / Auto-Submitted / Precedence: bulk</param>
+    /// <param name="now">Current time</param>
+    public void AddThreadMessage(
+        string? threadId, DateTime at, string? from, string? to, string? cc, string? subject,
+        bool isSent, bool inInbox, bool isBulk, DateTime now)
+    {
+        if (string.IsNullOrEmpty(threadId) || isBulk || now - at > ThreadWindow)
+        {
+            return;
+        }
+
+        var sender = ParseAddresses(from).FirstOrDefault();
+        var fromMe = isSent || (sender != null && _myEmails.Contains(sender));
+        var counterparts = (fromMe
+                ? ParseAddresses(to).Concat(ParseAddresses(cc))
+                : sender == null ? Enumerable.Empty<string>() : new[] { sender })
+            .Where(a => !_myEmails.Contains(a))
+            .Distinct()
+            .ToList();
+        if (counterparts.Count == 0 || counterparts.Count > 4 || counterparts.Any(IsNoReply))
+        {
+            return;
+        }
+
+        if (Threads.TryGetValue(threadId, out var existing))
+        {
+            existing.Messages++;
+            if (existing.LastAt >= at)
+            {
+                return;
+            }
+        }
+
+        Threads[threadId] = new ThreadState
+        {
+            ThreadId = threadId,
+            LastAt = at,
+            LastFromMe = fromMe,
+            Counterparts = counterparts,
+            Subject = EncodedWords.Decode(subject)?.Trim(),
+            InInbox = inInbox,
+            Messages = (existing?.Messages ?? 0) + 1
+        };
+    }
+
+    /// <summary>Uses earlier thread states (incremental scans)</summary>
+    /// <param name="threads">Threads from the stored snapshot</param>
+    public void SeedThreads(Dictionary<string, ThreadState>? threads) =>
+        Threads = threads == null ? new() : new Dictionary<string, ThreadState>(threads);
+
+    /// <summary>
+    /// Keeps threads with people the user knows (contacts, or people written to)
+    /// that are recent enough to act on.
+    /// </summary>
+    /// <param name="now">Current time</param>
+    public void PruneThreads(DateTime now)
+    {
+        foreach (var (id, t) in Threads.ToList())
+        {
+            var known = t.Counterparts.Any(a => _contactEmails.Contains(a) || People.ContainsKey(a));
+            if (!known || now - t.LastAt > ThreadWindow)
+            {
+                Threads.Remove(id);
+            }
+        }
+    }
+
+    /// <summary>Automatic senders nobody replies to</summary>
+    private static bool IsNoReply(string address) =>
+        System.Text.RegularExpressions.Regex.IsMatch(
+            address, @"^(no-?reply|do-?not-?reply|notifications?|mailer-daemon|postmaster|bounce)[^@]*@", RegexOptions.IgnoreCase);
+
     /// <summary>Most entries kept in the directory (the most frequent ones)</summary>
     public const int MaxDirectory = 5000;
 
