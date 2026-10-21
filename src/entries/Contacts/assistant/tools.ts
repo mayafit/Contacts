@@ -8,7 +8,9 @@ import type { Contact, ContactGroup } from '../types/Contact';
 import type { ContactStats } from '../model/stats';
 import type { DuplicateGroup } from '../model/duplicates';
 import type { DomainInsight } from '../model/organizations';
-import type { ActivityIndex } from '../model/activity';
+import { describeGap, type ActivityIndex } from '../model/activity';
+import { awaitingReply, buildReachOut, contactsByEmail, gmailThreadUrl } from '../model/reachOut';
+import { signatureChange } from './signatures';
 import {
   clean,
   formatBirthday,
@@ -83,6 +85,10 @@ export interface AssistantContext {
   activity?: ActivityIndex;
   /** Whether Gmail/Calendar activity is connected and loaded */
   activityReady: boolean;
+  /** Recent email threads */
+  threads?: import('../../../services/api/BackendApiClient').ThreadState[];
+  /** Reading email content (signatures) is allowed */
+  signaturesReady?: boolean;
   /** Signed-in user */
   user: { name?: string; email?: string };
   /** Open a contact card */
@@ -330,6 +336,27 @@ export const TOOL_DECLARATIONS = [
     },
   },
   {
+    name: 'reach_out',
+    description:
+      'Who the user should contact now and why: replies they owe, birthdays this week, meetings in the next 2 days, people overdue against their usual rhythm, emails waiting for an answer. Most urgent first.',
+    parameters: {
+      type: 'object',
+      properties: { limit: { type: 'integer', description: 'Default 15' } },
+    },
+  },
+  {
+    name: 'awaiting_reply',
+    description:
+      'Recent email threads where the user owes a reply, and threads where the user is waiting for an answer (with subject and age).',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'read_signature',
+    description:
+      "Read the signature in a contact's latest emails: phone numbers, job title, organization, department, website, LinkedIn. Use it to complete a contact, then propose_changes with what is new.",
+    parameters: { type: 'object', properties: { id: S('Contact id') }, required: ['id'] },
+  },
+  {
     name: 'contact_person',
     description:
       'Offer to call, text, WhatsApp or email a contact: shows a button that opens the phone dialer, messages, WhatsApp or the mail app with your drafted text. The user taps it to send; you cannot send anything yourself.',
@@ -436,6 +463,7 @@ export const summarize = (c: Contact, ctx: AssistantContext): Record<string, unk
     lastInTouch: a?.lastInTouch?.slice(0, 10),
     emails12m: a?.emails12m || undefined,
     meetings12m: a?.meetings12m || undefined,
+    usualRhythm: a?.typicalGapDays ? describeGap(a.typicalGapDays) : undefined,
   };
   Object.keys(out).forEach((k) => {
     const v = out[k];
@@ -890,6 +918,71 @@ export const executeTool = async (
       }
       ctx.openMerge(contacts);
       return { status: 'merge dialog opened; the user reviews and merges there' };
+    }
+    case 'reach_out': {
+      const items = buildReachOut(ctx.contacts, ctx.activity, ctx.threads ?? []);
+      return {
+        total: items.length,
+        activityConnected: ctx.activityReady,
+        items: items.slice(0, Math.min(Number(args.limit) || 15, 50)).map((i) => ({
+          ...summarize(i.contact, ctx),
+          reasons: i.reasons.map((r) => r.text),
+        })),
+      };
+    }
+    case 'awaiting_reply': {
+      if (!ctx.activityReady) {
+        return { error: 'Gmail is not connected (Insights tab → Connect Gmail & Calendar).' };
+      }
+      const { owe, waiting } = awaitingReply(
+        ctx.threads ?? [],
+        contactsByEmail([...ctx.contacts, ...ctx.trashed]),
+      );
+      const shape = (a: (typeof owe)[number]) => ({
+        contact: a.contact
+          ? { id: a.contact.resourceName, name: getDisplayName(a.contact) }
+          : a.email,
+        subject: a.thread.subject,
+        daysSince: a.daysSince,
+        gmail: gmailThreadUrl(a.thread.threadId, ctx.user.email),
+      });
+      return {
+        youOweAReply: owe.slice(0, 20).map(shape),
+        waitingOnThem: waiting.slice(0, 20).map(shape),
+      };
+    }
+    case 'read_signature': {
+      const c = findContact(ctx, args.id);
+      if (!c) {
+        return { error: `No contact ${String(args.id)}` };
+      }
+      if (!ctx.signaturesReady) {
+        return {
+          error:
+            'Reading email content is not allowed yet: Insights → Reach out today → Details from signatures → Allow.',
+        };
+      }
+      const emails = (c.emailAddresses ?? []).map((e) => clean(e.value)).filter(Boolean);
+      if (!emails.length) {
+        return { error: `${getDisplayName(c)} has no email address` };
+      }
+      const r = (
+        await backendApiClient.enrichSignatures([
+          { id: c.resourceName, name: getDisplayName(c), emails },
+        ])
+      ).results[c.resourceName];
+      if (!r?.found) {
+        return { found: false, emailsRead: r?.emails ?? 0 };
+      }
+      const sig = signatureChange(c, r.details ?? {});
+      return {
+        found: true,
+        emailsRead: r.emails,
+        lastEmail: r.lastEmailAt?.slice(0, 10),
+        details: r.details,
+        newForTheContact: sig.change,
+        differentFromTheContact: sig.conflicts,
+      };
     }
     case 'contact_person': {
       const c = findContact(ctx, args.id);

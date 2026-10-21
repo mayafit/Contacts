@@ -21,7 +21,13 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
-import { Close, DeleteOutline, OpenInNew, SaveAlt } from '@mui/icons-material';
+import {
+  Close,
+  DeleteOutline,
+  DriveFileRenameOutline,
+  OpenInNew,
+  SaveAlt,
+} from '@mui/icons-material';
 import ContactActions from '../device/ContactActions';
 import { saveToDevice } from '../../device/device';
 import type { Contact, ContactGroup } from '../../types/Contact';
@@ -40,7 +46,12 @@ import {
   getPhoneticName,
 } from '../../model/contactView';
 import { tokens } from '../../theme/contactsTheme';
-import { formatRelative, type ActivityIndex, type ContactActivity } from '../../model/activity';
+import {
+  describeGap,
+  formatRelative,
+  type ActivityIndex,
+  type ContactActivity,
+} from '../../model/activity';
 import { logger } from '../../../../shared/logger';
 import type { AppError } from '../../types';
 
@@ -56,6 +67,8 @@ export interface ContactCardDrawerProps {
   onDelete?: (contact: Contact) => void;
   /** Email / meeting activity per contact (Gmail & Calendar connected) */
   activity?: ActivityIndex;
+  /** Read this contact's email signature for details */
+  onReadSignature?: (contact: Contact) => void;
 }
 
 /**
@@ -78,6 +91,9 @@ const activityLine = (a: ContactActivity | undefined): string => {
     parts.push(
       `met ${formatRelative(a.lastMeetingAt)}${a.lastMeetingTitle ? ` – “${a.lastMeetingTitle}”` : ''}`,
     );
+  }
+  if (a.typicalGapDays) {
+    parts.push(`usually ${describeGap(a.typicalGapDays)}`);
   }
   if (a.nextMeetingAt) {
     parts.push(
@@ -134,6 +150,7 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({
   onClose,
   onDelete,
   activity,
+  onReadSignature,
 }) => {
   const dispatch = useAppDispatch();
   const entities = useAppSelector(selectContactEntities);
@@ -291,6 +308,16 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({
                 )}
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.25, mt: 0.75, ml: -1 }}>
                   <ContactActions contact={original} size="medium" />
+                  {onReadSignature && original.emailAddresses?.some((e) => e.value) && (
+                    <Tooltip title="Details from their email signature">
+                      <IconButton
+                        aria-label="Details from email signature"
+                        onClick={() => onReadSignature(original)}
+                      >
+                        <DriveFileRenameOutline />
+                      </IconButton>
+                    </Tooltip>
+                  )}
                   <Tooltip title="Save this contact to the device (.vcf)">
                     <IconButton
                       aria-label="Save to device"

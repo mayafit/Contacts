@@ -45,9 +45,11 @@ builder.Services.Configure<GoogleOAuthOptions>(options =>
 builder.Services.AddHostedService<VaultConfigurationService>();
 builder.Services.AddSingleton<GoogleTokenService>();
 builder.Services.AddSingleton<ActivityStore>();
+builder.Services.AddSingleton<ScopePreferences>();
 
 // Assistant: Gemini key from Vault (Gemini__ApiKey); without it the assistant reports itself disabled
 builder.Services.Configure<ContactsApi.WebApi.Controllers.GeminiOptions>(builder.Configuration.GetSection("Gemini"));
+builder.Services.AddSingleton<GeminiService>();
 builder.Services.AddHttpClient("gemini", c =>
 {
     c.BaseAddress = new Uri("https://generativelanguage.googleapis.com/");

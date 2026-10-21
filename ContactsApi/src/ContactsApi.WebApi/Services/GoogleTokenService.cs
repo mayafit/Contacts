@@ -118,6 +118,35 @@ public class GoogleTokenService
         return refreshed.Value.AccessToken;
     }
 
+    private static readonly HttpClient TokenInfo = new() { Timeout = TimeSpan.FromSeconds(10) };
+
+    /// <summary>
+    /// The scopes a user's remembered refresh token carries (via Google's tokeninfo).
+    /// </summary>
+    /// <param name="userId">Google account id</param>
+    /// <returns>Scopes, or null when unknown</returns>
+    public async Task<string[]?> StoredGrantScopesAsync(string userId)
+    {
+        var token = await GetAccessTokenForUserAsync(userId);
+        if (token == null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var json = await TokenInfo.GetStringAsync(
+                $"https://oauth2.googleapis.com/tokeninfo?access_token={Uri.EscapeDataString(token)}");
+            var scope = System.Text.Json.Nodes.JsonNode.Parse(json)?["scope"]?.GetValue<string>();
+            return scope?.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException)
+        {
+            _logger.LogWarning(ex, "tokeninfo failed");
+            return null;
+        }
+    }
+
     /// <summary>
     /// Exchanges a refresh token for a new access token.
     /// </summary>

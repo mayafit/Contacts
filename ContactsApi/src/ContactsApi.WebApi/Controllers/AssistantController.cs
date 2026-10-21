@@ -50,22 +50,18 @@ public class AssistantController : ControllerBase
     /// <summary>Calls per user per day, on top of the per-minute limit</summary>
     private const int DailyLimit = 600;
 
-    private static readonly ConcurrentDictionary<string, Queue<DateTime>> Calls = new();
 
-    private readonly IHttpClientFactory _http;
-    private readonly GeminiOptions _options;
+    private readonly GeminiService _gemini;
     private readonly GoogleTokenService _tokens;
     private readonly ILogger<AssistantController> _logger;
 
     /// <summary>Creates the controller</summary>
     public AssistantController(
-        IHttpClientFactory http,
-        Microsoft.Extensions.Options.IOptions<GeminiOptions> options,
+        GeminiService gemini,
         GoogleTokenService tokens,
         ILogger<AssistantController> logger)
     {
-        _http = http;
-        _options = options.Value;
+        _gemini = gemini;
         _tokens = tokens;
         _logger = logger;
     }
@@ -74,7 +70,7 @@ public class AssistantController : ControllerBase
     /// <returns>Enabled flag and model</returns>
     [HttpGet("status")]
     public IActionResult Status() =>
-        Ok(ApiResponse<object>.SuccessResponse(new { enabled = !string.IsNullOrEmpty(_options.ApiKey), model = _options.Model }));
+        Ok(ApiResponse<object>.SuccessResponse(new { enabled = _gemini.Enabled, model = _gemini.Model }));
 
     /// <summary>
     /// One generateContent call. Body: systemInstruction, contents, tools, toolConfig
@@ -177,7 +173,7 @@ public class AssistantController : ControllerBase
         });
     }
 
-    /// <summary>Signed in, configured and within the per-user rate limit; otherwise the refusal</summary>
+    /// <summary>Signed in, configured and within the limits; otherwise the refusal</summary>
     private async Task<IActionResult?> CheckAsync(string kind, int perMinute)
     {
         if (await _tokens.GetAccessTokenAsync(HttpContext) == null)
@@ -185,116 +181,25 @@ public class AssistantController : ControllerBase
             return Unauthorized(ApiResponse<object>.ErrorResponse("SESSION_EXPIRED", "Your Google session expired. Please sign in again."));
         }
 
-        if (string.IsNullOrEmpty(_options.ApiKey))
+        if (!_gemini.Enabled)
         {
             return StatusCode(StatusCodes.Status503ServiceUnavailable,
                 ApiResponse<object>.ErrorResponse("ASSISTANT_DISABLED", "The assistant is not configured (no Gemini key)."));
         }
 
         var user = HttpContext.Session.GetString(GoogleTokenService.UserIdKey) ?? string.Empty;
-        var everyone = Calls.GetOrAdd("day:*", _ => new Queue<DateTime>());
-        lock (everyone)
-        {
-            while (everyone.Count > 0 && DateTime.UtcNow - everyone.Peek() > TimeSpan.FromDays(1))
-            {
-                everyone.Dequeue();
-            }
-
-            if (everyone.Count >= _options.GlobalDailyLimit)
-            {
-                _logger.LogWarning("Assistant global daily limit reached ({Limit})", _options.GlobalDailyLimit);
-                return StatusCode(StatusCodes.Status429TooManyRequests,
-                    ApiResponse<object>.ErrorResponse("RATE_LIMITED", "The assistant is busy today. Try again tomorrow."));
-            }
-
-            everyone.Enqueue(DateTime.UtcNow);
-        }
-
-        var day = Calls.GetOrAdd($"day:{user}", _ => new Queue<DateTime>());
-        lock (day)
-        {
-            while (day.Count > 0 && DateTime.UtcNow - day.Peek() > TimeSpan.FromDays(1))
-            {
-                day.Dequeue();
-            }
-
-            if (day.Count >= DailyLimit)
-            {
-                return StatusCode(StatusCodes.Status429TooManyRequests,
-                    ApiResponse<object>.ErrorResponse("RATE_LIMITED", "The assistant's daily limit is reached. Try again tomorrow."));
-            }
-
-            day.Enqueue(DateTime.UtcNow);
-        }
-
-        var calls = Calls.GetOrAdd($"{kind}:{user}", _ => new Queue<DateTime>());
-        lock (calls)
-        {
-            var now = DateTime.UtcNow;
-            while (calls.Count > 0 && now - calls.Peek() > TimeSpan.FromMinutes(1))
-            {
-                calls.Dequeue();
-            }
-
-            if (calls.Count >= perMinute)
-            {
-                return StatusCode(StatusCodes.Status429TooManyRequests,
-                    ApiResponse<object>.ErrorResponse("RATE_LIMITED", "Too many assistant requests. Wait a minute."));
-            }
-
-            calls.Enqueue(now);
-        }
-
-        return null;
+        var refusal = _gemini.TryConsume(user, kind, perMinute, DailyLimit);
+        return refusal == null
+            ? null
+            : StatusCode(StatusCodes.Status429TooManyRequests, ApiResponse<object>.ErrorResponse("RATE_LIMITED", refusal));
     }
 
     /// <summary>Calls generateContent and shapes the reply</summary>
     private async Task<IActionResult> CallAsync(JsonObject request, Func<JsonNode, JsonNode> shape)
     {
-        var client = _http.CreateClient("gemini");
-        using var message = new HttpRequestMessage(
-            HttpMethod.Post, $"v1beta/models/{Uri.EscapeDataString(_options.Model)}:generateContent")
-        {
-            Content = new StringContent(request.ToJsonString(), Encoding.UTF8, "application/json")
-        };
-        message.Headers.Add("x-goog-api-key", _options.ApiKey);
-
-        HttpResponseMessage response;
-        try
-        {
-            response = await client.SendAsync(message, HttpContext.RequestAborted);
-        }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
-        {
-            _logger.LogWarning(ex, "Gemini unreachable");
-            return StatusCode(StatusCodes.Status502BadGateway,
-                ApiResponse<object>.ErrorResponse("ASSISTANT_UNAVAILABLE", "Gemini did not answer. Try again."));
-        }
-
-        var text = await response.Content.ReadAsStringAsync();
-        if (!response.IsSuccessStatusCode)
-        {
-            string detail;
-            try
-            {
-                detail = JsonNode.Parse(text)?["error"]?["message"]?.GetValue<string>() ?? text;
-            }
-            catch (JsonException)
-            {
-                detail = text;
-            }
-
-            _logger.LogWarning("Gemini returned {Status}: {Detail}", (int)response.StatusCode, detail);
-            var (status, code) = (int)response.StatusCode switch
-            {
-                429 => (StatusCodes.Status429TooManyRequests, "RATE_LIMITED"),
-                400 => (StatusCodes.Status400BadRequest, "ASSISTANT_REQUEST_INVALID"),
-                _ => (StatusCodes.Status502BadGateway, "ASSISTANT_UNAVAILABLE")
-            };
-            return StatusCode(status, ApiResponse<object>.ErrorResponse(code, $"Gemini: {detail}"));
-        }
-
-        var node = JsonNode.Parse(text) ?? new JsonObject();
-        return Ok(ApiResponse<JsonNode>.SuccessResponse(shape(node)));
+        var result = await _gemini.GenerateAsync(request, HttpContext.RequestAborted);
+        return result.Ok
+            ? Ok(ApiResponse<JsonNode>.SuccessResponse(shape(result.Body!)))
+            : StatusCode(result.Status, ApiResponse<object>.ErrorResponse(result.Code!, result.Error!));
     }
 }

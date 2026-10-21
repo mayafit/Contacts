@@ -17,6 +17,9 @@ public class ActivityConnection
 
     /// <summary>Calendar events granted</summary>
     public bool Calendar { get; set; }
+
+    /// <summary>Gmail message content granted (signatures)</summary>
+    public bool Signatures { get; set; }
 }
 
 /// <summary>Activity snapshot state, without the per-address data</summary>
@@ -60,6 +63,8 @@ public class DirectoryMatch
     public int Meetings { get; set; }
     /// <summary>Last seen</summary>
     public DateTime? LastSeen { get; set; }
+    /// <summary>Name match strength (suggestions): 3 same name, 2 address spells it, 1 name plus a word</summary>
+    public int Score { get; set; }
 }
 
 /// <summary>Status plus the activity per address</summary>
@@ -67,6 +72,25 @@ public class ActivityResponse : ActivityStatusResponse
 {
     /// <summary>Activity per lower-case email address</summary>
     public Dictionary<string, PersonActivity> People { get; set; } = new();
+
+    /// <summary>Recent threads with people, newest first</summary>
+    public List<MailThread> Threads { get; set; } = new();
+}
+
+/// <summary>A contact without an email, with the names to look for</summary>
+public class NameQuery
+{
+    /// <summary>Contact id</summary>
+    public string Id { get; set; } = string.Empty;
+    /// <summary>Name variants (Hebrew name, phonetic name, nickname)</summary>
+    public List<string> Names { get; set; } = new();
+}
+
+/// <summary>Request for email suggestions</summary>
+public class SuggestEmailsRequest
+{
+    /// <summary>Contacts to find addresses for (at most 2,000)</summary>
+    public List<NameQuery> Contacts { get; set; } = new();
 }
 
 /// <summary>
@@ -118,6 +142,7 @@ public class ActivityController : ControllerBase
         var snapshot = await _store.GetAsync(userId);
         var response = Fill(new ActivityResponse(), snapshot);
         response.People = snapshot.People;
+        response.Threads = (snapshot.Threads ?? new()).Values.OrderByDescending(t => t.LastAt).ToList();
         return Ok(ApiResponse<ActivityResponse>.SuccessResponse(response));
     }
 
@@ -165,6 +190,63 @@ public class ActivityController : ControllerBase
             })
             .ToList();
         return Ok(ApiResponse<object>.SuccessResponse(new { available = snapshot.Directory != null, matches }));
+    }
+
+    /// <summary>
+    /// For contacts without an email, addresses from mail and meetings whose
+    /// display name (or the address itself, e.g. dana.cohen@) matches one of the
+    /// contact's names. Exact name matches first.
+    /// </summary>
+    /// <param name="request">Contacts and their name variants</param>
+    /// <returns>Candidates per contact id</returns>
+    [HttpPost("suggest-emails")]
+    public async Task<IActionResult> SuggestEmails([FromBody] SuggestEmailsRequest request)
+    {
+        var userId = await SignedInUserAsync();
+        if (userId == null)
+        {
+            return SessionExpired();
+        }
+
+        var snapshot = await _store.GetAsync(userId);
+        // Normalized once per request, not once per contact
+        var directory = (snapshot.Directory ?? new Dictionary<string, DirectoryEntry>())
+            .Select(kv => (kv.Key, Entry: kv.Value, Names: kv.Value.Names.Select(NameMatcher.Normalize).ToList()))
+            .ToList();
+        var result = new Dictionary<string, List<DirectoryMatch>>();
+        foreach (var c in (request.Contacts ?? new()).Take(2000))
+        {
+            var variants = c.Names.Select(NameMatcher.Normalize).Where(v => v.Contains(' ')).Distinct().ToList();
+            if (variants.Count == 0)
+            {
+                continue;
+            }
+
+            var found = directory
+                .Select(d => (d, score: NameMatcher.Score(variants, d.Key, d.Names)))
+                .Where(x => x.score > 0)
+                .OrderByDescending(x => x.score)
+                .ThenByDescending(x => x.d.Entry.Sent * 3 + x.d.Entry.Meetings * 3 + x.d.Entry.Received)
+                .Take(3)
+                .Select(x => new DirectoryMatch
+                {
+                    Email = x.d.Key,
+                    Names = x.d.Entry.Names,
+                    Sent = x.d.Entry.Sent,
+                    Received = x.d.Entry.Received,
+                    CopiedTogether = x.d.Entry.CopiedTogether,
+                    Meetings = x.d.Entry.Meetings,
+                    LastSeen = x.d.Entry.LastSeen,
+                    Score = x.score
+                })
+                .ToList();
+            if (found.Count > 0)
+            {
+                result[c.Id] = found;
+            }
+        }
+
+        return Ok(ApiResponse<object>.SuccessResponse(new { available = snapshot.Directory != null, suggestions = result }));
     }
 
     /// <summary>Starts bringing the snapshot up to date (no-op while a scan runs)</summary>
@@ -219,8 +301,10 @@ public class ActivityController : ControllerBase
             .Split(' ', StringSplitOptions.RemoveEmptyEntries);
         return new ActivityConnection
         {
-            Gmail = granted.Contains(ActivityScopes.Gmail),
-            Calendar = granted.Contains(ActivityScopes.Calendar)
+            // gmail.readonly (email content opt-in) allows everything metadata does
+            Gmail = granted.Contains(ActivityScopes.Gmail) || granted.Contains(ActivityScopes.GmailRead),
+            Calendar = granted.Contains(ActivityScopes.Calendar),
+            Signatures = granted.Contains(ActivityScopes.GmailRead)
         };
     }
 
