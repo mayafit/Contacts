@@ -77,7 +77,7 @@ public class DirectoryEntry
 /// The state of a recent email thread with a person: who wrote last, and when.
 /// Used for "you owe a reply" and "waiting for an answer".
 /// </summary>
-public class ThreadState
+public class MailThread
 {
     /// <summary>Gmail thread id (for the link to the thread)</summary>
     public string ThreadId { get; set; } = string.Empty;
@@ -93,6 +93,8 @@ public class ThreadState
     public bool InInbox { get; set; }
     /// <summary>Messages seen in the thread</summary>
     public int Messages { get; set; }
+    /// <summary>Gmail id of the last message (its labels tell whether it is still in the inbox)</summary>
+    public string? LastMessageId { get; set; }
 }
 
 /// <summary>Everything known about a user's activity, kept per Google account</summary>
@@ -131,5 +133,5 @@ public class ActivitySnapshot
     /// Recent one-to-few threads with people (last 45 days). Null in snapshots
     /// made before it existed (a full scan builds it).
     /// </summary>
-    public Dictionary<string, ThreadState>? Threads { get; set; }
+    public Dictionary<string, MailThread>? Threads { get; set; }
 }

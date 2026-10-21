@@ -30,13 +30,22 @@ public class AuthController : ControllerBase
     private readonly IConfiguration _configuration;
     private readonly GoogleOAuthOptions _oauthOptions;
     private readonly GoogleTokenService _tokens;
+    private readonly ScopePreferences _prefs;
+
+    /// <summary>Session: opt-ins this sign-in asks for (JSON)</summary>
+    private const string RequestedKey = "RequestedOptIns";
+
+    /// <summary>Session: the scopes the next sign-in step must ask for</summary>
+    private const string DesiredScopesKey = "DesiredScopes";
 
     public AuthController(
         ILogger<AuthController> logger,
         IConfiguration configuration,
         IOptions<GoogleOAuthOptions> oauthOptions,
-        GoogleTokenService tokens)
+        GoogleTokenService tokens,
+        ScopePreferences prefs)
     {
+        _prefs = prefs;
         _logger = logger;
         _configuration = configuration;
         _oauthOptions = oauthOptions.Value;
@@ -50,7 +59,11 @@ public class AuthController : ControllerBase
     [HttpGet("login")]
     /// <param name="consent">Show Google's consent screen (to get a new refresh token)</param>
     /// <param name="activity">Also ask for Gmail metadata and Calendar access (opt-in)</param>
-    public async Task<IActionResult> Login([FromQuery] bool consent = false, [FromQuery] bool activity = false)
+    /// <param name="again">Second step: ask for the scopes the callback found missing</param>
+    /// <param name="hint">Account to sign in (second step)</param>
+    public async Task<IActionResult> Login(
+        [FromQuery] bool consent = false, [FromQuery] bool activity = false, [FromQuery] bool signatures = false,
+        [FromQuery] bool again = false, [FromQuery] string? hint = null)
     {
         try
         {
@@ -58,17 +71,39 @@ public class AuthController : ControllerBase
 
             var clientId = _oauthOptions.ClientId;
             var redirectUri = _oauthOptions.RedirectUri;
-            var scopes = (_oauthOptions.Scopes ?? Array.Empty<string>()).ToList();
-            HttpContext.Session.Remove(AfterLoginKey);
+            // Exactly the scopes this user opted into (not include_granted_scopes:
+            // Gmail refuses content reads when gmail.metadata is also on the token)
+            var baseScopes = _oauthOptions.Scopes ?? Array.Empty<string>();
+            var userId = HttpContext.Session.GetString(GoogleTokenService.UserIdKey);
+            var optIns = userId == null ? new OptIns() : await _prefs.GetAsync(userId);
+            var desired = HttpContext.Session.GetString(DesiredScopesKey);
+            if (!again && desired == null)
+            {
+                HttpContext.Session.Remove(AfterLoginKey);
+            }
+
             if (activity)
             {
-                // Incremental: added to what was granted before (include_granted_scopes).
-                // Consent is needed anyway, and it returns a refresh token that covers them.
-                scopes.Add(ActivityScopes.Gmail);
-                scopes.Add(ActivityScopes.Calendar);
+                optIns.Activity = true;
                 consent = true;
                 HttpContext.Session.SetString(AfterLoginKey, "/?connected=activity");
             }
+
+            if (signatures)
+            {
+                optIns.Signatures = true;
+                consent = true;
+                HttpContext.Session.SetString(AfterLoginKey, "/?connected=signatures");
+            }
+
+            HttpContext.Session.SetString(RequestedKey, System.Text.Json.JsonSerializer.Serialize(optIns));
+            var scopes = desired != null && !activity && !signatures
+                ? desired.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList()
+                : ScopePreferences.ScopesFor(baseScopes, optIns);
+            HttpContext.Session.Remove(DesiredScopesKey);
+            // A second step only follows a plain sign-in that did not know the account
+            // (never a consent screen: unticked boxes must not bring it back)
+            HttpContext.Session.SetString("AgainStep", again || consent || desired != null ? "1" : "0");
 
             if (string.IsNullOrEmpty(clientId) || string.IsNullOrEmpty(redirectUri))
             {
@@ -94,7 +129,10 @@ public class AuthController : ControllerBase
             authUrl.Append($"&scope={Uri.EscapeDataString(string.Join(" ", scopes))}");
             authUrl.Append($"&state={Uri.EscapeDataString(state)}");
             authUrl.Append($"&access_type=offline"); // Request refresh token
-            authUrl.Append($"&include_granted_scopes=true");
+            if (!string.IsNullOrEmpty(hint))
+            {
+                authUrl.Append($"&login_hint={Uri.EscapeDataString(hint)}");
+            }
             // The consent screen is shown only when we need a new refresh token
             // (first sign-in, or the remembered one stopped working). Otherwise
             // Google signs the user straight in.
@@ -111,6 +149,13 @@ public class AuthController : ControllerBase
             _logger.LogError(ex, "Error initiating OAuth flow");
             throw;
         }
+    }
+
+    /// <summary>The opt-ins the current sign-in asked for</summary>
+    private OptIns RequestedOptIns()
+    {
+        var json = HttpContext.Session.GetString(RequestedKey);
+        return json == null ? new OptIns() : System.Text.Json.JsonSerializer.Deserialize<OptIns>(json) ?? new OptIns();
     }
 
     /// <summary>
@@ -132,12 +177,14 @@ public class AuthController : ControllerBase
             if (!string.IsNullOrEmpty(error))
             {
                 _logger.LogWarning("OAuth error: {Error}", error);
-                // Declining the Gmail/Calendar opt-in leaves the existing sign-in as it was
-                if (HttpContext.Session.GetString(AfterLoginKey) != null
+                // Declining an opt-in (Gmail & Calendar, or email content) leaves the
+                // existing sign-in as it was
+                var optIn = HttpContext.Session.GetString(AfterLoginKey);
+                if (optIn is "/?connected=activity" or "/?connected=signatures"
                     && HttpContext.Session.GetString(GoogleTokenService.UserIdKey) != null)
                 {
                     HttpContext.Session.Remove(AfterLoginKey);
-                    return RedirectToFrontend("/?connected=activity&declined=1");
+                    return RedirectToFrontend($"{optIn}&declined=1");
                 }
 
                 return RedirectToFrontend($"/login?error={Uri.EscapeDataString(error)}");
@@ -226,8 +273,48 @@ public class AuthController : ControllerBase
                 {
                     await _tokens.ForgetRefreshTokenAsync(payload.Subject);
                     _logger.LogInformation("No usable refresh token; asking for consent once");
-                    return Redirect("/api/auth/login?consent=true");
+                    // The new refresh token must cover the user's opt-ins, not just the base scopes
+                    var stored = await _prefs.GetAsync(payload.Subject);
+                    HttpContext.Session.SetString(DesiredScopesKey, string.Join(" ",
+                        ScopePreferences.ScopesFor(_oauthOptions.Scopes ?? Array.Empty<string>(), stored.With(RequestedOptIns()))));
+                    await HttpContext.Session.CommitAsync();
+                    return Redirect($"/api/auth/login?consent=true&hint={Uri.EscapeDataString(payload.Email ?? string.Empty)}");
                 }
+            }
+
+            // A first step that did not know the account asked for the base scopes only:
+            // ask once more, silently, for what this account opted into
+            var savedOptIns = await _prefs.FindAsync(payload.Subject);
+            if (savedOptIns == null)
+            {
+                // Accounts from before opt-ins were saved: take them from what the
+                // remembered refresh token was granted
+                var granted = await _tokens.StoredGrantScopesAsync(payload.Subject);
+                savedOptIns = granted == null ? new OptIns() : ScopePreferences.FromScopes(granted);
+                if (granted != null)
+                {
+                    await _prefs.SaveAsync(payload.Subject, savedOptIns);
+                }
+            }
+
+            var wanted = ScopePreferences.ScopesFor(_oauthOptions.Scopes ?? Array.Empty<string>(), savedOptIns.With(RequestedOptIns()));
+            if (HttpContext.Session.GetString("AgainStep") != "1" && wanted.Except(grantedScopes).Any())
+            {
+                HttpContext.Session.SetString(DesiredScopesKey, string.Join(" ", wanted));
+                await HttpContext.Session.CommitAsync();
+                return Redirect($"/api/auth/login?again=true&hint={Uri.EscapeDataString(payload.Email ?? string.Empty)}");
+            }
+
+            // What the user ended up granting is their opt-in (they can untick boxes)
+            var requested = RequestedOptIns();
+            if (requested.Activity || requested.Signatures || savedOptIns.Activity || savedOptIns.Signatures)
+            {
+                await _prefs.SaveAsync(payload.Subject, new OptIns
+                {
+                    Signatures = grantedScopes.Contains(ActivityScopes.GmailRead),
+                    Activity = grantedScopes.Contains(ActivityScopes.Gmail) || grantedScopes.Contains(ActivityScopes.Calendar)
+                        || (grantedScopes.Contains(ActivityScopes.GmailRead) && (requested.Activity || savedOptIns.Activity))
+                });
             }
 
             HttpContext.Session.SetString(GoogleTokenService.AccessTokenKey, tokenResponse.AccessToken);
@@ -236,7 +323,7 @@ public class AuthController : ControllerBase
             HttpContext.Session.SetString("UserName", payload.Name ?? payload.Email ?? string.Empty);
             HttpContext.Session.SetString("UserPicture", payload.Picture ?? string.Empty);
 
-            // Everything granted so far (include_granted_scopes), e.g. Gmail and Calendar
+            // The scopes of this sign-in (the user's opt-ins)
             HttpContext.Session.SetString(ActivityScopes.SessionKey, tokenResponse.Scope ?? string.Empty);
 
             // Store token expiry
@@ -257,7 +344,7 @@ public class AuthController : ControllerBase
             var afterLogin = HttpContext.Session.GetString(AfterLoginKey);
             HttpContext.Session.Remove(AfterLoginKey);
             await HttpContext.Session.CommitAsync();
-            return RedirectToFrontend(afterLogin == "/?connected=activity" ? afterLogin : "/");
+            return RedirectToFrontend(afterLogin is "/?connected=activity" or "/?connected=signatures" ? afterLogin : "/");
         }
         catch (Exception ex)
         {

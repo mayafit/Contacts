@@ -92,7 +92,7 @@ export interface PersonActivity {
 
 /** Activity snapshot state */
 export interface ActivityStatusResponse {
-  connected: { gmail: boolean; calendar: boolean };
+  connected: { gmail: boolean; calendar: boolean; signatures?: boolean };
   status: 'none' | 'running' | 'ready' | 'error';
   progress?: { phase: string; done: number } | null;
   error?: string | null;
@@ -104,6 +104,16 @@ export interface ActivityStatusResponse {
   hasDirectory?: boolean;
 }
 
+/** Signature reading result for one contact */
+export interface SignatureResult {
+  /** Details were extracted */
+  found: boolean;
+  /** Emails read */
+  emails: number;
+  lastEmailAt?: string;
+  details?: import('../../entries/Contacts/assistant/signatures').SignatureDetails | null;
+}
+
 /** Someone seen in mail headers or as a meeting guest */
 export interface DirectoryMatch {
   email: string;
@@ -113,6 +123,8 @@ export interface DirectoryMatch {
   copiedTogether: number;
   meetings: number;
   lastSeen?: string | null;
+  /** Name match strength (suggestions): 3 same name, 2 address spells it, 1 name plus a word */
+  score?: number;
 }
 
 /** A recent email thread with a person: who wrote last, and when */
@@ -585,6 +597,28 @@ export class BackendApiClient {
   // ===================================
   // Activity (Gmail + Calendar)
   // ===================================
+
+  /** Starts the opt-in to reading email content, for signatures (leaves the page) */
+  connectSignatures(): void {
+    window.location.href = `${this.baseUrl}/auth/login?signatures=true`;
+  }
+
+  /**
+   * Contact details from the signatures in each contact's latest emails (up to 10)
+   * @param contacts - Contacts with their names and addresses
+   * @returns Per contact id: whether mail was found, and the details
+   */
+  async enrichSignatures(
+    contacts: { id: string; name: string; emails: string[] }[],
+  ): Promise<{ results: Record<string, SignatureResult>; rateLimited?: boolean }> {
+    return unwrap(
+      await this.request<{ results: Record<string, SignatureResult>; rateLimited?: boolean }>(
+        '/enrich/signatures',
+        { method: 'POST', body: JSON.stringify({ contacts }) },
+      ),
+      'Failed to read signatures',
+    );
+  }
 
   /** Starts the opt-in to Gmail and Calendar access (leaves the page) */
   connectActivity(): void {

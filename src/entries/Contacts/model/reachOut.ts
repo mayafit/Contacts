@@ -117,7 +117,7 @@ export const buildReachOut = (
   const { owe, waiting } = awaitingReply(threads, byEmail, now);
   const reasons = new Map<string, Reason[]>();
   const add = (c: Contact, r: Reason) => {
-    if (dismissed.has(`${c.resourceName}:${r.kind}`)) {
+    if (dismissed.has(reasonKey(c, r))) {
       return;
     }
     const list = reasons.get(c.resourceName) ?? [];
@@ -197,9 +197,20 @@ export const buildReachOut = (
 };
 
 /**
- * Gmail link to a thread.
+ * Key for "Done": per thread for email reasons, so a new email from the same
+ * person shows up again.
+ * @param c - Contact
+ * @param r - Reason
+ * @returns Key
+ */
+export const reasonKey = (c: Contact, r: Reason): string =>
+  `${c.resourceName}:${r.kind}${r.thread ? `:${r.thread.threadId}` : ''}`;
+
+/**
+ * Gmail link to a thread, in the given account's mailbox.
  * @param threadId - Thread id
+ * @param account - Signed-in address (opens the right mailbox when several are signed in)
  * @returns URL
  */
-export const gmailThreadUrl = (threadId: string): string =>
-  `https://mail.google.com/mail/u/0/#all/${encodeURIComponent(threadId)}`;
+export const gmailThreadUrl = (threadId: string, account?: string): string =>
+  `https://mail.google.com/mail/${account ? `?authuser=${encodeURIComponent(account)}` : 'u/0/'}#all/${encodeURIComponent(threadId)}`;

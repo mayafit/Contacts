@@ -39,7 +39,7 @@ public class ActivityAggregator
     public int UndecodedNames => Directory.Values.Sum(e => e.Names.Count(n => n.Contains("=?", StringComparison.Ordinal)));
 
     /// <summary>Recent threads by id (see <see cref="AddThreadMessage"/>)</summary>
-    public Dictionary<string, ThreadState> Threads { get; private set; } = new();
+    public Dictionary<string, MailThread> Threads { get; private set; } = new();
 
     /// <summary>Threads older than this are not kept</summary>
     public static readonly TimeSpan ThreadWindow = TimeSpan.FromDays(45);
@@ -59,24 +59,36 @@ public class ActivityAggregator
     /// <param name="inInbox">In the inbox</param>
     /// <param name="isBulk">List-Id / List-Unsubscribe / Auto-Submitted / Precedence: bulk</param>
     /// <param name="now">Current time</param>
+    /// <param name="messageId">Gmail message id</param>
     public void AddThreadMessage(
         string? threadId, DateTime at, string? from, string? to, string? cc, string? subject,
-        bool isSent, bool inInbox, bool isBulk, DateTime now)
+        bool isSent, bool inInbox, bool isBulk, DateTime now, string? messageId = null)
     {
-        if (string.IsNullOrEmpty(threadId) || isBulk || now - at > ThreadWindow)
+        if (string.IsNullOrEmpty(threadId) || now - at > ThreadWindow || _excludedThreads.Contains(threadId))
         {
             return;
         }
 
         var sender = ParseAddresses(from).FirstOrDefault();
         var fromMe = isSent || (sender != null && _myEmails.Contains(sender));
+        var everyone = ParseAddresses(from).Concat(ParseAddresses(to)).Concat(ParseAddresses(cc))
+            .Where(a => !_myEmails.Contains(a)).Distinct().ToList();
+        // A thread with a list, a newsletter, an automatic sender or a crowd in any
+        // message is not a conversation with a person: drop it entirely
+        if (isBulk || everyone.Count > 4 || everyone.Any(IsNoReply))
+        {
+            _excludedThreads.Add(threadId);
+            Threads.Remove(threadId);
+            return;
+        }
+
         var counterparts = (fromMe
                 ? ParseAddresses(to).Concat(ParseAddresses(cc))
                 : sender == null ? Enumerable.Empty<string>() : new[] { sender })
             .Where(a => !_myEmails.Contains(a))
             .Distinct()
             .ToList();
-        if (counterparts.Count == 0 || counterparts.Count > 4 || counterparts.Any(IsNoReply))
+        if (counterparts.Count == 0)
         {
             return;
         }
@@ -88,9 +100,17 @@ public class ActivityAggregator
             {
                 return;
             }
+
+            existing.LastAt = at;
+            existing.LastFromMe = fromMe;
+            existing.Counterparts = counterparts;
+            existing.Subject = EncodedWords.Decode(subject)?.Trim();
+            existing.InInbox = inInbox;
+            existing.LastMessageId = messageId;
+            return;
         }
 
-        Threads[threadId] = new ThreadState
+        Threads[threadId] = new MailThread
         {
             ThreadId = threadId,
             LastAt = at,
@@ -98,14 +118,31 @@ public class ActivityAggregator
             Counterparts = counterparts,
             Subject = EncodedWords.Decode(subject)?.Trim(),
             InInbox = inInbox,
-            Messages = (existing?.Messages ?? 0) + 1
+            Messages = 1,
+            LastMessageId = messageId
         };
     }
 
+    /// <summary>
+    /// A message's inbox label changed (archived, or moved back): updates the
+    /// thread when it is the thread's last message.
+    /// </summary>
+    /// <param name="messageId">Gmail message id</param>
+    /// <param name="inInbox">Now in the inbox</param>
+    public void SetInbox(string messageId, bool inInbox)
+    {
+        foreach (var t in Threads.Values.Where(t => t.LastMessageId == messageId))
+        {
+            t.InInbox = inInbox;
+        }
+    }
+
+    private readonly HashSet<string> _excludedThreads = new();
+
     /// <summary>Uses earlier thread states (incremental scans)</summary>
     /// <param name="threads">Threads from the stored snapshot</param>
-    public void SeedThreads(Dictionary<string, ThreadState>? threads) =>
-        Threads = threads == null ? new() : new Dictionary<string, ThreadState>(threads);
+    public void SeedThreads(Dictionary<string, MailThread>? threads) =>
+        Threads = threads == null ? new() : new Dictionary<string, MailThread>(threads);
 
     /// <summary>
     /// Keeps threads with people the user knows (contacts, or people written to)

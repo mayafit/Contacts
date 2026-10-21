@@ -50,4 +50,18 @@ public class ThreadsAndNamesTests
     [InlineData("דנה כהן", "d1@corp.com", "דנה כהן", 3)]
     public void Scores_name_matches(string contact, string address, string seen, int expected) =>
         Assert.Equal(expected, NameMatcher.Score(new[] { NameMatcher.Normalize(contact) }, address, new[] { seen }));
+
+    [Fact]
+    public void Crowded_received_mail_and_archiving()
+    {
+        var a = Create();
+        a.AddThreadMessage("crowd", Now.AddDays(-1), "dana@x.com", "me@gmail.com, a@1.com, b@1.com, c@1.com, d@1.com", null, "All hands", false, true, false, Now, "m1");
+        a.AddThreadMessage("t", Now.AddDays(-1), "dana@x.com", "me@gmail.com", null, "Q", false, true, false, Now, "m2");
+        a.AddThreadMessage("t", Now.AddDays(-3), "me@gmail.com", "dana@x.com", null, "Q", true, false, false, Now, "m3");
+        a.SetInbox("m2", false);
+        a.PruneThreads(Now);
+        Assert.False(a.Threads.ContainsKey("crowd"));
+        Assert.False(a.Threads["t"].InInbox);
+        Assert.Equal(2, a.Threads["t"].Messages);
+    }
 }

@@ -111,8 +111,8 @@ describe('reach out', () => {
       undefined,
       [thread({})],
       NOW,
-      new Set(['people/b:birthday']),
+      new Set(['people/b:birthday', 'people/a:oweReply:t']),
     );
-    expect(left.map((i) => i.contact.resourceName)).toEqual(['people/a']);
+    expect(left.map((i) => i.contact.resourceName)).toEqual([]);
   });
 });

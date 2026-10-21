@@ -10,6 +10,7 @@ import {
   AutoAwesome,
   Cake,
   Check,
+  DriveFileRenameOutline,
   Event,
   HourglassBottom,
   MarkEmailUnread,
@@ -23,6 +24,7 @@ import {
   buildReachOut,
   contactsByEmail,
   gmailThreadUrl,
+  reasonKey,
   type ReachOutItem,
   type ReasonKind,
 } from '../../model/reachOut';
@@ -46,6 +48,10 @@ export interface ReachOutSectionProps {
   onSuggestEmails: () => void;
   /** Contacts without an email address */
   withoutEmail: number;
+  /** Open the signature reader for the most-emailed contacts */
+  onSignatures: () => void;
+  /** Signed-in address, for Gmail links */
+  account?: string;
 }
 
 const ICONS: Record<ReasonKind, React.ReactNode> = {
@@ -94,6 +100,8 @@ const ReachOutSection: React.FC<ReachOutSectionProps> = ({
   onDraft,
   onSuggestEmails,
   withoutEmail,
+  onSignatures,
+  account,
 }) => {
   const [dismissed, setDismissed] = useState<Record<string, number>>(loadDismissed);
   const [all, setAll] = useState(false);
@@ -109,7 +117,7 @@ const ReachOutSection: React.FC<ReachOutSectionProps> = ({
   const done = (item: ReachOutItem) => {
     const until = Date.now() + DISMISS_DAYS * 86_400_000;
     const next = { ...dismissed };
-    item.reasons.forEach((r) => (next[`${item.contact.resourceName}:${r.kind}`] = until));
+    item.reasons.forEach((r) => (next[reasonKey(item.contact, r)] = until));
     setDismissed(next);
     try {
       localStorage.setItem(DISMISS_KEY, JSON.stringify(next));
@@ -132,6 +140,11 @@ const ReachOutSection: React.FC<ReachOutSectionProps> = ({
             {items.length ? `${items.length} people` : 'Nobody needs you today'}
           </Typography>
           <Box sx={{ flex: 1 }} />
+          {connected && (
+            <Button size="small" startIcon={<DriveFileRenameOutline />} onClick={onSignatures}>
+              Details from signatures
+            </Button>
+          )}
           {connected && withoutEmail > 0 && (
             <Button size="small" startIcon={<AlternateEmail />} onClick={onSuggestEmails}>
               Find emails for contacts
@@ -205,7 +218,10 @@ const ReachOutSection: React.FC<ReachOutSectionProps> = ({
                   <Tooltip title="Open the email thread in Gmail">
                     <Button
                       size="small"
-                      href={gmailThreadUrl(item.reasons.find((r) => r.thread)!.thread!.threadId)}
+                      href={gmailThreadUrl(
+                        item.reasons.find((r) => r.thread)!.thread!.threadId,
+                        account,
+                      )}
                       target="_blank"
                       rel="noopener noreferrer"
                       startIcon={<OpenInNew sx={{ fontSize: 16 }} />}
@@ -291,7 +307,7 @@ const ReachOutSection: React.FC<ReachOutSectionProps> = ({
                       </Typography>
                     </Box>
                     <Link
-                      href={gmailThreadUrl(a.thread.threadId)}
+                      href={gmailThreadUrl(a.thread.threadId, account)}
                       target="_blank"
                       rel="noopener noreferrer"
                       sx={{ fontSize: 13, flexShrink: 0 }}

@@ -96,6 +96,7 @@ import { buildActivityIndex } from '../model/activity';
 import ActivitySection from './insights/ActivitySection';
 import ReachOutSection from './insights/ReachOutSection';
 import SuggestEmailsDialog from './insights/SuggestEmailsDialog';
+import SignatureDialog from './insights/SignatureDialog';
 import AssistantPanel from './assistant/AssistantPanel';
 import MobileContactList from './table/MobileContactList';
 import DeviceSyncDialog from './device/DeviceSyncDialog';
@@ -168,6 +169,8 @@ const SignedInHome: React.FC = () => {
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [phoneSyncOpen, setPhoneSyncOpen] = useState(false);
   const [suggestOpen, setSuggestOpen] = useState(false);
+  // Signature reader: the most-emailed contacts ('auto'), or chosen ones
+  const [signatureTargets, setSignatureTargets] = useState<Contact[] | 'auto' | null>(null);
   // A message for the assistant to answer as soon as it opens (e.g. "Draft")
   const [assistantRequest, setAssistantRequest] = useState<{ text: string; id: number } | null>(
     null,
@@ -199,6 +202,15 @@ const SignedInHome: React.FC = () => {
   // Back from connecting Gmail & Calendar: show where the result appears
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    if (params.get('connected') === 'signatures') {
+      setView('insights');
+      if (params.get('declined')) {
+        setToast('Email content was not allowed');
+      } else {
+        setSignatureTargets('auto');
+      }
+      window.history.replaceState(null, '', window.location.pathname);
+    }
     if (params.get('connected') === 'activity') {
       setView('insights');
       if (params.get('declined')) {
@@ -359,6 +371,7 @@ const SignedInHome: React.FC = () => {
       activity: activityIndex,
       activityReady: !!activityIndex,
       threads: activity.threads,
+      signaturesReady: !!activity.status?.connected.signatures,
       user: { name: user?.name, email: user?.email },
       openContact: setCardFor,
       showContacts,
@@ -373,6 +386,7 @@ const SignedInHome: React.FC = () => {
       orgInsights,
       activityIndex,
       activity.threads,
+      activity.status,
       user,
       showContacts,
     ],
@@ -1008,6 +1022,8 @@ const SignedInHome: React.FC = () => {
                       setAssistantRequest({ text, id: Date.now() });
                     }}
                     onSuggestEmails={() => setSuggestOpen(true)}
+                    onSignatures={() => setSignatureTargets('auto')}
+                    account={user?.email}
                     withoutEmail={filterCounts.noEmail ?? 0}
                   />
                   <ActivitySection
@@ -1061,6 +1077,7 @@ const SignedInHome: React.FC = () => {
         onClose={() => setCardFor(null)}
         onDelete={(c) => setDeleteTargets([c])}
         activity={activityIndex}
+        onReadSignature={(c) => setSignatureTargets([c])}
       />
 
       <OrgSuggestionsDialog
@@ -1082,6 +1099,17 @@ const SignedInHome: React.FC = () => {
           setDeletePermanent(false);
           handleDeleted(count, permanent);
         }}
+      />
+      <SignatureDialog
+        targets={signatureTargets}
+        onClose={() => setSignatureTargets(null)}
+        contacts={contacts}
+        groups={groups}
+        index={activityIndex}
+        connected={!!activity.status?.connected.signatures}
+        onApplied={(count) =>
+          count > 0 && setToast(`Updated ${count} contacts from their signatures`)
+        }
       />
       <SuggestEmailsDialog
         open={suggestOpen}
