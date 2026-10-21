@@ -81,7 +81,8 @@ export const overdueOf = (
   }
   const daysSince = Math.floor((now.getTime() - Date.parse(a.lastInTouch)) / 86_400_000);
   const ratio = daysSince / a.typicalGapDays;
-  return ratio > 1.5 && daysSince >= 21
+  // Long gone relationships are history, not overdue: at most 6x the rhythm and 18 months
+  return ratio > 1.5 && daysSince >= 21 && ratio <= 6 && daysSince <= 540
     ? { typicalGapDays: a.typicalGapDays, daysSince, ratio }
     : null;
 };

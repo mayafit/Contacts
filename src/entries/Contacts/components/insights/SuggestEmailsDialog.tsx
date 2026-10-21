@@ -122,8 +122,22 @@ const SuggestEmailsDialog: React.FC<SuggestEmailsDialogProps> = ({
           );
         if (alive) {
           setRows(next);
+          // Pre-select only strong matches (same name, or the address spells it) that
+          // no other contact is offered too
+          const offered = new Map<string, number>();
+          next.forEach((r) =>
+            r.options.forEach((o) => offered.set(o.email, (offered.get(o.email) ?? 0) + 1)),
+          );
           setChoice(
-            Object.fromEntries(next.map((r) => [r.contact.resourceName, r.options[0].email])),
+            Object.fromEntries(
+              next.map((r) => {
+                const best = r.options[0];
+                return [
+                  r.contact.resourceName,
+                  (best.score ?? 0) >= 2 && offered.get(best.email) === 1 ? best.email : '',
+                ];
+              }),
+            ),
           );
         }
       } catch (e) {
@@ -163,6 +177,7 @@ const SuggestEmailsDialog: React.FC<SuggestEmailsDialogProps> = ({
           updateContact({ resourceName: r.contact.resourceName, updates: patch }),
         ).unwrap();
         done += 1;
+        setRows((list) => list.filter((x) => x.contact.resourceName !== r.contact.resourceName));
       } catch (e) {
         failed.push(`${getDisplayName(r.contact)}: ${(e as Error).message ?? 'failed'}`);
       }

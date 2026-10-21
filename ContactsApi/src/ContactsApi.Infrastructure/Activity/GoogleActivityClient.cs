@@ -164,6 +164,7 @@ public class GoogleActivityClient
         ActivityAggregator aggregator, ulong historyId, ulong? upToHistoryId, Func<int, Task> progress, CancellationToken ct)
     {
         var ids = new List<string>();
+        var inboxChanges = new Dictionary<string, bool>();
         string? pageToken = null;
         try
         {
@@ -171,13 +172,32 @@ public class GoogleActivityClient
             {
                 var req = _gmail.Users.History.List("me");
                 req.StartHistoryId = historyId;
-                req.HistoryTypes = UsersResource.HistoryResource.ListRequest.HistoryTypesEnum.MessageAdded;
+                // No type filter: new messages, and inbox labels added / removed
+                // (archiving clears "you owe a reply"); the library takes only one type
                 req.MaxResults = 500;
                 req.PageToken = pageToken;
                 var page = await req.ExecuteAsync(ct);
                 ids.AddRange(page.History?
                     .SelectMany(h => h.MessagesAdded ?? new List<HistoryMessageAdded>())
                     .Select(a => a.Message.Id) ?? Enumerable.Empty<string>());
+                foreach (var h in page.History ?? new List<History>())
+                {
+                    foreach (var r in h.LabelsRemoved ?? new List<HistoryLabelRemoved>())
+                    {
+                        if (r.LabelIds?.Contains("INBOX") == true)
+                        {
+                            inboxChanges[r.Message.Id] = false;
+                        }
+                    }
+
+                    foreach (var a in h.LabelsAdded ?? new List<HistoryLabelAdded>())
+                    {
+                        if (a.LabelIds?.Contains("INBOX") == true)
+                        {
+                            inboxChanges[a.Message.Id] = true;
+                        }
+                    }
+                }
                 pageToken = page.NextPageToken;
             }
             while (pageToken != null);
@@ -195,6 +215,11 @@ public class GoogleActivityClient
         foreach (var m in messages.Where(m => upToHistoryId == null || m.HistoryId == null || m.HistoryId <= upToHistoryId))
         {
             Add(aggregator, m, DateTimeOffset.FromUnixTimeMilliseconds(m.InternalDate ?? 0).UtcDateTime);
+        }
+
+        foreach (var (id, inInbox) in inboxChanges)
+        {
+            aggregator.SetInbox(id, inInbox);
         }
 
         await progress(messages.Count);
@@ -274,7 +299,7 @@ public class GoogleActivityClient
             || labels.Any(l => l is "CATEGORY_PROMOTIONS" or "CATEGORY_SOCIAL" or "CATEGORY_UPDATES" or "CATEGORY_FORUMS");
         aggregator.AddThreadMessage(
             m.ThreadId, at, Header("From"), Header("To"), Header("Cc"), Header("Subject"),
-            labels.Contains("SENT"), labels.Contains("INBOX"), bulk, DateTime.UtcNow);
+            labels.Contains("SENT"), labels.Contains("INBOX"), bulk, DateTime.UtcNow, m.Id);
         aggregator.MessagesWithoutRecipients += string.IsNullOrEmpty(Header("To")) && string.IsNullOrEmpty(Header("Cc")) ? 1 : 0;
     }
 

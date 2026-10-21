@@ -17,6 +17,9 @@ public static class ActivityScopes
     /// <summary>Calendar events, read only</summary>
     public const string Calendar = "https://www.googleapis.com/auth/calendar.events.readonly";
 
+    /// <summary>Gmail message content (opt-in, for signatures)</summary>
+    public const string GmailRead = "https://www.googleapis.com/auth/gmail.readonly";
+
     /// <summary>Session key holding the scopes granted at the last sign-in</summary>
     public const string SessionKey = "GrantedScopes";
 }

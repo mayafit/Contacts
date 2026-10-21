@@ -10,6 +10,7 @@ import type { DuplicateGroup } from '../model/duplicates';
 import type { DomainInsight } from '../model/organizations';
 import { describeGap, type ActivityIndex } from '../model/activity';
 import { awaitingReply, buildReachOut, contactsByEmail, gmailThreadUrl } from '../model/reachOut';
+import { signatureChange } from './signatures';
 import {
   clean,
   formatBirthday,
@@ -86,6 +87,8 @@ export interface AssistantContext {
   activityReady: boolean;
   /** Recent email threads */
   threads?: import('../../../services/api/BackendApiClient').ThreadState[];
+  /** Reading email content (signatures) is allowed */
+  signaturesReady?: boolean;
   /** Signed-in user */
   user: { name?: string; email?: string };
   /** Open a contact card */
@@ -346,6 +349,12 @@ export const TOOL_DECLARATIONS = [
     description:
       'Recent email threads where the user owes a reply, and threads where the user is waiting for an answer (with subject and age).',
     parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'read_signature',
+    description:
+      "Read the signature in a contact's latest emails: phone numbers, job title, organization, department, website, LinkedIn. Use it to complete a contact, then propose_changes with what is new.",
+    parameters: { type: 'object', properties: { id: S('Contact id') }, required: ['id'] },
   },
   {
     name: 'contact_person',
@@ -935,11 +944,44 @@ export const executeTool = async (
           : a.email,
         subject: a.thread.subject,
         daysSince: a.daysSince,
-        gmail: gmailThreadUrl(a.thread.threadId),
+        gmail: gmailThreadUrl(a.thread.threadId, ctx.user.email),
       });
       return {
         youOweAReply: owe.slice(0, 20).map(shape),
         waitingOnThem: waiting.slice(0, 20).map(shape),
+      };
+    }
+    case 'read_signature': {
+      const c = findContact(ctx, args.id);
+      if (!c) {
+        return { error: `No contact ${String(args.id)}` };
+      }
+      if (!ctx.signaturesReady) {
+        return {
+          error:
+            'Reading email content is not allowed yet: Insights → Reach out today → Details from signatures → Allow.',
+        };
+      }
+      const emails = (c.emailAddresses ?? []).map((e) => clean(e.value)).filter(Boolean);
+      if (!emails.length) {
+        return { error: `${getDisplayName(c)} has no email address` };
+      }
+      const r = (
+        await backendApiClient.enrichSignatures([
+          { id: c.resourceName, name: getDisplayName(c), emails },
+        ])
+      ).results[c.resourceName];
+      if (!r?.found) {
+        return { found: false, emailsRead: r?.emails ?? 0 };
+      }
+      const sig = signatureChange(c, r.details ?? {});
+      return {
+        found: true,
+        emailsRead: r.emails,
+        lastEmail: r.lastEmailAt?.slice(0, 10),
+        details: r.details,
+        newForTheContact: sig.change,
+        differentFromTheContact: sig.conflicts,
       };
     }
     case 'contact_person': {
