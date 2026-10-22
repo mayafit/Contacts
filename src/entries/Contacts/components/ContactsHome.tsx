@@ -460,7 +460,7 @@ const SignedInHome: React.FC = () => {
     setAccountAnchor(null);
     // Ends the server session as well; the page alone forgetting the user
     // left the session alive, so a reload signed straight back in.
-    void dispatch(logoutUser()).finally(() => navigate('/', { replace: true }));
+    void dispatch(logoutUser()).finally(() => navigate('/contacts', { replace: true }));
   };
 
   /**
@@ -807,7 +807,9 @@ const SignedInHome: React.FC = () => {
   return (
     <Box
       sx={{
-        height: '100vh',
+        flex: 1,
+        minHeight: 0,
+        height: '100%',
         display: 'flex',
         flexDirection: 'column',
         bgcolor: tokens.page,
@@ -1172,5 +1174,8 @@ const ContactsHome: React.FC = () => {
   const isAuthenticated = useSelector(selectIsAuthenticated);
   return isAuthenticated ? <SignedInHome /> : <SignedOutHome />;
 };
+
+/** The Contacts area (signed in), used by the site shell */
+export const ContactsWorkspace = SignedInHome;
 
 export default ContactsHome;

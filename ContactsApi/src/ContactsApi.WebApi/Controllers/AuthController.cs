@@ -86,14 +86,14 @@ public class AuthController : ControllerBase
             {
                 optIns.Activity = true;
                 consent = true;
-                HttpContext.Session.SetString(AfterLoginKey, "/?connected=activity");
+                HttpContext.Session.SetString(AfterLoginKey, "/contacts?connected=activity");
             }
 
             if (signatures)
             {
                 optIns.Signatures = true;
                 consent = true;
-                HttpContext.Session.SetString(AfterLoginKey, "/?connected=signatures");
+                HttpContext.Session.SetString(AfterLoginKey, "/contacts?connected=signatures");
             }
 
             HttpContext.Session.SetString(RequestedKey, System.Text.Json.JsonSerializer.Serialize(optIns));
@@ -180,7 +180,7 @@ public class AuthController : ControllerBase
                 // Declining an opt-in (Gmail & Calendar, or email content) leaves the
                 // existing sign-in as it was
                 var optIn = HttpContext.Session.GetString(AfterLoginKey);
-                if (optIn is "/?connected=activity" or "/?connected=signatures"
+                if (optIn is "/contacts?connected=activity" or "/contacts?connected=signatures"
                     && HttpContext.Session.GetString(GoogleTokenService.UserIdKey) != null)
                 {
                     HttpContext.Session.Remove(AfterLoginKey);
@@ -344,7 +344,7 @@ public class AuthController : ControllerBase
             var afterLogin = HttpContext.Session.GetString(AfterLoginKey);
             HttpContext.Session.Remove(AfterLoginKey);
             await HttpContext.Session.CommitAsync();
-            return RedirectToFrontend(afterLogin is "/?connected=activity" or "/?connected=signatures" ? afterLogin : "/");
+            return RedirectToFrontend(afterLogin is "/contacts?connected=activity" or "/contacts?connected=signatures" ? afterLogin : "/");
         }
         catch (Exception ex)
         {

@@ -11,6 +11,7 @@ import {
   AutoAwesome,
   CleaningServices,
   ContactPhone,
+  Map as MapIcon,
   Insights as InsightsIcon,
   Login as LoginIcon,
   RecordVoiceOver,
@@ -33,6 +34,11 @@ export const SIGN_IN_ERRORS: Record<string, string> = {
 };
 
 const FEATURES = [
+  {
+    icon: <MapIcon />,
+    title: 'Atlas',
+    text: 'Your trips, rides, hikes and heart rate on one map and timeline: Google Timeline, Sports Tracker, Google Fit and Fitbit together.',
+  },
   {
     icon: <RecordVoiceOver />,
     title: 'Phonetic names',
@@ -105,7 +111,7 @@ const SignedOutHome: React.FC = () => {
           >
             <ContactPhone sx={{ fontSize: 18, color: '#fff' }} />
           </Box>
-          <Typography variant="h3">Contacts</Typography>
+          <Typography variant="h3">Personal</Typography>
         </Box>
         <Box sx={{ flex: 1 }} />
         <Button variant="contained" startIcon={<LoginIcon />} onClick={signIn}>
@@ -126,11 +132,11 @@ const SignedOutHome: React.FC = () => {
           <Typography
             sx={{ fontSize: { xs: 30, md: 40 }, fontWeight: 600, lineHeight: 1.15, mb: 1 }}
           >
-            Your Google Contacts, organized.
+            Your contacts and your places, organized.
           </Typography>
           <Typography variant="body1" sx={{ color: tokens.textSecondary, mb: 3 }}>
-            Sign in with your Google account to work on your own contacts. Each account sees only
-            its own data.
+            Sign in with your Google account. Each account sees only its own contacts, trips and
+            health data.
           </Typography>
           <Box
             sx={{

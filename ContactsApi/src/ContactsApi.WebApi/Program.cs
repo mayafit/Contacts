@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using ContactsApi.Infrastructure.Vault;
 using ContactsApi.WebApi.Configuration;
 using ContactsApi.WebApi.Middleware;
@@ -55,6 +56,23 @@ builder.Services.AddHttpClient("gemini", c =>
     c.BaseAddress = new Uri("https://generativelanguage.googleapis.com/");
     c.Timeout = TimeSpan.FromSeconds(90);
 });
+// Atlas: PostgreSQL (Database__ConnectionString from Vault); without it Atlas
+// stays off and the rest of the app works as before
+var atlasConnection = builder.Configuration["Database:ConnectionString"];
+builder.Services.AddSingleton(new AtlasReadiness { Configured = !string.IsNullOrWhiteSpace(atlasConnection) });
+builder.Services.AddDbContext<ContactsApi.Infrastructure.Atlas.AtlasDbContext>(o =>
+    o.UseNpgsql(string.IsNullOrWhiteSpace(atlasConnection) ? "Host=unset" : atlasConnection,
+        npgsql => npgsql.MigrationsHistoryTable("__ef_migrations", "atlas")));
+builder.Services.AddScoped<ContactsApi.Infrastructure.Atlas.AtlasService>();
+builder.Services.AddScoped<AccessTokenService>();
+builder.Services.AddHostedService<AtlasMigrator>();
+builder.Services.AddHttpContextAccessor();
+
+// MCP server over the Atlas service (tools in AtlasMcpTools), at /api/mcp
+builder.Services.AddMcpServer()
+    .WithHttpTransport(o => o.Stateless = true)
+    .WithTools<AtlasMcpTools>();
+
 builder.Services.AddSingleton<ActivityWorker>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ActivityWorker>());
 
@@ -180,7 +198,30 @@ app.UseSession();
 // app.UseAuthorization();
 
 // Map controllers
+// MCP clients authenticate with a personal access token (Bearer), never the
+// browser session; the token's owner is passed to the tools
+app.UseWhen(ctx => ctx.Request.Path.StartsWithSegments("/api/mcp"), mcp => mcp.Use(async (ctx, next) =>
+{
+    var readiness = ctx.RequestServices.GetRequiredService<AtlasReadiness>();
+    var header = ctx.Request.Headers.Authorization.ToString();
+    var token = header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) ? header[7..].Trim() : string.Empty;
+    var owner = readiness.Ready && token.Length > 0
+        ? await ctx.RequestServices.GetRequiredService<AccessTokenService>().ValidateAsync(token)
+        : null;
+    if (owner == null)
+    {
+        ctx.Response.StatusCode = readiness.Ready ? StatusCodes.Status401Unauthorized : StatusCodes.Status503ServiceUnavailable;
+        ctx.Response.Headers.WWWAuthenticate = "Bearer";
+        await ctx.Response.WriteAsync(readiness.Ready ? "A personal access token is required (Atlas → AI access)." : "Atlas is starting.");
+        return;
+    }
+
+    ctx.Items[AtlasMcpTools.OwnerItem] = owner;
+    await next();
+}));
+
 app.MapControllers();
+app.MapMcp("/api/mcp");
 
 // Health check endpoint
 app.MapHealthChecks("/health");
