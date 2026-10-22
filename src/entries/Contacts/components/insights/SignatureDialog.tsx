@@ -57,6 +57,30 @@ interface Row {
 }
 
 const BATCH = 10;
+
+/** Contacts whose signatures were read recently (resourceName → time), skipped by the automatic run */
+const CHECKED_KEY = 'contacts.signaturesChecked';
+const RECHECK_DAYS = 30;
+
+const loadChecked = (): Record<string, number> => {
+  try {
+    const all = JSON.parse(localStorage.getItem(CHECKED_KEY) ?? '{}') as Record<string, number>;
+    const since = Date.now() - RECHECK_DAYS * 86_400_000;
+    return Object.fromEntries(Object.entries(all).filter(([, t]) => t > since));
+  } catch {
+    return {};
+  }
+};
+
+const rememberChecked = (resourceNames: string[]) => {
+  try {
+    const all = loadChecked();
+    resourceNames.forEach((rn) => (all[rn] = Date.now()));
+    localStorage.setItem(CHECKED_KEY, JSON.stringify(all));
+  } catch {
+    // Not remembered (private mode): the next run reads them again
+  }
+};
 const PER_RUN = 50;
 
 /**
@@ -78,6 +102,9 @@ const SignatureDialog: React.FC<SignatureDialogProps> = ({
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [checked, setChecked] = useState(0);
   const [noSignature, setNoSignature] = useState(0);
+  // Contacts left out because they were read recently, and whether to read them again
+  const [skipped, setSkipped] = useState(0);
+  const [includeChecked, setIncludeChecked] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const offset = useRef(0);
@@ -151,6 +178,7 @@ const SignatureDialog: React.FC<SignatureDialogProps> = ({
           break;
         }
         setChecked((n) => n + batch.length);
+        rememberChecked(batch.map((c) => c.resourceName));
         setProgress({ done: Math.min(i + BATCH, list.length), total: list.length });
       }
       setProgress(null);
@@ -168,18 +196,22 @@ const SignatureDialog: React.FC<SignatureDialogProps> = ({
     setNoSignature(0);
     offset.current = 0;
     if (targets === 'auto') {
-      // People who wrote to the user, most mail first
-      queue.current = contacts
-        .filter(
-          (c) =>
-            (c.emailAddresses ?? []).some((e) => clean(e.value)) &&
-            (index?.get(c.resourceName)?.received ?? 0) > 0,
-        )
+      // Every contact with an email (Gmail's search reaches beyond the scanned
+      // year): people who write to the user first, then people the user writes
+      // to, then the rest; contacts read in the last 30 days are skipped
+      const recent = includeChecked ? {} : loadChecked();
+      const withEmail = contacts.filter((c) =>
+        (c.emailAddresses ?? []).some((e) => clean(e.value)),
+      );
+      queue.current = withEmail
+        .filter((c) => !recent[c.resourceName])
         .sort(
           (a, b) =>
             (index?.get(b.resourceName)?.received ?? 0) -
-            (index?.get(a.resourceName)?.received ?? 0),
+              (index?.get(a.resourceName)?.received ?? 0) ||
+            (index?.get(b.resourceName)?.sent ?? 0) - (index?.get(a.resourceName)?.sent ?? 0),
         );
+      setSkipped(withEmail.length - queue.current.length);
     } else {
       queue.current = (targets ?? []).filter((c) =>
         (c.emailAddresses ?? []).some((e) => clean(e.value)),
@@ -190,7 +222,7 @@ const SignatureDialog: React.FC<SignatureDialogProps> = ({
     void read(first);
     // Start once per opening, when the data is there
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, connected, ready]);
+  }, [open, connected, ready, includeChecked]);
 
   const more = () => {
     const next = queue.current.slice(offset.current, offset.current + PER_RUN);
@@ -283,6 +315,21 @@ const SignatureDialog: React.FC<SignatureDialogProps> = ({
               <Alert severity="error" sx={{ mb: 2 }}>
                 {error}
               </Alert>
+            )}
+            {targets === 'auto' && skipped > 0 && !includeChecked && (
+              <Typography
+                variant="caption"
+                sx={{ display: 'block', color: tokens.textMuted, mb: 1 }}
+              >
+                {skipped} contacts read in the last {RECHECK_DAYS} days are skipped.{' '}
+                <Button
+                  size="small"
+                  sx={{ p: 0, minWidth: 0, verticalAlign: 'baseline' }}
+                  onClick={() => setIncludeChecked(true)}
+                >
+                  Read them again
+                </Button>
+              </Typography>
             )}
             {!progress && checked > 0 && (
               <Typography

@@ -60,7 +60,7 @@ internal sealed class FreshTokenInitializer : IConfigurableHttpClientInitializer
 public class GoogleActivityClient
 {
     /// <summary>Messages per batch request</summary>
-    private const int BatchSize = 40;
+    private const int BatchSize = 20;
 
     /// <summary>
     /// Pause between batches. A metadata read costs 5 quota units and Gmail allows
@@ -120,7 +120,7 @@ public class GoogleActivityClient
             list.Fields = "messages/id,nextPageToken";
             var page = await Run(() => list.ExecuteAsync(ct), "gmail");
             var ids = page.Messages?.Select(m => m.Id).ToList() ?? new List<string>();
-            var messages = await GetMetadataAsync(ids, () => progress(done), ct);
+            var messages = await GetMetadataAsync(ids, () => progress(done), ct, partialOk: true);
             var inWindow = 0;
             foreach (var m in messages)
             {
@@ -144,7 +144,7 @@ public class GoogleActivityClient
             pageToken = page.NextPageToken;
 
             // Newest first: a page with nothing in the window means we are past it
-            if (inWindow == 0 && ids.Count > 0)
+            if ((inWindow == 0 && ids.Count > 0) || GaveUp)
             {
                 break;
             }
@@ -152,7 +152,7 @@ public class GoogleActivityClient
         while (pageToken != null && done < maxMessages);
 
         aggregator.Complete();
-        return new MailScan(done, oldest, !reachedStart && pageToken != null);
+        return new MailScan(done, oldest, GaveUp || (!reachedStart && pageToken != null));
     }
 
     /// <summary>
@@ -304,7 +304,11 @@ public class GoogleActivityClient
     }
 
     /// <summary>Message headers for the ids, in paced batches, retrying rate-limited items</summary>
-    private async Task<List<Message>> GetMetadataAsync(IReadOnlyList<string> ids, Func<Task> heartbeat, CancellationToken ct)
+    /// <summary>A full scan stopped early because Gmail kept rate limiting</summary>
+    public bool GaveUp { get; private set; }
+
+    private async Task<List<Message>> GetMetadataAsync(
+        IReadOnlyList<string> ids, Func<Task> heartbeat, CancellationToken ct, bool partialOk = false)
     {
         var result = new List<Message>();
         var queue = new Queue<string>(ids);
@@ -362,9 +366,17 @@ public class GoogleActivityClient
 
             if (limited.Count > 0)
             {
-                if (++retries > 8)
+                if (++retries > 12)
                 {
-                    throw new ActivityScanException("SCAN_FAILED", "Gmail kept refusing requests (rate limit). Try again later.");
+                    if (!partialOk)
+                    {
+                        throw new ActivityScanException("SCAN_FAILED", "Gmail kept refusing requests (rate limit). Try again later.");
+                    }
+
+                    // Keep what was read: the scan ends here and records how far back it got
+                    _logger.LogWarning("Gmail rate limit persisted; ending the scan with what was read");
+                    GaveUp = true;
+                    break;
                 }
 
                 limited.ForEach(queue.Enqueue);
