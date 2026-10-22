@@ -202,6 +202,9 @@ public class ActivityWorker : BackgroundService
                     snapshot.MessagesScanned = scan.Read;
                     // A mailbox bigger than the cap is covered only back to the oldest message read
                     snapshot.Since = scan.Truncated && scan.Oldest != null ? scan.Oldest : since;
+                    _logger.LogInformation(
+                        "Full mail scan read {Messages} messages back to {Oldest:yyyy-MM-dd} (truncated: {Truncated}, rate limited: {GaveUp})",
+                        scan.Read, scan.Oldest, scan.Truncated, client.GaveUp);
                     snapshot.FullScanAt = now;
                 }
                 else
