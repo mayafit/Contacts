@@ -6,6 +6,25 @@
  */
 
 import type { Contact, ContactGroup, ContactPatch } from '../../entries/Contacts/types/Contact';
+import type {
+  AccessTokenInfo,
+  ActivityDetail,
+  ActivitySummary,
+  AtlasQuery,
+  AtlasSummary,
+  HistogramRow,
+  NearResult,
+  ParsedData,
+  SearchResult,
+  SeriesPoint,
+} from '../../entries/Contacts/atlas/types';
+
+/** One ingest batch */
+export type AtlasIngest = Omit<ParsedData, 'source'> & {
+  source: string;
+  importId?: string | null;
+  fileName?: string | null;
+};
 import { logger } from '../../shared/logger';
 
 const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000/api';
@@ -592,6 +611,164 @@ export class BackendApiClient {
       body: JSON.stringify(request),
     });
     return unwrap(response, 'Failed to update the label').label;
+  }
+
+  // ===================================
+  // Atlas (activities, places, visits, health)
+  // ===================================
+
+  /** Whether Atlas is configured and its database ready */
+  async atlasStatus(): Promise<{ configured: boolean; ready: boolean }> {
+    return unwrap(
+      await this.request<{ configured: boolean; ready: boolean }>('/atlas/status'),
+      'Atlas status failed',
+    );
+  }
+
+  /** Adds or updates one batch of imported items */
+  async atlasIngest(batch: AtlasIngest): Promise<{
+    importId: string;
+    activities: number;
+    places: number;
+    visits: number;
+    healthSamples: number;
+  }> {
+    return unwrap(
+      await this.request<{
+        importId: string;
+        activities: number;
+        places: number;
+        visits: number;
+        healthSamples: number;
+      }>('/atlas/ingest', { method: 'POST', body: JSON.stringify(batch) }),
+      'Import failed',
+    );
+  }
+
+  /** Activities and visits by time, area, type and text */
+  async atlasSearch(query: AtlasQuery): Promise<SearchResult> {
+    return unwrap(
+      await this.request<SearchResult>('/atlas/search', {
+        method: 'POST',
+        body: JSON.stringify(query),
+      }),
+      'Search failed',
+    );
+  }
+
+  /** Counts per time bucket (timeline) */
+  async atlasHistogram(
+    from: string,
+    to: string,
+    bucket: string,
+    timeZone?: string,
+  ): Promise<HistogramRow[]> {
+    const tz = timeZone ? `&tz=${encodeURIComponent(timeZone)}` : '';
+    return unwrap(
+      await this.request<HistogramRow[]>(
+        `/atlas/histogram?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&bucket=${bucket}${tz}`,
+      ),
+      'Timeline failed',
+    );
+  }
+
+  /** Totals and imports */
+  async atlasSummary(): Promise<AtlasSummary> {
+    return unwrap(await this.request<AtlasSummary>('/atlas/summary'), 'Summary failed');
+  }
+
+  /** An activity with its track and heart rate */
+  async atlasActivity(id: string, maxPoints = 2000): Promise<ActivityDetail> {
+    return unwrap(
+      await this.request<ActivityDetail>(`/atlas/activities/${id}?maxPoints=${maxPoints}`),
+      'Activity failed',
+    );
+  }
+
+  /** Changes an activity */
+  async atlasUpdateActivity(
+    id: string,
+    patch: { name?: string; type?: string; notes?: string },
+  ): Promise<ActivitySummary> {
+    return unwrap(
+      await this.request<ActivitySummary>(`/atlas/activities/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      }),
+      'Saving the activity failed',
+    );
+  }
+
+  /** Deletes an activity */
+  async atlasDeleteActivity(id: string): Promise<void> {
+    unwrap(
+      await this.request<unknown>(`/atlas/activities/${id}`, { method: 'DELETE' }),
+      'Deleting the activity failed',
+    );
+  }
+
+  /** Health values in a range */
+  async atlasHealth(
+    type: string,
+    from: string,
+    to: string,
+    maxPoints = 1500,
+  ): Promise<SeriesPoint[]> {
+    return unwrap(
+      await this.request<SeriesPoint[]>(
+        `/atlas/health?type=${encodeURIComponent(type)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&maxPoints=${maxPoints}`,
+      ),
+      'Health data failed',
+    );
+  }
+
+  /** Visits and activities near a point */
+  async atlasNear(
+    lat: number,
+    lon: number,
+    radiusM: number,
+    from?: string,
+    to?: string,
+  ): Promise<NearResult> {
+    const range = `${from ? `&from=${encodeURIComponent(from)}` : ''}${to ? `&to=${encodeURIComponent(to)}` : ''}`;
+    return unwrap(
+      await this.request<NearResult>(
+        `/atlas/near?lat=${lat}&lon=${lon}&radiusM=${radiusM}${range}`,
+      ),
+      'Search failed',
+    );
+  }
+
+  /** Deletes an import and what it brought in */
+  async atlasDeleteImport(id: string): Promise<number> {
+    return unwrap(
+      await this.request<{ removed: number }>(`/atlas/imports/${id}`, { method: 'DELETE' }),
+      'Deleting the import failed',
+    ).removed;
+  }
+
+  /** MCP access tokens */
+  async atlasTokens(): Promise<AccessTokenInfo[]> {
+    return unwrap(await this.request<AccessTokenInfo[]>('/atlas/tokens'), 'Loading tokens failed');
+  }
+
+  /** Creates an MCP access token (the token is returned only now) */
+  async atlasCreateToken(name: string): Promise<{ token: string; info: AccessTokenInfo }> {
+    return unwrap(
+      await this.request<{ token: string; info: AccessTokenInfo }>('/atlas/tokens', {
+        method: 'POST',
+        body: JSON.stringify({ name }),
+      }),
+      'Creating the token failed',
+    );
+  }
+
+  /** Revokes an MCP access token */
+  async atlasRevokeToken(id: string): Promise<void> {
+    unwrap(
+      await this.request<unknown>(`/atlas/tokens/${id}`, { method: 'DELETE' }),
+      'Revoking the token failed',
+    );
   }
 
   // ===================================

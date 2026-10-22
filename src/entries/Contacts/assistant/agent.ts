@@ -81,29 +81,47 @@ export const trimHistory = (history: GeminiContent[]): GeminiContent[] => {
   return h;
 };
 
+/** Tools an assistant can use: declarations for Gemini, the prompt, and their implementation */
+export interface Toolset {
+  declarations: unknown[];
+  systemPrompt: () => string;
+  execute: (name: string, args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+}
+
+const isToolset = (x: unknown): x is Toolset => !!x && typeof x === 'object' && 'declarations' in x;
+
 /**
  * Answers one user message.
  * @param history - Conversation so far (not modified)
  * @param userParts - The new user message
- * @param ctx - Assistant context
+ * @param ctx - Assistant context (Contacts), or another area's toolset (Atlas)
  * @param memory - Search results remembered across the conversation
  * @param onStep - Called after each tool call
  * @returns New conversation and the answer text
  */
+
 export const runAgent = async (
   history: GeminiContent[],
   userParts: GeminiPart[],
-  ctx: AssistantContext,
+  ctx: AssistantContext | Toolset,
   memory: SearchMemory,
   onStep: (step: ToolStep) => void,
 ): Promise<{ history: GeminiContent[]; text: string }> => {
+  // The Contacts assistant, or another area's own tools (Atlas)
+  const set: Toolset = isToolset(ctx)
+    ? ctx
+    : {
+        declarations: TOOL_DECLARATIONS,
+        systemPrompt: () => systemPrompt(ctx),
+        execute: (name, args) => executeTool(name, args, ctx, memory),
+      };
   let contents = trimHistory([...history, { role: 'user', parts: userParts }]);
 
   for (let step = 0; step < MAX_STEPS; step += 1) {
     const response = await backendApiClient.assistantGenerate({
-      systemInstruction: { parts: [{ text: systemPrompt(ctx) }] },
+      systemInstruction: { parts: [{ text: set.systemPrompt() }] },
       contents,
-      tools: [{ functionDeclarations: TOOL_DECLARATIONS }],
+      tools: [{ functionDeclarations: set.declarations }],
     });
     const candidate = response.candidates?.[0];
     if (!candidate?.content?.parts?.length) {
@@ -129,7 +147,7 @@ export const runAgent = async (
       const args = (call.args ?? {}) as Record<string, unknown>;
       let result: Record<string, unknown>;
       try {
-        result = await executeTool(call.name, args, ctx, memory);
+        result = await set.execute(call.name, args);
       } catch (e) {
         result = { error: (e as Error).message || 'The tool failed' };
       }
