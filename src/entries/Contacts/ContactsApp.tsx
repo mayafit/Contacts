@@ -13,7 +13,7 @@ import { logout, logoutUser } from './redux/slices/auth/authSlice';
 import { Box, CircularProgress, CssBaseline, ThemeProvider } from '@mui/material';
 import { createContactsTheme } from './theme/contactsTheme';
 import { useDispatch } from 'react-redux';
-import ContactsHome from './components/ContactsHome';
+import SiteShell from './components/SiteShell';
 import { checkAuthStatus } from './redux/slices/auth/authSlice';
 import type { AppDispatch } from './types/store';
 import { logger } from '../../shared/logger';
@@ -128,8 +128,8 @@ const ContactsApp: React.FC = () => {
           {/* Old links (and the backend's error redirects) land on the home page */}
           <Route path="/login" element={<ToHome />} />
           <Route path="/auth/callback" element={<ToHome />} />
-          <Route path="/" element={<ContactsHome />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
+          {/* The site: Contacts and Atlas areas (or the welcome page when signed out) */}
+          <Route path="/*" element={<SiteShell />} />
         </Routes>
       </BrowserRouter>
     </ThemeProvider>

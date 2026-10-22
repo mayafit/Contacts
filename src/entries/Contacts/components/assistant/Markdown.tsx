@@ -13,6 +13,8 @@ export interface MarkdownProps {
   text: string;
   /** Open a contact referenced as [Name](contact:people/...) */
   onContact: (resourceName: string) => void;
+  /** Open an Atlas item referenced as [Name](atlas:activity/ID or atlas:place/ID) */
+  onAtlas?: (ref: string) => void;
 }
 
 const INLINE = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\([^)\s]+\))/g;
@@ -23,7 +25,11 @@ const INLINE = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\([^)\s]+\))/g;
  * @param onContact - Contact link handler
  * @returns Nodes
  */
-const inline = (text: string, onContact: (rn: string) => void): React.ReactNode[] =>
+const inline = (
+  text: string,
+  onContact: (rn: string) => void,
+  onAtlas?: (ref: string) => void,
+): React.ReactNode[] =>
   text.split(INLINE).map((part, i) => {
     if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
       return <strong key={i}>{part.slice(2, -2)}</strong>;
@@ -42,6 +48,21 @@ const inline = (text: string, onContact: (rn: string) => void): React.ReactNode[
     const link = /^\[([^\]]+)\]\(([^)\s]+)\)$/.exec(part);
     if (link) {
       const [, label, href] = link;
+      if (href.startsWith('atlas:') && onAtlas) {
+        const ref = href.slice('atlas:'.length);
+        return (
+          <Link
+            key={i}
+            component="button"
+            type="button"
+            underline="hover"
+            onClick={() => onAtlas(ref)}
+            sx={{ fontSize: 'inherit', verticalAlign: 'baseline', fontWeight: 600 }}
+          >
+            {label}
+          </Link>
+        );
+      }
       if (href.startsWith('contact:')) {
         const rn = href.slice('contact:'.length);
         return (
@@ -74,7 +95,9 @@ const inline = (text: string, onContact: (rn: string) => void): React.ReactNode[
  * @param props - Component props
  * @returns Rendered text
  */
-const Markdown: React.FC<MarkdownProps> = ({ text, onContact }) => {
+const Markdown: React.FC<MarkdownProps> = ({ text, onContact: contactHandler, onAtlas }) => {
+  const onContact = contactHandler;
+  const inl = (t: string) => inline(t, onContact, onAtlas);
   const lines = text.replace(/\r\n/g, '\n').split('\n');
   const blocks: React.ReactNode[] = [];
   let i = 0;
@@ -137,7 +160,7 @@ const Markdown: React.FC<MarkdownProps> = ({ text, onContact }) => {
                         fontWeight: ri === 0 ? 600 : 400,
                       }}
                     >
-                      {inline(c, onContact)}
+                      {inl(c)}
                     </Box>
                   ))}
                 </tr>
@@ -169,7 +192,7 @@ const Markdown: React.FC<MarkdownProps> = ({ text, onContact }) => {
         >
           {items.map((t, ti) => (
             <li key={ti} dir="auto">
-              {inline(t, onContact)}
+              {inl(t)}
             </li>
           ))}
         </Box>,
@@ -180,7 +203,7 @@ const Markdown: React.FC<MarkdownProps> = ({ text, onContact }) => {
     if (heading) {
       blocks.push(
         <Typography key={blocks.length} variant="subtitle2" dir="auto" sx={{ mt: 0.5 }}>
-          {inline(heading[1], onContact)}
+          {inl(heading[1])}
         </Typography>,
       );
       i += 1;
@@ -204,7 +227,7 @@ const Markdown: React.FC<MarkdownProps> = ({ text, onContact }) => {
           {para.map((p, pi) => (
             <React.Fragment key={pi}>
               {pi > 0 && <br />}
-              {inline(p, onContact)}
+              {inl(p)}
             </React.Fragment>
           ))}
         </Typography>,

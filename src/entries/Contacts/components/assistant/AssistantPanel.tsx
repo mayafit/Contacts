@@ -31,7 +31,7 @@ import {
 } from '@mui/icons-material';
 import type { Contact, ContactGroup } from '../../types/Contact';
 import type { GeminiContent } from '../../../../services/api/BackendApiClient';
-import { runAgent, type ToolStep } from '../../assistant/agent';
+import { runAgent, type ToolStep, type Toolset } from '../../assistant/agent';
 import {
   type AssistantContext,
   type ContactOffer,
@@ -53,7 +53,15 @@ export interface AssistantPanelProps {
   /** Close request */
   onClose: () => void;
   /** Everything the tools need, except propose (added here) */
-  context: Omit<AssistantContext, 'propose'>;
+  context?: Omit<AssistantContext, 'propose'>;
+  /** Another area's tools (Atlas); used instead of the Contacts tools */
+  toolset?: Toolset;
+  /** Starter questions */
+  suggestions?: string[];
+  /** Open an atlas: link */
+  onAtlas?: (ref: string) => void;
+  /** Note under the input */
+  privacyNote?: string;
   /** Contacts as they are now, by resource name (checked when applying) */
   entities: Record<string, Contact | undefined>;
   /** Labels by resource name */
@@ -354,6 +362,10 @@ const AssistantPanel: React.FC<AssistantPanelProps> = ({
   groups,
   model,
   request,
+  toolset,
+  suggestions,
+  onAtlas,
+  privacyNote,
 }) => {
   const dispatch = useAppDispatch();
   const [items, setItems] = useState<ChatItem[]>([]);
@@ -402,8 +414,8 @@ const AssistantPanel: React.FC<AssistantPanelProps> = ({
         const result = await runAgent(
           history.current,
           parts,
-          {
-            ...context,
+          toolset ?? {
+            ...context!,
             propose: (proposal) => add({ kind: 'proposal', proposal, status: 'pending' }),
             offerContact: (offer) => add({ kind: 'contact', offer }),
           },
@@ -422,7 +434,7 @@ const AssistantPanel: React.FC<AssistantPanelProps> = ({
         setBusy(false);
       }
     },
-    [busy, context],
+    [busy, context, toolset],
   );
 
   // Requests from elsewhere in the app ("Draft" on Reach out)
@@ -553,7 +565,7 @@ const AssistantPanel: React.FC<AssistantPanelProps> = ({
             <Box
               sx={{ display: 'flex', flexDirection: 'column', gap: 1, alignItems: 'flex-start' }}
             >
-              {SUGGESTIONS.map((s) => (
+              {(suggestions ?? SUGGESTIONS).map((s) => (
                 <Chip
                   key={s}
                   label={s}
@@ -591,7 +603,14 @@ const AssistantPanel: React.FC<AssistantPanelProps> = ({
             );
           }
           if (item.kind === 'assistant') {
-            return <Markdown key={i} text={item.text} onContact={context.openContact} />;
+            return (
+              <Markdown
+                key={i}
+                text={item.text}
+                onContact={context?.openContact ?? (() => undefined)}
+                onAtlas={onAtlas}
+              />
+            );
           }
           if (item.kind === 'step') {
             const { icon, text } = stepLabel(item.step);
@@ -637,7 +656,7 @@ const AssistantPanel: React.FC<AssistantPanelProps> = ({
                 item={item}
                 onApply={() => apply(item.proposal)}
                 onDiscard={() => discard(item.proposal)}
-                onShow={context.showContacts}
+                onShow={context?.showContacts ?? (() => undefined)}
               />
             );
           }
@@ -702,7 +721,8 @@ const AssistantPanel: React.FC<AssistantPanelProps> = ({
           </IconButton>
         </Box>
         <Typography variant="caption" sx={{ display: 'block', color: tokens.textMuted, mt: 0.75 }}>
-          Messages and the contact details the assistant looks up are sent to Google Gemini.
+          {privacyNote ??
+            'Messages and the contact details the assistant looks up are sent to Google Gemini.'}
         </Typography>
       </Box>
     </Box>
