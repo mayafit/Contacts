@@ -4,7 +4,7 @@
  * @module Contacts/atlas/AtlasMap
  */
 
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   CircleMarker,
   MapContainer,
@@ -15,11 +15,16 @@ import {
   useMap,
   useMapEvents,
 } from 'react-leaflet';
+import L from 'leaflet';
 import type { LatLngBoundsExpression, LeafletMouseEvent } from 'leaflet';
 import './leaflet.css';
 import type { ActivitySummary, PointOutput, VisitSummary } from './types';
-import { typeColor, isSet } from './types';
+import { HEALTH_COLOR, VISIT_COLOR, typeColor, isSet } from './types';
+import { Box } from '@mui/material';
+import AtlasLegend from './AtlasLegend';
 import { decodePolyline } from './geo';
+import { ATTRIBUTION, STYLE_URL, englishLabels } from './mapStyle';
+import { logger } from '../../../shared/logger';
 
 /** A rectangle on the map */
 export interface Box {
@@ -36,6 +41,8 @@ export interface AtlasMapProps {
   /** Full track of the selected activity */
   selectedTrack?: PointOutput[];
   selectedId?: string | null;
+  /** The visit open in the side panel */
+  selectedVisitId?: string | null;
   /** Area filter */
   area: Box | null;
   /** Drawing a new area */
@@ -89,6 +96,63 @@ const FitResults: React.FC<{
     // Only when new results arrive or the selection changes, not on every render
   }, [fitKey, track]);
   return null;
+};
+
+/**
+ * The base map: OpenFreeMap vector tiles drawn by MapLibre, with every label
+ * in English. MapLibre is loaded only here (it is large). Without WebGL, or
+ * when the style cannot be loaded, falls back to OpenStreetMap raster tiles
+ * (labels in the local language).
+ */
+const BaseMap: React.FC = () => {
+  const map = useMap();
+  const [fallback, setFallback] = useState(false);
+  useEffect(() => {
+    let layer: L.Layer | null = null;
+    let cancelled = false;
+    (async () => {
+      const [style] = await Promise.all([
+        fetch(STYLE_URL).then((r) => {
+          if (!r.ok) {
+            throw new Error(`style ${r.status}`);
+          }
+          return r.json();
+        }),
+        import('maplibre-gl'),
+        import('@maplibre/maplibre-gl-leaflet'),
+      ]);
+      if (cancelled) {
+        return;
+      }
+      // The plugin adds L.maplibreGL to the shared Leaflet instance
+      const create = (L as unknown as { maplibreGL?: (o: object) => L.Layer }).maplibreGL;
+      if (!create) {
+        throw new Error('MapLibre layer missing');
+      }
+      layer = create({ style: englishLabels(style), attribution: ATTRIBUTION }).addTo(map);
+    })().catch((err) => {
+      logger.warn(
+        { context: 'AtlasMap/baseMap', metadata: { message: (err as Error)?.message } },
+        'English base map unavailable, using OpenStreetMap tiles',
+      );
+      if (!cancelled) {
+        setFallback(true);
+      }
+    });
+    return () => {
+      cancelled = true;
+      layer?.remove();
+    };
+  }, [map]);
+  return fallback ? (
+    <TileLayer
+      // OpenStreetMap tiles, darkened by CSS (see leaflet.css: .atlas-dark-tiles)
+      url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+      attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+      className="atlas-dark-tiles"
+      maxZoom={19}
+    />
+  ) : null;
 };
 
 /** Drag a rectangle to choose an area (while drawing) */
@@ -159,7 +223,7 @@ const AreaDraw: React.FC<{ drawing: boolean; onDone: (b: Box) => void }> = ({
 };
 
 /**
- * The Atlas map (OpenStreetMap tiles, darkened).
+ * The Atlas map (dark base map with English labels).
  * @param props - Component props
  * @returns Map element
  */
@@ -168,6 +232,7 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
   visits,
   selectedTrack,
   selectedId,
+  selectedVisitId,
   area,
   drawing,
   onAreaDrawn,
@@ -188,68 +253,92 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
       ]
     : null;
 
+  const kinds = useMemo(
+    () => [...activities.map((a) => a.type), ...(visits.length ? ['visit'] : [])],
+    [activities, visits],
+  );
+
   return (
-    <MapContainer
-      center={[31.8, 35.0]}
-      zoom={7}
-      worldCopyJump
-      style={{ height: '100%', width: '100%', background: '#0e1116' }}
-      preferCanvas
-    >
-      <TileLayer
-        // OpenStreetMap tiles, darkened by CSS (see leaflet.css: .atlas-dark-tiles)
-        url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-        className="atlas-dark-tiles"
-        maxZoom={19}
-      />
-      <FitResults activities={activities} visits={visits} fitKey={fitKey} track={selectedTrack} />
-      <AreaDraw drawing={drawing} onDone={onAreaDrawn} />
-      {areaBounds && (
-        <Rectangle
-          bounds={areaBounds}
-          pathOptions={{ color: '#3987e5', weight: 1, fillOpacity: 0.06 }}
-        />
-      )}
-      {lines.map(({ a, path }) => (
-        <Polyline
-          key={a.id}
-          positions={path}
-          pathOptions={{
-            color: typeColor(a.type),
-            weight: a.id === selectedId ? 5 : 2.5,
-            opacity: selectedId && a.id !== selectedId ? 0.35 : 0.9,
+    <Box sx={{ position: 'relative', height: '100%', width: '100%' }}>
+      <MapContainer
+        center={[31.8, 35.0]}
+        zoom={7}
+        worldCopyJump
+        style={{ height: '100%', width: '100%', background: '#0e1116' }}
+        preferCanvas
+      >
+        <BaseMap />
+        <FitResults activities={activities} visits={visits} fitKey={fitKey} track={selectedTrack} />
+        <AreaDraw drawing={drawing} onDone={onAreaDrawn} />
+        {areaBounds && (
+          <Rectangle
+            bounds={areaBounds}
+            pathOptions={{ color: '#3987e5', weight: 1, fillOpacity: 0.06 }}
+          />
+        )}
+        {lines.map(({ a, path }) => (
+          <Polyline
+            key={a.id}
+            positions={path}
+            pathOptions={{
+              color: typeColor(a.type),
+              weight: a.id === selectedId ? 5 : 2.5,
+              opacity: selectedId && a.id !== selectedId ? 0.35 : 0.9,
+            }}
+            eventHandlers={{ click: () => onSelectActivity(a.id) }}
+          >
+            <Tooltip sticky>{a.name || a.type}</Tooltip>
+          </Polyline>
+        ))}
+        {selectedTrack && selectedTrack.length > 1 && (
+          <Polyline
+            positions={selectedTrack.map((p) => [p.lat, p.lon] as [number, number])}
+            pathOptions={{ color: '#ffffff', weight: 2, opacity: 0.9 }}
+          />
+        )}
+        {visits.map((v) => (
+          <CircleMarker
+            key={v.id}
+            center={[v.lat, v.lon]}
+            radius={v.id === selectedVisitId ? 8 : 5}
+            pathOptions={{
+              color: v.id === selectedVisitId ? '#ffffff' : VISIT_COLOR,
+              fillColor: VISIT_COLOR,
+              fillOpacity: 0.85,
+              weight: v.id === selectedVisitId ? 2 : 1,
+            }}
+            eventHandlers={{ click: () => onSelectVisit(v) }}
+          >
+            <Tooltip>{v.placeName || 'Visit'}</Tooltip>
+          </CircleMarker>
+        ))}
+        {cursor && (
+          <CircleMarker
+            center={cursor}
+            radius={7}
+            pathOptions={{ color: '#fff', fillColor: HEALTH_COLOR, fillOpacity: 1, weight: 2 }}
+          />
+        )}
+      </MapContainer>
+      {kinds.length > 0 && (
+        <Box
+          sx={{
+            position: 'absolute',
+            left: 10,
+            bottom: 24,
+            zIndex: 1000,
+            maxWidth: 'calc(100% - 80px)',
+            px: 1,
+            py: 0.5,
+            borderRadius: 1,
+            bgcolor: 'rgba(14, 17, 22, 0.85)',
+            pointerEvents: 'none',
           }}
-          eventHandlers={{ click: () => onSelectActivity(a.id) }}
         >
-          <Tooltip sticky>{a.name || a.type}</Tooltip>
-        </Polyline>
-      ))}
-      {selectedTrack && selectedTrack.length > 1 && (
-        <Polyline
-          positions={selectedTrack.map((p) => [p.lat, p.lon] as [number, number])}
-          pathOptions={{ color: '#ffffff', weight: 2, opacity: 0.9 }}
-        />
+          <AtlasLegend kinds={kinds} />
+        </Box>
       )}
-      {visits.map((v) => (
-        <CircleMarker
-          key={v.id}
-          center={[v.lat, v.lon]}
-          radius={5}
-          pathOptions={{ color: '#ffb547', fillColor: '#ffb547', fillOpacity: 0.85, weight: 1 }}
-          eventHandlers={{ click: () => onSelectVisit(v) }}
-        >
-          <Tooltip>{v.placeName || 'Visit'}</Tooltip>
-        </CircleMarker>
-      ))}
-      {cursor && (
-        <CircleMarker
-          center={cursor}
-          radius={7}
-          pathOptions={{ color: '#fff', fillColor: '#ff4d6d', fillOpacity: 1, weight: 2 }}
-        />
-      )}
-    </MapContainer>
+    </Box>
   );
 };
 

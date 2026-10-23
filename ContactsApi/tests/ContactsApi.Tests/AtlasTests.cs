@@ -132,6 +132,16 @@ public class AtlasServiceDbTests
         var local = await svc.HistogramAsync(owner, new DateTime(2026, 9, 10), new DateTime(2026, 9, 12), "day", default, "Asia/Jerusalem");
         Assert.Contains(local, r => r.Kind == "visit" && r.Bucket == new DateTime(2026, 9, 10, 21, 0, 0, DateTimeKind.Utc));
 
+        // The timeline follows the map's filters: an area away from the ride, or another type
+        var elsewhere = await svc.HistogramAsync(owner, t0.AddDays(-2), t0.AddDays(2), "day", default, null,
+            new AtlasQuery { MinLat = 31, MaxLat = 31.5, MinLon = 34, MaxLon = 34.5 });
+        Assert.DoesNotContain(elsewhere, r => r.Kind == "ride");
+        Assert.Contains(elsewhere, r => r.Kind == "health"); // health has no place
+        var hikes = await svc.HistogramAsync(owner, t0.AddDays(-2), t0.AddDays(2), "day", default, null, new AtlasQuery { Types = ["hike"] });
+        Assert.DoesNotContain(hikes, r => r.Kind is "ride" or "visit");
+        var carmel = await svc.HistogramAsync(owner, t0.AddDays(-2), t0.AddDays(2), "day", default, null, new AtlasQuery { Text = "Carmel" });
+        Assert.Contains(carmel, r => r.Kind == "ride" && r.Count == 1);
+
         // Someone else sees nothing
         Assert.Empty((await svc.SearchAsync("other", new AtlasQuery())).Activities);
 

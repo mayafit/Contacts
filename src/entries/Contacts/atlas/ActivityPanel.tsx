@@ -8,7 +8,7 @@ import React, { useMemo, useState } from 'react';
 import { Box, Button, IconButton, MenuItem, TextField, Tooltip, Typography } from '@mui/material';
 import { ArrowBack, DeleteOutline, Edit, Favorite } from '@mui/icons-material';
 import type { ActivityDetail, PointOutput, SeriesPoint } from './types';
-import { ACTIVITY_TYPES, typeColor, isSet } from './types';
+import { ACTIVITY_TYPES, HEALTH_COLOR, typeColor, isSet } from './types';
 import { formatDistance, formatDuration, formatWhen } from './geo';
 import { tokens } from '../theme/contactsTheme';
 
@@ -223,7 +223,7 @@ const ActivityPanel: React.FC<ActivityPanelProps> = ({
         <Chart
           label="Heart rate"
           unit="bpm"
-          color="#ff4d6d"
+          color={HEALTH_COLOR}
           series={hr}
           from={from}
           to={to}
