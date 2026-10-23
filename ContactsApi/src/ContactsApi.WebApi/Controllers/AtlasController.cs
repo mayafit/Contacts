@@ -12,6 +12,9 @@ namespace ContactsApi.WebApi.Controllers;
 /// <summary>Request to create an access token</summary>
 public record CreateTokenRequest(string Name);
 
+/// <summary>Timeline counts for a range, with the map's filters</summary>
+public record HistogramRequest(DateTime From, DateTime To, string? Bucket, string? Tz, AtlasQuery? Filter);
+
 /// <summary>
 /// Activities, places, visits and health data of the signed-in user, plus
 /// imports and the personal access tokens for MCP clients.
@@ -52,6 +55,12 @@ public class AtlasController : ControllerBase
     [HttpGet("histogram")]
     public Task<IActionResult> Histogram([FromQuery] DateTime from, [FromQuery] DateTime to, [FromQuery] string bucket = "day", [FromQuery] string? tz = null) =>
         Run((svc, owner) => svc.HistogramAsync(owner, from, to, bucket, HttpContext.RequestAborted, tz));
+
+    /// <summary>Counts per time bucket of what a search finds (area, types, text)</summary>
+    [HttpPost("histogram")]
+    public Task<IActionResult> FilteredHistogram([FromBody] HistogramRequest request) =>
+        Run((svc, owner) => svc.HistogramAsync(owner, request.From, request.To, request.Bucket ?? "day", HttpContext.RequestAborted,
+            request.Tz, request.Filter));
 
     /// <summary>Totals and imports</summary>
     [HttpGet("summary")]

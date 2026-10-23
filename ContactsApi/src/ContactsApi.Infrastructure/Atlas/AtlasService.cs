@@ -287,11 +287,10 @@ public class AtlasService
         var activities = new List<ActivitySummary>();
         var visits = new List<VisitSummary>();
         int totalActivities = 0, totalVisits = 0;
-        var text = q.Text?.Trim();
 
         if (q.Activities)
         {
-            var aq = _db.Activities.AsNoTracking().Where(a => a.OwnerId == owner);
+            var aq = FilterActivities(owner, q);
             if (q.From.HasValue)
             {
                 var from = Utc(q.From.Value);
@@ -304,30 +303,13 @@ public class AtlasService
                 aq = aq.Where(a => a.StartTime <= to);
             }
 
-            if (HasBox(q))
-            {
-                aq = aq.Where(a => a.MaxLat >= q.MinLat && a.MinLat <= q.MaxLat && a.MaxLon >= q.MinLon && a.MinLon <= q.MaxLon);
-            }
-
-            if (q.Types is { Count: > 0 })
-            {
-                var types = q.Types.Select(NormalizeType).ToList();
-                aq = aq.Where(a => types.Contains(a.Type));
-            }
-
-            if (!string.IsNullOrEmpty(text))
-            {
-                var pattern = $"%{EscapeLike(text)}%";
-                aq = aq.Where(a => EF.Functions.ILike(a.Name ?? "", pattern) || EF.Functions.ILike(a.Notes ?? "", pattern));
-            }
-
             totalActivities = await aq.CountAsync(ct);
             activities = await aq.OrderByDescending(a => a.StartTime).Take(limit).Select(ToSummary).ToListAsync(ct);
         }
 
         if (q.Visits)
         {
-            var vq = _db.Visits.AsNoTracking().Where(v => v.OwnerId == owner);
+            var vq = FilterVisits(owner, q);
             if (q.From.HasValue)
             {
                 var from = Utc(q.From.Value);
@@ -340,17 +322,6 @@ public class AtlasService
                 vq = vq.Where(v => v.StartTime <= to);
             }
 
-            if (HasBox(q))
-            {
-                vq = vq.Where(v => v.Lat >= q.MinLat && v.Lat <= q.MaxLat && v.Lon >= q.MinLon && v.Lon <= q.MaxLon);
-            }
-
-            if (!string.IsNullOrEmpty(text))
-            {
-                var pattern = $"%{EscapeLike(text)}%";
-                vq = vq.Where(v => v.Place != null && (EF.Functions.ILike(v.Place.Name, pattern) || EF.Functions.ILike(v.Place.Address ?? "", pattern)));
-            }
-
             totalVisits = await vq.CountAsync(ct);
             visits = await vq.OrderByDescending(v => v.StartTime).Take(limit)
                 .Select(v => new VisitSummary(v.Id, v.PlaceId, v.Place != null ? v.Place.Name : null, v.Place != null ? v.Place.Address : null,
@@ -359,6 +330,50 @@ public class AtlasService
         }
 
         return new SearchResult(activities, visits, totalActivities, totalVisits);
+    }
+
+    /// <summary>The owner's activities in the query's area, types and text (not its time)</summary>
+    private IQueryable<AtlasActivity> FilterActivities(string owner, AtlasQuery q)
+    {
+        var aq = _db.Activities.AsNoTracking().Where(a => a.OwnerId == owner);
+        if (HasBox(q))
+        {
+            aq = aq.Where(a => a.MaxLat >= q.MinLat && a.MinLat <= q.MaxLat && a.MaxLon >= q.MinLon && a.MinLon <= q.MaxLon);
+        }
+
+        if (q.Types is { Count: > 0 })
+        {
+            var types = q.Types.Select(NormalizeType).ToList();
+            aq = aq.Where(a => types.Contains(a.Type));
+        }
+
+        var text = q.Text?.Trim();
+        if (!string.IsNullOrEmpty(text))
+        {
+            var pattern = $"%{EscapeLike(text)}%";
+            aq = aq.Where(a => EF.Functions.ILike(a.Name ?? "", pattern) || EF.Functions.ILike(a.Notes ?? "", pattern));
+        }
+
+        return aq;
+    }
+
+    /// <summary>The owner's visits in the query's area and text (not its time)</summary>
+    private IQueryable<PlaceVisit> FilterVisits(string owner, AtlasQuery q)
+    {
+        var vq = _db.Visits.AsNoTracking().Where(v => v.OwnerId == owner);
+        if (HasBox(q))
+        {
+            vq = vq.Where(v => v.Lat >= q.MinLat && v.Lat <= q.MaxLat && v.Lon >= q.MinLon && v.Lon <= q.MaxLon);
+        }
+
+        var text = q.Text?.Trim();
+        if (!string.IsNullOrEmpty(text))
+        {
+            var pattern = $"%{EscapeLike(text)}%";
+            vq = vq.Where(v => v.Place != null && (EF.Functions.ILike(v.Place.Name, pattern) || EF.Functions.ILike(v.Place.Address ?? "", pattern)));
+        }
+
+        return vq;
     }
 
     /// <summary>
@@ -431,22 +446,82 @@ public class AtlasService
     /// health samples. Bucket is hour, day, week, month or year.
     /// </summary>
     /// <param name="timeZone">IANA zone for day/week/month boundaries (default UTC)</param>
-    public async Task<List<HistogramRow>> HistogramAsync(string owner, DateTime from, DateTime to, string bucket, CancellationToken ct = default, string? timeZone = null)
+    /// <param name="filter">Area, types and text, as in the search, so the timeline counts what the map shows</param>
+    public async Task<List<HistogramRow>> HistogramAsync(string owner, DateTime from, DateTime to, string bucket, CancellationToken ct = default,
+        string? timeZone = null, AtlasQuery? filter = null)
     {
         bucket = bucket is "hour" or "day" or "week" or "month" or "year" ? bucket : "day";
         var tz = timeZone != null && System.Text.RegularExpressions.Regex.IsMatch(timeZone, @"^[A-Za-z]+(/[A-Za-z0-9_+\-]+){0,2}$") ? timeZone : "UTC";
+        var zone = FindZone(tz);
         from = Utc(from);
         to = Utc(to);
-        return await _db.Database.SqlQuery<HistogramRow>($@"
-            SELECT date_trunc({bucket}, ""StartTime"" AT TIME ZONE {tz}) AT TIME ZONE {tz} AS ""Bucket"", ""Type"" AS ""Kind"", count(*)::int AS ""Count""
-              FROM atlas.activities WHERE ""OwnerId"" = {owner} AND ""StartTime"" BETWEEN {from} AND {to} GROUP BY 1, 2
-            UNION ALL
-            SELECT date_trunc({bucket}, ""StartTime"" AT TIME ZONE {tz}) AT TIME ZONE {tz}, 'visit', count(*)::int
-              FROM atlas.visits WHERE ""OwnerId"" = {owner} AND ""StartTime"" BETWEEN {from} AND {to} GROUP BY 1
-            UNION ALL
-            SELECT date_trunc({bucket}, ""StartTime"" AT TIME ZONE {tz}) AT TIME ZONE {tz}, 'health', count(*)::int
-              FROM atlas.health_samples WHERE ""OwnerId"" = {owner} AND ""StartTime"" BETWEEN {from} AND {to} GROUP BY 1
-            ORDER BY 1").ToListAsync(ct);
+        filter ??= new AtlasQuery();
+
+        // Activities and visits: few enough to bucket here, with every search filter
+        var rows = new List<HistogramRow>();
+        if (filter.Activities)
+        {
+            var starts = await FilterActivities(owner, filter)
+                .Where(a => a.StartTime >= from && a.StartTime <= to)
+                .Select(a => new { a.StartTime, a.Type })
+                .ToListAsync(ct);
+            rows.AddRange(starts.GroupBy(a => (Bucket: BucketStart(a.StartTime, bucket, zone), a.Type))
+                .Select(g => new HistogramRow(g.Key.Bucket, g.Key.Type, g.Count())));
+        }
+
+        if (filter.Visits && filter.Types is not { Count: > 0 })
+        {
+            var starts = await FilterVisits(owner, filter)
+                .Where(v => v.StartTime >= from && v.StartTime <= to)
+                .Select(v => v.StartTime)
+                .ToListAsync(ct);
+            rows.AddRange(starts.GroupBy(t => BucketStart(t, bucket, zone))
+                .Select(g => new HistogramRow(g.Key, "visit", g.Count())));
+        }
+
+        // Health: dense (a value every few seconds) and without a place, so counted
+        // in the database and not filtered by area
+        rows.AddRange(await _db.Database.SqlQuery<HistogramRow>($@"
+            SELECT date_trunc({bucket}, ""StartTime"" AT TIME ZONE {tz}) AT TIME ZONE {tz} AS ""Bucket"", 'health' AS ""Kind"", count(*)::int AS ""Count""
+              FROM atlas.health_samples WHERE ""OwnerId"" = {owner} AND ""StartTime"" BETWEEN {from} AND {to} GROUP BY 1").ToListAsync(ct));
+        return rows.OrderBy(r => r.Bucket).ToList();
+    }
+
+    private static TimeZoneInfo FindZone(string id)
+    {
+        try
+        {
+            return TimeZoneInfo.FindSystemTimeZoneById(id);
+        }
+        catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException)
+        {
+            return TimeZoneInfo.Utc;
+        }
+    }
+
+    /// <summary>
+    /// Start of the hour/day/week (Monday)/month/year containing a moment, in a
+    /// time zone, as UTC (like PostgreSQL's date_trunc ... AT TIME ZONE)
+    /// </summary>
+    internal static DateTime BucketStart(DateTime utc, string bucket, TimeZoneInfo zone)
+    {
+        var local = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(utc, DateTimeKind.Utc), zone);
+        var start = bucket switch
+        {
+            "hour" => new DateTime(local.Year, local.Month, local.Day, local.Hour, 0, 0),
+            "week" => local.Date.AddDays(-(((int)local.DayOfWeek + 6) % 7)),
+            "month" => new DateTime(local.Year, local.Month, 1),
+            "year" => new DateTime(local.Year, 1, 1),
+            _ => local.Date
+        };
+        start = DateTime.SpecifyKind(start, DateTimeKind.Unspecified);
+        if (zone.IsInvalidTime(start))
+        {
+            // Midnight skipped by a clock change: the first valid moment after it
+            start = start.AddHours(1);
+        }
+
+        return TimeZoneInfo.ConvertTimeToUtc(start, zone);
     }
 
     /// <summary>

@@ -47,7 +47,7 @@ frontend:
       memory: 128Mi
 
   nginx:
-    cspConnectSrc: "'self' https://accounts.google.com https://people.googleapis.com https://www.googleapis.com"
+    cspConnectSrc: "'self' https://accounts.google.com https://people.googleapis.com https://www.googleapis.com https://tiles.openfreemap.org"
 
   probes:
     liveness:

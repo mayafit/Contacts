@@ -37,7 +37,6 @@ export const decodePolyline = (encoded: string): [number, number][] => {
   return points;
 };
 
-/** Timeline bucket for a time span: hour, day, week, month or year */
 /** Length of a track in meters (haversine) */
 export const trackLength = (points: { lat: number; lon: number }[]): number => {
   const rad = Math.PI / 180;
@@ -67,6 +66,42 @@ export const thinTrack = <T>(points: T[], max: number): T[] => {
   return Array.from({ length: max }, (_, i) => points[Math.round(i * step)]);
 };
 
+/** Shortest and longest span the timeline shows */
+export const MIN_SPAN_MS = 6 * 3_600_000;
+export const MAX_SPAN_MS = 40 * 365 * 86_400_000;
+
+/**
+ * Zooms a time range around a moment.
+ * @param view - Current range
+ * @param center - The moment that stays in place
+ * @param factor - Above 1 zooms out, below 1 zooms in
+ * @returns New range
+ */
+export const zoomRange = (
+  view: { from: number; to: number },
+  center: number,
+  factor: number,
+): { from: number; to: number } => {
+  const span = Math.min(Math.max((view.to - view.from) * factor, MIN_SPAN_MS), MAX_SPAN_MS);
+  const ratio = (center - view.from) / (view.to - view.from);
+  return { from: center - span * ratio, to: center + span * (1 - ratio) };
+};
+
+/**
+ * Moves a time range by part of its length.
+ * @param view - Current range
+ * @param fraction - How far, as a fraction of the span (negative = earlier)
+ * @returns New range
+ */
+export const panRange = (
+  view: { from: number; to: number },
+  fraction: number,
+): { from: number; to: number } => {
+  const dt = (view.to - view.from) * fraction;
+  return { from: view.from + dt, to: view.to + dt };
+};
+
+/** Timeline bucket for a time span: hour, day, week, month or year */
 export const bucketFor = (spanMs: number): 'hour' | 'day' | 'week' | 'month' | 'year' => {
   const days = spanMs / 86_400_000;
   if (days <= 4) {
