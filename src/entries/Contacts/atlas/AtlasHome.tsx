@@ -79,6 +79,8 @@ const AtlasHome: React.FC = () => {
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [assistantEnabled, setAssistantEnabled] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  // The activity being merged while the user picks the other one (map or list)
+  const [mergeFrom, setMergeFrom] = useState<string | null>(null);
   // Bumped when new results arrive, so the map fits to them (not to the old ones)
   const [fitTick, setFitTick] = useState(0);
 
@@ -195,6 +197,55 @@ const AtlasHome: React.FC = () => {
       setError((e as Error).message);
     }
   }, []);
+
+  /**
+   * Merges the activity being merged with the picked one and opens the result.
+   * @param from - The activity the merge started from
+   * @param picked - The activity picked on the map or in the list
+   */
+  const mergeWith = useCallback(
+    async (from: string, picked: string) => {
+      if (from === picked) {
+        setError('Pick a different activity to merge with.');
+        return;
+      }
+      setMergeFrom(null);
+      try {
+        const merged = await backendApiClient.atlasMerge(from, picked);
+        await openActivity(merged.summary.id);
+        setReloadKey((k) => k + 1);
+      } catch (e) {
+        setError((e as Error).message || 'Merging failed');
+      }
+    },
+    [openActivity],
+  );
+
+  /** A click on an activity (map or list): opens it, or picks it while merging */
+  const selectActivity = useCallback(
+    (id: string) => {
+      if (mergeFrom) {
+        void mergeWith(mergeFrom, id);
+      } else {
+        void openActivity(id);
+      }
+    },
+    [mergeFrom, mergeWith, openActivity],
+  );
+
+  // Escape ends picking
+  useEffect(() => {
+    if (!mergeFrom) {
+      return undefined;
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setMergeFrom(null);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [mergeFrom]);
 
   const showQuery = useCallback((s: AtlasQuery) => {
     setDetail(null);
@@ -358,6 +409,19 @@ const AtlasHome: React.FC = () => {
           {error}
         </Alert>
       )}
+      {mergeFrom && (
+        <Alert
+          severity="info"
+          sx={{ borderRadius: 0 }}
+          action={
+            <Button color="inherit" size="small" onClick={() => setMergeFrom(null)}>
+              Cancel
+            </Button>
+          }
+        >
+          Pick the activity to merge with — on the map or in the list
+        </Alert>
+      )}
 
       <Box sx={{ flex: 1, minHeight: 0, display: 'flex' }}>
         <Box
@@ -379,8 +443,11 @@ const AtlasHome: React.FC = () => {
                   setArea(b);
                   setDrawing(false);
                 }}
-                onSelectActivity={(id) => void openActivity(id)}
+                onSelectActivity={selectActivity}
                 onSelectVisit={(v) => {
+                  if (mergeFrom) {
+                    return;
+                  }
                   setDetail(null);
                   setVisit(v);
                 }}
@@ -439,7 +506,7 @@ const AtlasHome: React.FC = () => {
               overflowY: 'auto',
             }}
           >
-            {detail ? (
+            {detail && !mergeFrom ? (
               <ActivityPanel
                 key={detail.summary.id}
                 detail={detail}
@@ -459,7 +526,14 @@ const AtlasHome: React.FC = () => {
                   setReloadKey((k) => k + 1);
                 }}
                 onDelete={async () => {
-                  if (!window.confirm('Delete this activity and its track?')) {
+                  const n = detail.summary.memberCount ?? 1;
+                  if (
+                    !window.confirm(
+                      n > 1
+                        ? `Delete this activity and all ${n} source records it was fused from, with their tracks?`
+                        : 'Delete this activity and its track?',
+                    )
+                  ) {
                     return;
                   }
                   try {
@@ -468,6 +542,31 @@ const AtlasHome: React.FC = () => {
                     changed();
                   } catch (e) {
                     setError((e as Error).message || 'Deleting failed');
+                  }
+                }}
+                onSplit={async (memberId) => {
+                  try {
+                    await backendApiClient.atlasSplit(detail.summary.id, memberId);
+                  } catch (e) {
+                    setError((e as Error).message || 'Splitting failed');
+                    throw e;
+                  }
+                  await openActivity(detail.summary.id);
+                  setReloadKey((k) => k + 1);
+                }}
+                onStartMerge={() => {
+                  setVisit(null);
+                  setMergeFrom(detail.summary.id);
+                }}
+                onShowPlace={(lat, lon, visitId) => {
+                  const v = result?.visits.find((x) => x.id === visitId);
+                  if (v) {
+                    setDetail(null);
+                    setCursor(null);
+                    setVisit(v);
+                  } else {
+                    // Not in the results: mark it on the map
+                    setCursor([lat, lon]);
                   }
                 }}
               />
@@ -525,8 +624,12 @@ const AtlasHome: React.FC = () => {
                 onToggleType={(t) =>
                   setTypes((ts) => (ts.includes(t) ? ts.filter((x) => x !== t) : [...ts, t]))
                 }
-                onSelectActivity={(id) => void openActivity(id)}
-                onSelectVisit={setVisit}
+                onSelectActivity={selectActivity}
+                onSelectVisit={(v) => {
+                  if (!mergeFrom) {
+                    setVisit(v);
+                  }
+                }}
               />
             )}
           </Box>

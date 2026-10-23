@@ -6,7 +6,7 @@
 import { backendApiClient } from '../../../services/api/BackendApiClient';
 import type { Toolset } from '../assistant/agent';
 import type { AtlasQuery, AtlasSummary } from './types';
-import { isSet } from './types';
+import { isSet, sourceLabel } from './types';
 
 /** What the tools can do on screen */
 export interface AtlasUi {
@@ -49,7 +49,7 @@ const DECLARATIONS = [
   {
     name: 'atlas_activity',
     description:
-      'One activity: distance, duration, climb, average/max heart rate, and a heart-rate series (from the track or from health data at that time).',
+      'One activity: distance, duration, climb, average/max heart rate, a heart-rate series (from the track or from health data at that time), the source records it is fused from (members), where each value comes from (fieldSources), conflicts between the sources, and the places visited at its start, end or during it.',
     parameters: { type: 'object', properties: { id: S('Activity id') }, required: ['id'] },
   },
   {
@@ -111,6 +111,7 @@ export const atlasToolset = (ui: AtlasUi): Toolset => ({
     const offset = -new Date().getTimezoneOffset() / 60;
     return [
       "You are the assistant of the user's Atlas: their trips, places visited (Google Timeline), workouts (rides, hikes, runs from Sports Tracker and others) and health data (heart rate…).",
+      'Activities are fused: one real-world activity recorded by several sources (e.g. Sports Tracker, Google Timeline, Fitbit) is one activity with several members. atlas_activity says which source supplied each value and where the sources disagree, so you can explain where a number comes from.',
       `Today is ${new Date().toISOString().slice(0, 10)}; the user's time zone is UTC${offset >= 0 ? '+' : ''}${offset}. Times from tools are UTC: convert when you show them.`,
       s
         ? `Data: ${s.activities} activities (${
@@ -125,6 +126,7 @@ export const atlasToolset = (ui: AtlasUi): Toolset => ({
       '- Heart rate during an activity: atlas_activity gives it (from the track or from health data at the same minutes).',
       '- After a search the user may want to see, call show_on_map with the same filters.',
       '- Refer to an activity as [name](atlas:activity/ID) so the user can open it.',
+      '- When the sources disagree (conflicts), say so and which value was used.',
       '- Reply in the language the user writes in. Be brief.',
     ].join('\n');
   },
@@ -159,6 +161,9 @@ export const atlasToolset = (ui: AtlasUi): Toolset => ({
             climbM: round(a.elevationGainM),
             avgHr: a.avgHeartRate ?? undefined,
             maxHr: a.maxHeartRate ?? undefined,
+            sources: (a.sources ?? [a.source]).map((x) => sourceLabel(x)),
+            memberCount: a.memberCount,
+            conflicts: a.conflictCount || undefined,
             area: isSet(a.minLat)
               ? [round(a.minLat, 3), round(a.minLon, 3), round(a.maxLat, 3), round(a.maxLon, 3)]
               : undefined,
@@ -190,6 +195,38 @@ export const atlasToolset = (ui: AtlasUi): Toolset => ({
           end: d.points.length
             ? { lat: d.points[d.points.length - 1].lat, lon: d.points[d.points.length - 1].lon }
             : undefined,
+          members: (d.members ?? []).map((m) => ({
+            id: m.id,
+            source: sourceLabel(m.source),
+            primary: m.primary,
+            type: m.type,
+            name: m.name ?? undefined,
+            start: m.startTime,
+            end: m.endTime,
+            distanceKm: isSet(m.distanceM) ? round(m.distanceM / 1000, 1) : undefined,
+            minutes: isSet(m.durationS) ? round(m.durationS / 60) : undefined,
+            avgHr: m.avgHeartRate ?? undefined,
+            maxHr: m.maxHeartRate ?? undefined,
+            hasTrack: m.pointCount > 0,
+          })),
+          fieldSources: Object.fromEntries(
+            Object.entries(d.fieldSources ?? {}).map(([k, v]) => [k, sourceLabel(v)]),
+          ),
+          conflicts: (d.conflicts ?? []).map((c) => ({
+            field: c.field,
+            message: c.message,
+            values: c.values.map((v) => ({ source: sourceLabel(v.source), value: v.value })),
+            used: c.chosen,
+          })),
+          places: (d.places ?? []).map((p) => ({
+            role: p.role,
+            place: p.placeName ?? undefined,
+            address: p.address ?? undefined,
+            start: p.startTime,
+            end: p.endTime,
+            lat: round(p.lat, 4),
+            lon: round(p.lon, 4),
+          })),
         };
       }
       case 'atlas_health': {
@@ -226,6 +263,8 @@ export const atlasToolset = (ui: AtlasUi): Toolset => ({
             name: a.name,
             start: a.startTime,
             distanceKm: round((a.distanceM ?? 0) / 1000, 1),
+            sources: (a.sources ?? [a.source]).map((x) => sourceLabel(x)),
+            memberCount: a.memberCount,
           })),
         };
       }

@@ -1,5 +1,6 @@
 /**
- * @fileoverview Import: files, zips or a folder, parsed in the browser and sent in batches
+ * @fileoverview Import: files, zips or a folder, parsed in the browser and sent in batches;
+ * or a connected Sports Tracker account, synced by the server
  * @module Contacts/atlas/ImportDialog
  */
 
@@ -17,6 +18,8 @@ import {
   LinearProgress,
   Radio,
   RadioGroup,
+  Tab,
+  Tabs,
   Tooltip,
   Typography,
 } from '@mui/material';
@@ -26,6 +29,7 @@ import type { ImportRun, ParsedData } from './types';
 import { parseFile, readZip, type ImportFile } from './importers';
 import { tokens } from '../theme/contactsTheme';
 import { thinTrack, trackLength } from './geo';
+import SportsTrackerTab from './SportsTrackerTab';
 
 /** Props for ImportDialog */
 export interface ImportDialogProps {
@@ -135,6 +139,7 @@ const send = async (
  * @returns Dialog
  */
 const ImportDialog: React.FC<ImportDialogProps> = ({ open, onClose, onChanged }) => {
+  const [tab, setTab] = useState<'files' | 'sports-tracker'>('files');
   const [source, setSource] = useState<'auto' | 'sports-tracker'>('auto');
   const [busy, setBusy] = useState(false);
   const [log, setLog] = useState<string[]>([]);
@@ -220,161 +225,179 @@ const ImportDialog: React.FC<ImportDialogProps> = ({ open, onClose, onChanged })
 
   return (
     <Dialog open={open} onClose={busy ? undefined : onClose} maxWidth="md" fullWidth>
-      <DialogTitle>Import</DialogTitle>
-      <DialogContent>
-        <Typography variant="body2" sx={{ color: tokens.textSecondary, mb: 1 }}>
-          Files are read in this browser; only the activities, places, visits and health values are
-          sent. Importing the same files again updates them instead of adding copies.
-        </Typography>
-        <Box
-          component="ul"
-          sx={{ m: 0, pl: 2.5, color: tokens.textSecondary, fontSize: 13, mb: 1.5 }}
-        >
-          <li>
-            <strong>Google Timeline</strong>: <code>Timeline.json</code> exported from the phone
-            (Settings → Location → Timeline → Export), or a Takeout zip with “Location History”.
-          </li>
-          <li>
-            <strong>Google Fit / Fitbit</strong>: the Takeout zip (heart rate, steps, workouts).
-          </li>
-          <li>
-            <strong>Sports Tracker</strong>: workouts exported as GPX (Workout → ⋯ → Export GPX),
-            several at once.
-          </li>
-          <li>Any GPX or TCX file.</li>
+      <DialogTitle sx={{ pb: 0 }}>Import</DialogTitle>
+      <Tabs
+        value={tab}
+        onChange={(_, v: 'files' | 'sports-tracker') => setTab(v)}
+        sx={{ px: 3, borderBottom: `1px solid ${tokens.border}` }}
+      >
+        <Tab value="files" label="Files" disabled={busy} />
+        <Tab value="sports-tracker" label="Sports Tracker" disabled={busy} />
+      </Tabs>
+      <DialogContent sx={{ pt: '16px !important' }}>
+        <Box sx={{ display: tab === 'sports-tracker' ? 'block' : 'none' }}>
+          <SportsTrackerTab open={open} onChanged={onChanged} />
         </Box>
-        <RadioGroup
-          row
-          value={source}
-          onChange={(e) => setSource(e.target.value as 'auto' | 'sports-tracker')}
-        >
-          <FormControlLabel
-            value="auto"
-            control={<Radio size="small" />}
-            label="Recognize automatically"
-          />
-          <FormControlLabel
-            value="sports-tracker"
-            control={<Radio size="small" />}
-            label="GPX/TCX are from Sports Tracker"
-          />
-        </RadioGroup>
-        <Box sx={{ display: 'flex', gap: 1, my: 1.5 }}>
-          <Button
-            variant="contained"
-            startIcon={<UploadFile />}
-            disabled={busy}
-            onClick={() => fileInput.current?.click()}
-          >
-            Choose files or zips
-          </Button>
-          <Button
-            variant="outlined"
-            startIcon={<FolderOpen />}
-            disabled={busy}
-            onClick={() => folderInput.current?.click()}
-          >
-            Choose a folder
-          </Button>
-          <input
-            ref={fileInput}
-            type="file"
-            multiple
-            accept=".zip,.json,.gpx,.tcx"
-            hidden
-            onChange={(e) => {
-              const files = Array.from(e.target.files ?? []);
-              e.target.value = '';
-              if (files.length) {
-                void run(files);
-              }
-            }}
-          />
-          <input
-            ref={folderInput}
-            type="file"
-            hidden
-            // @ts-expect-error webkitdirectory is not in the React types
-            webkitdirectory=""
-            onChange={(e) => {
-              const files = Array.from(e.target.files ?? []);
-              e.target.value = '';
-              if (files.length) {
-                void run(files);
-              }
-            }}
-          />
-        </Box>
-        {busy && <LinearProgress sx={{ mb: 1 }} />}
-        {(busy || sent > 0) && (
-          <Typography variant="caption" sx={{ color: tokens.textMuted, display: 'block', mb: 1 }}>
-            {sent.toLocaleString()} items saved
-          </Typography>
-        )}
-        {error && (
-          <Alert severity="error" sx={{ mb: 1 }}>
-            {error}
-          </Alert>
-        )}
-        {log.length > 0 && (
-          <Box
-            sx={{
-              maxHeight: 160,
-              overflowY: 'auto',
-              fontSize: 12,
-              fontFamily: 'monospace',
-              color: tokens.textSecondary,
-              bgcolor: tokens.page,
-              p: 1,
-              borderRadius: '6px',
-              mb: 2,
-            }}
-          >
-            {log.map((l, i) => (
-              <div key={i}>{l}</div>
-            ))}
-          </Box>
-        )}
-        {imports.length > 0 && (
+        {tab === 'files' && (
           <>
-            <Typography variant="subtitle2" sx={{ mt: 1 }}>
-              Imports
+            <Typography variant="body2" sx={{ color: tokens.textSecondary, mb: 1 }}>
+              Files are read in this browser; only the activities, places, visits and health values
+              are sent. Importing the same files again updates them instead of adding copies.
             </Typography>
-            {imports.map((imp) => (
+            <Box
+              component="ul"
+              sx={{ m: 0, pl: 2.5, color: tokens.textSecondary, fontSize: 13, mb: 1.5 }}
+            >
+              <li>
+                <strong>Google Timeline</strong>: <code>Timeline.json</code> exported from the phone
+                (Settings → Location → Timeline → Export), or a Takeout zip with “Location History”.
+              </li>
+              <li>
+                <strong>Google Fit / Fitbit</strong>: the Takeout zip (heart rate, steps, workouts).
+              </li>
+              <li>
+                <strong>Sports Tracker</strong>: workouts exported as GPX (Workout → ⋯ → Export
+                GPX), several at once.
+              </li>
+              <li>Any GPX or TCX file.</li>
+            </Box>
+            <RadioGroup
+              row
+              value={source}
+              onChange={(e) => setSource(e.target.value as 'auto' | 'sports-tracker')}
+            >
+              <FormControlLabel
+                value="auto"
+                control={<Radio size="small" />}
+                label="Recognize automatically"
+              />
+              <FormControlLabel
+                value="sports-tracker"
+                control={<Radio size="small" />}
+                label="GPX/TCX are from Sports Tracker"
+              />
+            </RadioGroup>
+            <Box sx={{ display: 'flex', gap: 1, my: 1.5 }}>
+              <Button
+                variant="contained"
+                startIcon={<UploadFile />}
+                disabled={busy}
+                onClick={() => fileInput.current?.click()}
+              >
+                Choose files or zips
+              </Button>
+              <Button
+                variant="outlined"
+                startIcon={<FolderOpen />}
+                disabled={busy}
+                onClick={() => folderInput.current?.click()}
+              >
+                Choose a folder
+              </Button>
+              <input
+                ref={fileInput}
+                type="file"
+                multiple
+                accept=".zip,.json,.gpx,.tcx"
+                hidden
+                onChange={(e) => {
+                  const files = Array.from(e.target.files ?? []);
+                  e.target.value = '';
+                  if (files.length) {
+                    void run(files);
+                  }
+                }}
+              />
+              <input
+                ref={folderInput}
+                type="file"
+                hidden
+                // @ts-expect-error webkitdirectory is not in the React types
+                webkitdirectory=""
+                onChange={(e) => {
+                  const files = Array.from(e.target.files ?? []);
+                  e.target.value = '';
+                  if (files.length) {
+                    void run(files);
+                  }
+                }}
+              />
+            </Box>
+            {busy && <LinearProgress sx={{ mb: 1 }} />}
+            {(busy || sent > 0) && (
+              <Typography
+                variant="caption"
+                sx={{ color: tokens.textMuted, display: 'block', mb: 1 }}
+              >
+                {sent.toLocaleString()} items saved
+              </Typography>
+            )}
+            {error && (
+              <Alert severity="error" sx={{ mb: 1 }}>
+                {error}
+              </Alert>
+            )}
+            {log.length > 0 && (
               <Box
-                key={imp.id}
                 sx={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 1,
-                  py: 0.5,
-                  borderBottom: `1px solid ${tokens.border}`,
+                  maxHeight: 160,
+                  overflowY: 'auto',
+                  fontSize: 12,
+                  fontFamily: 'monospace',
+                  color: tokens.textSecondary,
+                  bgcolor: tokens.page,
+                  p: 1,
+                  borderRadius: '6px',
+                  mb: 2,
                 }}
               >
-                <Box sx={{ flex: 1, minWidth: 0 }}>
-                  <Typography variant="body2" noWrap>
-                    {imp.fileName || imp.source} · {imp.source}
-                  </Typography>
-                  <Typography variant="caption" sx={{ color: tokens.textMuted }}>
-                    {new Date(imp.createdAt).toLocaleString('en-GB')} · {imp.activities} activities
-                    · {imp.visits} visits · {imp.places} places ·{' '}
-                    {imp.healthSamples.toLocaleString()} health values
-                  </Typography>
-                </Box>
-                <Tooltip title="Delete this import and everything it brought in">
-                  <span>
-                    <IconButton
-                      size="small"
-                      disabled={busy}
-                      onClick={() => remove(imp.id)}
-                      aria-label="Delete import"
-                    >
-                      <DeleteOutline fontSize="small" />
-                    </IconButton>
-                  </span>
-                </Tooltip>
+                {log.map((l, i) => (
+                  <div key={i}>{l}</div>
+                ))}
               </Box>
-            ))}
+            )}
+            {imports.length > 0 && (
+              <>
+                <Typography variant="subtitle2" sx={{ mt: 1 }}>
+                  Imports
+                </Typography>
+                {imports.map((imp) => (
+                  <Box
+                    key={imp.id}
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 1,
+                      py: 0.5,
+                      borderBottom: `1px solid ${tokens.border}`,
+                    }}
+                  >
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <Typography variant="body2" noWrap>
+                        {imp.fileName || imp.source} · {imp.source}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: tokens.textMuted }}>
+                        {new Date(imp.createdAt).toLocaleString('en-GB')} · {imp.activities}{' '}
+                        activities · {imp.visits} visits · {imp.places} places ·{' '}
+                        {imp.healthSamples.toLocaleString()} health values
+                      </Typography>
+                    </Box>
+                    <Tooltip title="Delete this import and everything it brought in">
+                      <span>
+                        <IconButton
+                          size="small"
+                          disabled={busy}
+                          onClick={() => remove(imp.id)}
+                          aria-label="Delete import"
+                        >
+                          <DeleteOutline fontSize="small" />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                  </Box>
+                ))}
+              </>
+            )}
           </>
         )}
       </DialogContent>

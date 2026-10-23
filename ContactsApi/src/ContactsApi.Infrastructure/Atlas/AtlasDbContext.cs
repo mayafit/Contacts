@@ -22,6 +22,9 @@ public class AtlasDbContext : DbContext
     public DbSet<HealthSample> HealthSamples => Set<HealthSample>();
     public DbSet<ImportRun> Imports => Set<ImportRun>();
     public DbSet<AccessToken> AccessTokens => Set<AccessToken>();
+    public DbSet<ActivityFusion> Fusions => Set<ActivityFusion>();
+    public DbSet<FusionDecision> FusionDecisions => Set<FusionDecision>();
+    public DbSet<SourceConnection> Connections => Set<SourceConnection>();
 
     /// <inheritdoc />
     protected override void OnModelCreating(ModelBuilder b)
@@ -38,6 +41,34 @@ public class AtlasDbContext : DbContext
             e.Property(x => x.Source).HasMaxLength(64);
             e.Property(x => x.OwnerId).HasMaxLength(64);
             e.HasMany(x => x.Points).WithOne().HasForeignKey(p => p.ActivityId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => x.ClusterId);
+            e.HasOne(x => x.Fusion).WithOne().HasForeignKey<ActivityFusion>(f => f.ActivityId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        b.Entity<ActivityFusion>(e =>
+        {
+            e.ToTable("activity_fusion");
+            e.HasKey(x => x.ActivityId);
+            e.HasIndex(x => x.OwnerId);
+            e.Property(x => x.OwnerId).HasMaxLength(64);
+            e.Property(x => x.Type).HasMaxLength(32);
+        });
+
+        b.Entity<FusionDecision>(e =>
+        {
+            e.ToTable("fusion_decisions");
+            e.HasIndex(x => new { x.OwnerId, x.ActivityA, x.ActivityB }).IsUnique();
+            e.Property(x => x.OwnerId).HasMaxLength(64);
+            e.Property(x => x.Kind).HasMaxLength(16);
+        });
+
+        b.Entity<SourceConnection>(e =>
+        {
+            e.ToTable("source_connections");
+            e.HasIndex(x => new { x.OwnerId, x.Provider }).IsUnique();
+            e.Property(x => x.OwnerId).HasMaxLength(64);
+            e.Property(x => x.Provider).HasMaxLength(32);
+            e.Property(x => x.Status).HasMaxLength(16);
         });
 
         b.Entity<TrackPoint>(e =>
