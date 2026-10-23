@@ -51,6 +51,18 @@ public class AtlasActivity : ISourced
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
+    /// <summary>
+    /// Fusion: the id of the primary record of the real-world activity this record
+    /// belongs to (the primary's own id on the primary); null when it stands alone
+    /// </summary>
+    public Guid? ClusterId { get; set; }
+
+    /// <summary>The user set the type by hand: it wins over every source in fusion</summary>
+    public bool TypeByUser { get; set; }
+
+    /// <summary>Fused values and provenance (on the primary of a fused activity only)</summary>
+    public ActivityFusion? Fusion { get; set; }
+
     public List<TrackPoint> Points { get; set; } = new();
 }
 
@@ -150,4 +162,70 @@ public class AccessToken
     public string Prefix { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? LastUsedAt { get; set; }
+}
+
+/// <summary>
+/// What fusion made of several records of one real-world activity: the values the
+/// primary record lacks, where every value came from, and what the sources disagree on.
+/// Recomputed by every fusion run; the source records themselves are never changed.
+/// </summary>
+public class ActivityFusion
+{
+    /// <summary>The primary record's id (= the fused activity's id)</summary>
+    public Guid ActivityId { get; set; }
+    public string OwnerId { get; set; } = string.Empty;
+    /// <summary>Type chosen by source priority (may differ from the primary's)</summary>
+    public string? Type { get; set; }
+    public string? Name { get; set; }
+    public DateTime StartTime { get; set; }
+    public DateTime EndTime { get; set; }
+    public double? DistanceM { get; set; }
+    public double? ElevationGainM { get; set; }
+    public int? AvgHeartRate { get; set; }
+    public int? MaxHeartRate { get; set; }
+    /// <summary>Sources of the members, best first, comma separated</summary>
+    public string Sources { get; set; } = string.Empty;
+    public int MemberCount { get; set; }
+    public int ConflictCount { get; set; }
+    /// <summary>JSON: field → source that supplied it</summary>
+    public string FieldSources { get; set; } = "{}";
+    /// <summary>JSON: list of conflicts</summary>
+    public string Conflicts { get; set; } = "[]";
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>A user's decision about two records: always together, or never together</summary>
+public class FusionDecision
+{
+    public long Id { get; set; }
+    public string OwnerId { get; set; } = string.Empty;
+    /// <summary>The smaller of the two record ids (so a pair is stored once)</summary>
+    public Guid ActivityA { get; set; }
+    public Guid ActivityB { get; set; }
+    /// <summary>"together" or "apart"</summary>
+    public string Kind { get; set; } = "apart";
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>A connected account of a data source (Sports Tracker…); never a password</summary>
+public class SourceConnection
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string OwnerId { get; set; } = string.Empty;
+    /// <summary>sports-tracker</summary>
+    public string Provider { get; set; } = string.Empty;
+    /// <summary>The user name as entered (shown in the app)</summary>
+    public string? Account { get; set; }
+    /// <summary>The source's session key, encrypted with ASP.NET Data Protection</summary>
+    public string? SecretProtected { get; set; }
+    /// <summary>idle, syncing, error, expired</summary>
+    public string Status { get; set; } = "idle";
+    public DateTime? LastSyncAt { get; set; }
+    public string? LastError { get; set; }
+    public int ItemsTotal { get; set; }
+    public int ItemsDone { get; set; }
+    public int ItemsImported { get; set; }
+    public Guid? ImportId { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

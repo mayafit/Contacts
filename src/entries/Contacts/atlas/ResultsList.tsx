@@ -4,10 +4,10 @@
  */
 
 import React from 'react';
-import { Box, ButtonBase, Chip, Typography } from '@mui/material';
-import { Place } from '@mui/icons-material';
+import { Box, ButtonBase, Chip, Tooltip, Typography } from '@mui/material';
+import { Place, WarningAmber } from '@mui/icons-material';
 import type { SearchResult, VisitSummary } from './types';
-import { ACTIVITY_TYPES, VISIT_COLOR, typeColor } from './types';
+import { ACTIVITY_TYPES, VISIT_COLOR, sourceLabel, typeColor } from './types';
 import { formatDistance, formatDuration, formatWhen } from './geo';
 import { tokens } from '../theme/contactsTheme';
 
@@ -97,10 +97,37 @@ const ResultsList: React.FC<ResultsListProps> = ({
                   flexShrink: 0,
                 }}
               />
-              <Box sx={{ minWidth: 0 }}>
-                <Typography variant="body2" dir="auto" noWrap sx={{ fontWeight: 600 }}>
-                  {it.a.name || ACTIVITY_TYPES[it.a.type]?.label || it.a.type}
-                </Typography>
+              <Box sx={{ minWidth: 0, flex: 1 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0 }}>
+                  <Typography
+                    variant="body2"
+                    dir="auto"
+                    noWrap
+                    sx={{ fontWeight: 600, minWidth: 0, flexShrink: 1 }}
+                  >
+                    {it.a.name || ACTIVITY_TYPES[it.a.type]?.label || it.a.type}
+                  </Typography>
+                  {(it.a.memberCount ?? 1) > 1 && (
+                    <Tooltip
+                      title={`Fused from ${(it.a.sources ?? []).map((x) => sourceLabel(x)).join(', ')}`}
+                    >
+                      <Chip
+                        size="small"
+                        label={`${it.a.memberCount} sources`}
+                        variant="outlined"
+                        sx={{ height: 18, fontSize: 11, flexShrink: 0 }}
+                      />
+                    </Tooltip>
+                  )}
+                  {(it.a.conflictCount ?? 0) > 0 && (
+                    <Tooltip title="The sources disagree on some values">
+                      <WarningAmber
+                        aria-label="The sources disagree"
+                        sx={{ fontSize: 15, color: tokens.attention, flexShrink: 0 }}
+                      />
+                    </Tooltip>
+                  )}
+                </Box>
                 <Typography variant="caption" sx={{ color: tokens.textMuted }}>
                   {formatWhen(it.a.startTime)} ·{' '}
                   {[
