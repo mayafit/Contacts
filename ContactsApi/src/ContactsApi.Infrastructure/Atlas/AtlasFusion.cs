@@ -57,8 +57,9 @@ public static class Fusion
 
     /// <summary>
     /// Whether two records describe the same activity: their times overlap by at
-    /// least half of the shorter one, and their tracks (when both have one) are in
-    /// the same area. Two records of one source are only the same when their
+    /// least half of the shorter one and a quarter of the longer one (a short walk
+    /// inside a long drive is not the drive), and their tracks (when both have
+    /// one) are in the same area. Two records of one source are only the same when their
     /// times match (the same recording imported twice, e.g. a file and a sync).
     /// </summary>
     public static bool Same(FusionCandidate a, FusionCandidate b)
@@ -84,7 +85,8 @@ public static class Fusion
                 return false;
             }
         }
-        else if (overlap < shortest * 0.5)
+        else if (overlap < shortest * 0.5
+                 || overlap < Math.Max((a.End - a.Start).TotalSeconds, (b.End - b.Start).TotalSeconds) * 0.25)
         {
             return false;
         }
