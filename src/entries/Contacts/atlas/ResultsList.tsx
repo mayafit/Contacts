@@ -7,7 +7,7 @@ import React from 'react';
 import { Box, ButtonBase, Chip, Typography } from '@mui/material';
 import { Place } from '@mui/icons-material';
 import type { SearchResult, VisitSummary } from './types';
-import { ACTIVITY_TYPES, typeColor } from './types';
+import { ACTIVITY_TYPES, VISIT_COLOR, typeColor } from './types';
 import { formatDistance, formatDuration, formatWhen } from './geo';
 import { tokens } from '../theme/contactsTheme';
 
@@ -129,7 +129,7 @@ const ResultsList: React.FC<ResultsListProps> = ({
                 borderBottom: `1px solid ${tokens.border}`,
               }}
             >
-              <Place sx={{ fontSize: 16, mt: 0.25, color: '#ffb547' }} />
+              <Place sx={{ fontSize: 16, mt: 0.25, color: VISIT_COLOR }} />
               <Box sx={{ minWidth: 0 }}>
                 <Typography variant="body2" dir="auto" noWrap sx={{ fontWeight: 600 }}>
                   {it.v.placeName || 'Visit'}

@@ -1,14 +1,17 @@
 /**
  * @fileoverview Timeline under the map: a histogram of activities, visits and
- * health data; drag to select a range, scroll to zoom, shift-drag to pan
+ * health data, with a legend; drag to select a range, wheel or pinch to zoom,
+ * horizontal scroll, shift-wheel, shift-drag or two fingers to move along time
  * @module Contacts/atlas/AtlasTimeline
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Box, Button, Typography } from '@mui/material';
-import type { HistogramRow } from './types';
-import { typeColor } from './types';
-import { bucketFor, bucketMs } from './geo';
+import { Box, Button, IconButton, Tooltip, Typography } from '@mui/material';
+import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut } from '@mui/icons-material';
+import type { AtlasQuery, HistogramRow } from './types';
+import { kindColor } from './types';
+import AtlasLegend from './AtlasLegend';
+import { MAX_SPAN_MS, MIN_SPAN_MS, bucketFor, bucketMs, panRange, zoomRange } from './geo';
 import { backendApiClient } from '../../../services/api/BackendApiClient';
 import { tokens } from '../theme/contactsTheme';
 
@@ -28,9 +31,11 @@ export interface AtlasTimelineProps {
   onSelectionChange: (r: Range | null) => void;
   /** Bumped after imports to reload the counts */
   reloadKey: number;
+  /** The map's area, types and text: the bars count what the map shows */
+  filter?: AtlasQuery;
+  /** Time of the item selected on the map or in the list */
+  highlight?: Range | null;
 }
-
-const KIND_COLORS: Record<string, string> = { visit: '#ffb547', health: '#ff4d6d' };
 
 const HEIGHT = 120;
 /** Height of the health-data band at the top */
@@ -48,6 +53,8 @@ const AtlasTimeline: React.FC<AtlasTimelineProps> = ({
   selection,
   onSelectionChange,
   reloadKey,
+  filter,
+  highlight,
 }) => {
   const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(800);
@@ -57,6 +64,42 @@ const AtlasTimeline: React.FC<AtlasTimelineProps> = ({
   );
   const [draft, setDraft] = useState<Range | null>(null);
   const bucket = bucketFor(view.to - view.from);
+  // Latest view and callback for the native wheel listener (registered once)
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  const changeRef = useRef(onViewChange);
+  changeRef.current = onViewChange;
+  // Touch points on the strip (x per pointer) and an ongoing pinch
+  const pointers = useRef(new Map<number, number>());
+  const pinch = useRef<{ d0: number; t0: number; view0: Range } | null>(null);
+
+  // A native, non-passive listener: React's onWheel cannot stop the page (or
+  // the panel around the timeline) from scrolling at the same time
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) {
+      return undefined;
+    }
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const v = viewRef.current;
+      const rect = el.getBoundingClientRect();
+      const unit = e.deltaMode === 1 ? 33 : e.deltaMode === 2 ? rect.width : 1;
+      const dx = (e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX) * unit;
+      const dy = e.shiftKey ? 0 : e.deltaY * unit;
+      if (Math.abs(dx) > Math.abs(dy)) {
+        // Horizontal scroll (touchpad, shift + wheel): move along time
+        changeRef.current(panRange(v, dx / rect.width));
+        return;
+      }
+      const center = v.from + ((e.clientX - rect.left) / rect.width) * (v.to - v.from);
+      // Smooth on touchpads (small deltas), about 20% per mouse-wheel notch
+      const factor = Math.min(2, Math.max(0.5, Math.exp(dy * 0.002)));
+      changeRef.current(zoomRange(v, center, factor));
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
 
   useEffect(() => {
     const el = ref.current;
@@ -77,6 +120,7 @@ const AtlasTimeline: React.FC<AtlasTimelineProps> = ({
           new Date(view.to).toISOString(),
           bucket,
           Intl.DateTimeFormat().resolvedOptions().timeZone,
+          filter,
         )
         .then((r) => alive && setRows(r))
         .catch(() => alive && setRows([]));
@@ -85,7 +129,8 @@ const AtlasTimeline: React.FC<AtlasTimelineProps> = ({
       alive = false;
       clearTimeout(t);
     };
-  }, [view.from, view.to, bucket, reloadKey]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view.from, view.to, bucket, reloadKey, JSON.stringify(filter ?? {})]);
 
   const x = (t: number) => ((t - view.from) / (view.to - view.from)) * width;
   const tAt = (px: number) => view.from + (px / width) * (view.to - view.from);
@@ -175,19 +220,28 @@ const AtlasTimeline: React.FC<AtlasTimelineProps> = ({
     return out.filter((_, i) => i % every === 0);
   }, [view, width]);
 
-  const onWheel = (e: React.WheelEvent) => {
-    const rect = ref.current!.getBoundingClientRect();
-    const center = tAt(e.clientX - rect.left);
-    const factor = e.deltaY > 0 ? 1.25 : 0.8;
-    const span = Math.min(
-      Math.max((view.to - view.from) * factor, 3_600_000 * 6),
-      40 * 365 * 86_400_000,
-    );
-    const ratio = (center - view.from) / (view.to - view.from);
-    onViewChange({ from: center - span * ratio, to: center + span * (1 - ratio) });
+  const px = (e: React.PointerEvent) => e.clientX - ref.current!.getBoundingClientRect().left;
+
+  const endPointer = (e: React.PointerEvent) => {
+    pointers.current.delete(e.pointerId);
+    if (pinch.current) {
+      // A pinch never ends in a selection
+      if (pointers.current.size < 2) {
+        pinch.current = null;
+      }
+      return;
+    }
+    if (drag?.kind === 'select' && draft && x(draft.to) - x(draft.from) > 3) {
+      onSelectionChange(draft);
+    }
+    setDraft(null);
+    setDrag(null);
   };
 
-  const px = (e: React.PointerEvent) => e.clientX - ref.current!.getBoundingClientRect().left;
+  // Kinds in view, for the legend
+  const legend = useMemo(() => rows.map((r) => r.kind), [rows]);
+
+  const center = (view.from + view.to) / 2;
 
   const sel = draft ?? selection;
   const barW = Math.max(1, (bucketMs(bucket) / (view.to - view.from)) * width - 1);
@@ -200,9 +254,51 @@ const AtlasTimeline: React.FC<AtlasTimelineProps> = ({
         <Typography variant="caption" sx={{ color: tokens.textMuted }}>
           {sel
             ? `${new Date(sel.from).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })} – ${new Date(sel.to).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}`
-            : 'Drag on the timeline to choose a time range · scroll to zoom · shift-drag to move'}
+            : 'Drag to choose a time range · wheel or pinch to zoom · scroll sideways or shift-drag to move'}
         </Typography>
         <Box sx={{ flex: 1 }} />
+        <Tooltip title="Earlier">
+          <IconButton
+            size="small"
+            aria-label="Earlier"
+            onClick={() => onViewChange(panRange(view, -0.5))}
+          >
+            <ChevronLeft fontSize="small" />
+          </IconButton>
+        </Tooltip>
+        <Tooltip title="Zoom out">
+          <span>
+            <IconButton
+              size="small"
+              aria-label="Zoom out"
+              disabled={view.to - view.from >= MAX_SPAN_MS}
+              onClick={() => onViewChange(zoomRange(view, center, 2))}
+            >
+              <ZoomOut fontSize="small" />
+            </IconButton>
+          </span>
+        </Tooltip>
+        <Tooltip title="Zoom in">
+          <span>
+            <IconButton
+              size="small"
+              aria-label="Zoom in"
+              disabled={view.to - view.from <= MIN_SPAN_MS}
+              onClick={() => onViewChange(zoomRange(view, center, 0.5))}
+            >
+              <ZoomIn fontSize="small" />
+            </IconButton>
+          </span>
+        </Tooltip>
+        <Tooltip title="Later">
+          <IconButton
+            size="small"
+            aria-label="Later"
+            onClick={() => onViewChange(panRange(view, 0.5))}
+          >
+            <ChevronRight fontSize="small" />
+          </IconButton>
+        </Tooltip>
         {selection && (
           <Button size="small" onClick={() => onSelectionChange(null)}>
             Clear time
@@ -222,12 +318,41 @@ const AtlasTimeline: React.FC<AtlasTimelineProps> = ({
       </Box>
       <Box
         ref={ref}
-        onWheel={onWheel}
         onPointerDown={(e) => {
           (e.target as Element).setPointerCapture?.(e.pointerId);
-          setDrag({ kind: e.shiftKey ? 'pan' : 'select', x0: px(e), view0: view });
+          pointers.current.set(e.pointerId, px(e));
+          if (pointers.current.size === 2) {
+            // Second finger: pinch to zoom and move, instead of selecting
+            const [a, b] = [...pointers.current.values()];
+            pinch.current = {
+              d0: Math.max(10, Math.abs(a - b)),
+              t0: tAt((a + b) / 2),
+              view0: view,
+            };
+            setDraft(null);
+            setDrag(null);
+            return;
+          }
+          if (pointers.current.size === 1) {
+            setDrag({ kind: e.shiftKey ? 'pan' : 'select', x0: px(e), view0: view });
+          }
         }}
         onPointerMove={(e) => {
+          if (pointers.current.has(e.pointerId)) {
+            pointers.current.set(e.pointerId, px(e));
+          }
+          if (pinch.current && pointers.current.size >= 2) {
+            const [a, b] = [...pointers.current.values()];
+            const { d0, t0, view0 } = pinch.current;
+            const span = Math.min(
+              Math.max(((view0.to - view0.from) * d0) / Math.max(10, Math.abs(a - b)), MIN_SPAN_MS),
+              MAX_SPAN_MS,
+            );
+            // The moment first under the fingers stays under them
+            const from = t0 - ((a + b) / 2 / width) * span;
+            onViewChange({ from, to: from + span });
+            return;
+          }
           if (!drag) {
             return;
           }
@@ -240,15 +365,8 @@ const AtlasTimeline: React.FC<AtlasTimelineProps> = ({
             setDraft({ from: Math.min(a, b), to: Math.max(a, b) });
           }
         }}
-        onPointerUp={() => {
-          if (drag?.kind === 'select') {
-            if (draft && x(draft.to) - x(draft.from) > 3) {
-              onSelectionChange(draft);
-            }
-          }
-          setDraft(null);
-          setDrag(null);
-        }}
+        onPointerUp={endPointer}
+        onPointerCancel={endPointer}
         sx={{
           position: 'relative',
           height: HEIGHT,
@@ -267,7 +385,7 @@ const AtlasTimeline: React.FC<AtlasTimelineProps> = ({
               y={b.kind === 'health' ? 0 : HEIGHT - AXIS - b.y - b.h}
               width={barW}
               height={b.h}
-              fill={KIND_COLORS[b.kind] ?? typeColor(b.kind)}
+              fill={kindColor(b.kind)}
               opacity={b.kind === 'health' ? 0.7 : 0.9}
             >
               <title>{`${b.kind}: ${b.count}`}</title>
@@ -288,6 +406,21 @@ const AtlasTimeline: React.FC<AtlasTimelineProps> = ({
               </text>
             </g>
           ))}
+          {highlight && (
+            // The selected activity or visit: a white marker over its time
+            <rect
+              x={x(highlight.from) - 1}
+              y={0}
+              width={Math.max(3, x(highlight.to) - x(highlight.from) + 2)}
+              height={HEIGHT - AXIS}
+              fill="#ffffff"
+              opacity={0.35}
+              stroke="#ffffff"
+              strokeWidth={1}
+            >
+              <title>Selected</title>
+            </rect>
+          )}
           {sel && (
             <rect
               x={x(sel.from)}
@@ -300,6 +433,9 @@ const AtlasTimeline: React.FC<AtlasTimelineProps> = ({
             />
           )}
         </svg>
+      </Box>
+      <Box sx={{ pb: 0.75 }}>
+        <AtlasLegend kinds={legend} healthAsStrip />
       </Box>
     </Box>
   );

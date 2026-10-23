@@ -217,6 +217,23 @@ export const ACTIVITY_TYPES: Record<string, { label: string; color: string }> = 
 export const typeColor = (type: string): string =>
   ACTIVITY_TYPES[type]?.color ?? ACTIVITY_TYPES.other.color;
 
+/** Place visits: a colour no activity type uses */
+export const VISIT_COLOR = '#e879f9';
+/** Health data (heart rate) */
+export const HEALTH_COLOR = '#ff4d6d';
+
+/** Colour of a timeline/map kind: an activity type, 'visit' or 'health' */
+export const kindColor = (kind: string): string =>
+  kind === 'visit' ? VISIT_COLOR : kind === 'health' ? HEALTH_COLOR : typeColor(kind);
+
+/** Name of a timeline/map kind */
+export const kindLabel = (kind: string): string =>
+  kind === 'visit'
+    ? 'Place visits'
+    : kind === 'health'
+      ? 'Health data'
+      : (ACTIVITY_TYPES[kind]?.label ?? kind);
+
 /** Neither null nor undefined (a type guard) */
 export const isSet = <T>(value: T | null | undefined): value is T =>
   value !== null && value !== undefined;

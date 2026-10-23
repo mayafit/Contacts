@@ -662,12 +662,14 @@ export class BackendApiClient {
     to: string,
     bucket: string,
     timeZone?: string,
+    filter?: AtlasQuery,
   ): Promise<HistogramRow[]> {
-    const tz = timeZone ? `&tz=${encodeURIComponent(timeZone)}` : '';
+    // With the map's filters (area, types, text) the counts match the map
     return unwrap(
-      await this.request<HistogramRow[]>(
-        `/atlas/histogram?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&bucket=${bucket}${tz}`,
-      ),
+      await this.request<HistogramRow[]>('/atlas/histogram', {
+        method: 'POST',
+        body: JSON.stringify({ from, to, bucket, tz: timeZone, filter }),
+      }),
       'Timeline failed',
     );
   }

@@ -63,7 +63,7 @@ data:
             add_header X-Content-Type-Options "nosniff" always;
             add_header X-XSS-Protection "1; mode=block" always;
             add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-            add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://accounts.google.com https://apis.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https:; connect-src {{ .Values.nginx.cspConnectSrc | default "'self' https://accounts.google.com https://people.googleapis.com https://www.googleapis.com" }}; frame-src https://accounts.google.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self';" always;
+            add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://accounts.google.com https://apis.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https:; connect-src {{ .Values.nginx.cspConnectSrc | default "'self' https://accounts.google.com https://people.googleapis.com https://www.googleapis.com https://tiles.openfreemap.org" }}; frame-src https://accounts.google.com; worker-src 'self' blob:; child-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self';" always;
             add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
 
             location / {
@@ -74,7 +74,7 @@ data:
                     add_header X-Content-Type-Options "nosniff" always;
                     add_header X-XSS-Protection "1; mode=block" always;
                     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-                    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://accounts.google.com https://apis.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https:; connect-src {{ .Values.nginx.cspConnectSrc | default "'self' https://accounts.google.com https://people.googleapis.com https://www.googleapis.com" }}; frame-src https://accounts.google.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self';" always;
+                    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://accounts.google.com https://apis.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https:; connect-src {{ .Values.nginx.cspConnectSrc | default "'self' https://accounts.google.com https://people.googleapis.com https://www.googleapis.com https://tiles.openfreemap.org" }}; frame-src https://accounts.google.com; worker-src 'self' blob:; child-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self';" always;
                     add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
                     add_header Cache-Control "no-cache, no-store, must-revalidate" always;
                     expires -1;
@@ -87,7 +87,7 @@ data:
                     add_header X-Content-Type-Options "nosniff" always;
                     add_header X-XSS-Protection "1; mode=block" always;
                     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-                    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://accounts.google.com https://apis.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https:; connect-src {{ .Values.nginx.cspConnectSrc | default "'self' https://accounts.google.com https://people.googleapis.com https://www.googleapis.com" }}; frame-src https://accounts.google.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self';" always;
+                    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://accounts.google.com https://apis.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https:; connect-src {{ .Values.nginx.cspConnectSrc | default "'self' https://accounts.google.com https://people.googleapis.com https://www.googleapis.com https://tiles.openfreemap.org" }}; frame-src https://accounts.google.com; worker-src 'self' blob:; child-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self';" always;
                     add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
                     expires 1y;
                     add_header Cache-Control "public, immutable" always;
@@ -100,7 +100,7 @@ data:
                     add_header X-Content-Type-Options "nosniff" always;
                     add_header X-XSS-Protection "1; mode=block" always;
                     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-                    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://accounts.google.com https://apis.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https:; connect-src {{ .Values.nginx.cspConnectSrc | default "'self' https://accounts.google.com https://people.googleapis.com https://www.googleapis.com" }}; frame-src https://accounts.google.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self';" always;
+                    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://accounts.google.com https://apis.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https:; connect-src {{ .Values.nginx.cspConnectSrc | default "'self' https://accounts.google.com https://people.googleapis.com https://www.googleapis.com https://tiles.openfreemap.org" }}; frame-src https://accounts.google.com; worker-src 'self' blob:; child-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self';" always;
                     add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
                     expires -1;
                     add_header Cache-Control "no-cache" always;

@@ -36,7 +36,7 @@ import AssistantPanel from '../components/assistant/AssistantPanel';
 import { atlasToolset } from './atlasTools';
 import { formatDuration, formatWhen } from './geo';
 import { tokens } from '../theme/contactsTheme';
-import { isSet } from './types';
+import { VISIT_COLOR, isSet } from './types';
 
 const YEAR = 365 * 86_400_000;
 
@@ -137,6 +137,33 @@ const AtlasHome: React.FC = () => {
     [selection, area, types, query],
   );
   const fitKey = JSON.stringify(q);
+
+  // The timeline counts what the map shows (area, types, text; its own time)
+  const timelineFilter: AtlasQuery = useMemo(
+    () => ({ ...(area ?? {}), types: types.length ? types : undefined, text: query || undefined }),
+    [area, types, query],
+  );
+
+  // The selected activity or visit, marked on the timeline
+  const highlight = useMemo(() => {
+    const item = detail?.summary ?? visit;
+    return item ? { from: Date.parse(item.startTime), to: Date.parse(item.endTime) } : null;
+  }, [detail, visit]);
+
+  // Bring the selected item into the timeline's view when it is outside it
+  useEffect(() => {
+    if (!highlight) {
+      return;
+    }
+    setView((v) => {
+      if (highlight.from >= v.from && highlight.to <= v.to) {
+        return v;
+      }
+      const span = Math.max(v.to - v.from, (highlight.to - highlight.from) * 3);
+      const mid = (highlight.from + highlight.to) / 2;
+      return { from: mid - span / 2, to: mid + span / 2 };
+    });
+  }, [highlight]);
 
   useEffect(() => {
     if (!status?.ready) {
@@ -345,6 +372,7 @@ const AtlasHome: React.FC = () => {
                 visits={result?.visits ?? []}
                 selectedTrack={detail?.points}
                 selectedId={detail?.summary.id}
+                selectedVisitId={visit?.id}
                 area={area}
                 drawing={drawing}
                 onAreaDrawn={(b) => {
@@ -393,6 +421,8 @@ const AtlasHome: React.FC = () => {
               selection={selection}
               onSelectionChange={setSelection}
               reloadKey={reloadKey}
+              filter={timelineFilter}
+              highlight={highlight}
             />
           </Box>
           <Box
@@ -451,7 +481,7 @@ const AtlasHome: React.FC = () => {
                   >
                     <Close fontSize="small" />
                   </IconButton>
-                  <Place sx={{ color: '#ffb547' }} />
+                  <Place sx={{ color: VISIT_COLOR }} />
                   <Typography variant="subtitle1" dir="auto">
                     {visit.placeName || 'Visit'}
                   </Typography>

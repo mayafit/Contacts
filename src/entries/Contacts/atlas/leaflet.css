@@ -676,3 +676,15 @@ svg.leaflet-image-layer.leaflet-interactive path {
 .atlas-dark-tiles {
   filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.85) saturate(0.6);
 }
+
+/* MapLibre inside Leaflet (the parts of maplibre-gl.css the base map needs) */
+.maplibregl-map {
+  position: relative;
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+.maplibregl-canvas {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
