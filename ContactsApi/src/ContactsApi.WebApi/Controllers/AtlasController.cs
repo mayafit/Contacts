@@ -76,6 +76,40 @@ public class AtlasController : ControllerBase
     public Task<IActionResult> UpdateActivity(Guid id, [FromBody] ActivityPatch patch) =>
         Run((svc, owner) => svc.UpdateActivityAsync(owner, id, patch, HttpContext.RequestAborted));
 
+    /// <summary>Takes a source record out of a fused activity</summary>
+    [HttpPost("activities/{id:guid}/split")]
+    public Task<IActionResult> Split(Guid id, [FromBody] ActivitySplitRequest request) =>
+        Run((svc, owner) => svc.SplitActivityAsync(owner, id, request.MemberId, HttpContext.RequestAborted));
+
+    /// <summary>Joins two activities into one</summary>
+    [HttpPost("activities/{id:guid}/merge")]
+    public Task<IActionResult> Merge(Guid id, [FromBody] ActivityMergeRequest request) =>
+        Run((svc, owner) => svc.MergeActivitiesAsync(owner, id, request.OtherId, HttpContext.RequestAborted));
+
+    /// <summary>Re-fuses all activities</summary>
+    [HttpPost("fuse")]
+    public Task<IActionResult> Fuse() => Run((svc, owner) => svc.FuseAsync(owner, HttpContext.RequestAborted));
+
+    /// <summary>Connected sources</summary>
+    [HttpGet("connections")]
+    public Task<IActionResult> Connections() =>
+        RunWith<AtlasConnectionService, List<SourceConnectionInfo>>((svc, owner) => svc.ListAsync(owner, HttpContext.RequestAborted));
+
+    /// <summary>Connects Sports Tracker and starts importing (the password is not stored)</summary>
+    [HttpPost("connections/sports-tracker")]
+    public Task<IActionResult> ConnectSportsTracker([FromBody] ConnectSportsTrackerRequest request) =>
+        RunWith<AtlasConnectionService, SourceConnectionInfo>((svc, owner) => svc.ConnectSportsTrackerAsync(owner, request, HttpContext.RequestAborted));
+
+    /// <summary>Syncs Sports Tracker again</summary>
+    [HttpPost("connections/sports-tracker/sync")]
+    public Task<IActionResult> SyncSportsTracker() =>
+        RunWith<AtlasConnectionService, SourceConnectionInfo>((svc, owner) => svc.SyncAsync(owner, HttpContext.RequestAborted));
+
+    /// <summary>Disconnects Sports Tracker (imported data stays)</summary>
+    [HttpDelete("connections/sports-tracker")]
+    public Task<IActionResult> DisconnectSportsTracker() =>
+        RunWith<AtlasConnectionService, object>(async (svc, owner) => new { removed = await svc.DisconnectAsync(owner, HttpContext.RequestAborted) });
+
     /// <summary>Deletes an activity</summary>
     [HttpDelete("activities/{id:guid}")]
     public Task<IActionResult> DeleteActivity(Guid id) =>
@@ -161,6 +195,10 @@ public class AtlasController : ControllerBase
         catch (AtlasNotFoundException ex)
         {
             return NotFound(ApiResponse<object>.ErrorResponse("NOT_FOUND", ex.Message));
+        }
+        catch (SportsTrackerException ex)
+        {
+            return BadRequest(ApiResponse<object>.ErrorResponse(ex.Code, ex.Message));
         }
     }
 }

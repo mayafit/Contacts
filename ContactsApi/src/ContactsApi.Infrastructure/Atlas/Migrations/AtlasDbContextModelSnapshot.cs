@@ -62,6 +62,69 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                     b.ToTable("access_tokens", "atlas");
                 });
 
+            modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.ActivityFusion", b =>
+                {
+                    b.Property<Guid>("ActivityId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int?>("AvgHeartRate")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("ConflictCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Conflicts")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<double?>("DistanceM")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("ElevationGainM")
+                        .HasColumnType("double precision");
+
+                    b.Property<DateTime>("EndTime")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FieldSources")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int?>("MaxHeartRate")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("MemberCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Name")
+                        .HasColumnType("text");
+
+                    b.Property<string>("OwnerId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Sources")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("StartTime")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Type")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("ActivityId");
+
+                    b.HasIndex("OwnerId");
+
+                    b.ToTable("activity_fusion", "atlas");
+                });
+
             modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.AtlasActivity", b =>
                 {
                     b.Property<Guid>("Id")
@@ -70,6 +133,9 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
 
                     b.Property<int?>("AvgHeartRate")
                         .HasColumnType("integer");
+
+                    b.Property<Guid?>("ClusterId")
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -137,10 +203,15 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)");
 
+                    b.Property<bool>("TypeByUser")
+                        .HasColumnType("boolean");
+
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("ClusterId");
 
                     b.HasIndex("ImportId");
 
@@ -214,6 +285,41 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                         .HasFilter("\"ExternalId\" IS NOT NULL");
 
                     b.ToTable("places", "atlas");
+                });
+
+            modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.FusionDecision", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<Guid>("ActivityA")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ActivityB")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("OwnerId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OwnerId", "ActivityA", "ActivityB")
+                        .IsUnique();
+
+                    b.ToTable("fusion_decisions", "atlas");
                 });
 
             modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.HealthSample", b =>
@@ -362,6 +468,65 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                     b.ToTable("visits", "atlas");
                 });
 
+            modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.SourceConnection", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Account")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ImportId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("ItemsDone")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("ItemsImported")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("ItemsTotal")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("LastError")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("LastSyncAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("OwnerId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("SecretProtected")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OwnerId", "Provider")
+                        .IsUnique();
+
+                    b.ToTable("source_connections", "atlas");
+                });
+
             modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.TrackPoint", b =>
                 {
                     b.Property<long>("Id")
@@ -401,6 +566,15 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                     b.ToTable("track_points", "atlas");
                 });
 
+            modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.ActivityFusion", b =>
+                {
+                    b.HasOne("ContactsApi.Infrastructure.Atlas.AtlasActivity", null)
+                        .WithOne("Fusion")
+                        .HasForeignKey("ContactsApi.Infrastructure.Atlas.ActivityFusion", "ActivityId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.PlaceVisit", b =>
                 {
                     b.HasOne("ContactsApi.Infrastructure.Atlas.AtlasPlace", "Place")
@@ -422,6 +596,8 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
 
             modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.AtlasActivity", b =>
                 {
+                    b.Navigation("Fusion");
+
                     b.Navigation("Points");
                 });
 #pragma warning restore 612, 618

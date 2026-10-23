@@ -11,7 +11,7 @@ public record PointInput(DateTime T, double Lat, double Lon, double? Ele = null,
 public record ActivityInput(
     string? ExternalId, string Type, string? Name, DateTime? StartTime, DateTime? EndTime,
     double? DistanceM = null, double? DurationS = null, double? ElevationGainM = null, string? Notes = null,
-    List<PointInput>? Points = null);
+    List<PointInput>? Points = null, int? AvgHeartRate = null, int? MaxHeartRate = null);
 
 /// <summary>A place in an ingest batch</summary>
 public record PlaceInput(
@@ -65,7 +65,8 @@ public class AtlasQuery
 public record ActivitySummary(
     Guid Id, string Type, string? Name, DateTime StartTime, DateTime EndTime, double? DistanceM, double? DurationS,
     double? ElevationGainM, int? AvgHeartRate, int? MaxHeartRate, string Source, string? Polyline,
-    double? MinLat, double? MinLon, double? MaxLat, double? MaxLon, int PointCount);
+    double? MinLat, double? MinLon, double? MaxLat, double? MaxLon, int PointCount,
+    List<string> Sources, int MemberCount, int ConflictCount);
 
 /// <summary>A visit with its place</summary>
 public record VisitSummary(
@@ -84,7 +85,35 @@ public record SeriesPoint(DateTime T, double V, double? Min = null, double? Max 
 /// <summary>An activity with its track and heart rate</summary>
 public record ActivityDetail(
     ActivitySummary Summary, string? Notes, List<PointOutput> Points,
-    string? HeartRateSource, List<SeriesPoint> HeartRate);
+    string? HeartRateSource, List<SeriesPoint> HeartRate,
+    List<ActivityMember> Members, List<FusionConflict> Conflicts,
+    Dictionary<string, string> FieldSources, List<LinkedPlace> Places);
+
+/// <summary>One source record of a fused activity</summary>
+public record ActivityMember(
+    Guid Id, string Source, string Type, string? Name, DateTime StartTime, DateTime EndTime,
+    double? DistanceM, double? DurationS, int? AvgHeartRate, int? MaxHeartRate, int PointCount,
+    bool Primary, Guid? ImportId);
+
+/// <summary>One source's value in a conflict</summary>
+public record SourceValue(string Source, string Value);
+
+/// <summary>Something the sources of a fused activity disagree on</summary>
+public record FusionConflict(string Field, string Message, List<SourceValue> Values, string Chosen);
+
+/// <summary>A visit linked to an activity: where it started, ended, or stopped on the way</summary>
+public record LinkedPlace(
+    Guid VisitId, string? PlaceName, string? Address, string Role, DateTime StartTime, DateTime EndTime,
+    double Lat, double Lon);
+
+/// <summary>What a fusion run did</summary>
+public record FuseResult(int Activities, int Fused, int Conflicts);
+
+/// <summary>Body of a split: the record to take out of the fused activity</summary>
+public record ActivitySplitRequest(Guid MemberId);
+
+/// <summary>Body of a merge: the activity to merge with</summary>
+public record ActivityMergeRequest(Guid OtherId);
 
 /// <summary>Counts per time bucket and kind (timeline histogram)</summary>
 public record HistogramRow(DateTime Bucket, string Kind, int Count);

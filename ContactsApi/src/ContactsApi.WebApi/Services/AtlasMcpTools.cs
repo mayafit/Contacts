@@ -31,6 +31,21 @@ public class AtlasMcpTools
     private string Owner => _http.HttpContext?.Items[OwnerItem] as string
                             ?? throw new UnauthorizedAccessException("No access token");
 
+    [McpServerTool(Name = "atlas_merge_activities"), Description("Join two activities that are the same real-world activity (the user's decision is remembered). Returns the merged activity.")]
+    public Task<ActivityDetail> Merge(
+        [Description("Activity id")] Guid id,
+        [Description("Id of the activity to merge with it")] Guid otherId) =>
+        _atlas.MergeActivitiesAsync(Owner, id, otherId);
+
+    [McpServerTool(Name = "atlas_split_activity"), Description("Take one source record out of a fused activity when it is not the same activity (remembered). Returns the activity without it.")]
+    public Task<ActivityDetail> Split(
+        [Description("Fused activity id")] Guid id,
+        [Description("Id of the source record (from members) to take out")] Guid memberId) =>
+        _atlas.SplitActivityAsync(Owner, id, memberId);
+
+    [McpServerTool(Name = "atlas_fuse"), Description("Re-run fusion over all activities (normally automatic after every import).")]
+    public Task<FuseResult> Fuse() => _atlas.FuseAsync(Owner);
+
     [McpServerTool(Name = "atlas_summary"), Description("Totals of the user's activities, places, visits and health samples, the date range they cover, distance per activity type, and the imports.")]
     public Task<AtlasSummary> Summary() => _atlas.SummaryAsync(Owner);
 
@@ -53,7 +68,7 @@ public class AtlasMcpTools
             Types = types?.ToList(), Text = text, Activities = activities, Visits = visits, Limit = limit
         });
 
-    [McpServerTool(Name = "atlas_get_activity"), Description("One activity with its track (time, position, elevation, heart rate, speed) and its heart rate series (from the track, or from health samples recorded at the same time).")]
+    [McpServerTool(Name = "atlas_get_activity"), Description("One activity with its track (time, position, elevation, heart rate, speed) and its heart rate series (from the track, or from health samples recorded at the same time). Activities are fused from several sources (Sports Tracker, Google Timeline, Google Fit, Fitbit…): the result lists the source records (members), which source supplied each value (fieldSources), what they disagree on (conflicts), and the places visited at the start, end or on the way.")]
     public Task<ActivityDetail> GetActivity(
         [Description("Activity id")] Guid id,
         [Description("Maximum track points returned (default 500)")] int maxPoints = 500) =>

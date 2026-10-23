@@ -12,11 +12,13 @@ import type {
   ActivitySummary,
   AtlasQuery,
   AtlasSummary,
+  FuseResult,
   HistogramRow,
   NearResult,
   ParsedData,
   SearchResult,
   SeriesPoint,
+  SourceConnection,
 } from '../../entries/Contacts/atlas/types';
 
 /** One ingest batch */
@@ -706,6 +708,99 @@ export class BackendApiClient {
     unwrap(
       await this.request<unknown>(`/atlas/activities/${id}`, { method: 'DELETE' }),
       'Deleting the activity failed',
+    );
+  }
+
+  /**
+   * Splits a source record off a fused activity (remembered: never merged again automatically).
+   * @param id - The fused activity's id
+   * @param memberId - The member (source record) to split off
+   * @returns The fused activity after the split
+   */
+  async atlasSplit(id: string, memberId: string): Promise<ActivityDetail> {
+    return unwrap(
+      await this.request<ActivityDetail>(`/atlas/activities/${id}/split`, {
+        method: 'POST',
+        body: JSON.stringify({ memberId }),
+      }),
+      'Splitting the activity failed',
+    );
+  }
+
+  /**
+   * Merges two activities into one (remembered: always together).
+   * @param id - The activity to merge into
+   * @param otherId - The activity to merge with it
+   * @returns The merged activity
+   */
+  async atlasMerge(id: string, otherId: string): Promise<ActivityDetail> {
+    return unwrap(
+      await this.request<ActivityDetail>(`/atlas/activities/${id}/merge`, {
+        method: 'POST',
+        body: JSON.stringify({ otherId }),
+      }),
+      'Merging the activities failed',
+    );
+  }
+
+  /** Re-runs fusion over all activities */
+  async atlasFuse(): Promise<FuseResult> {
+    return unwrap(
+      await this.request<FuseResult>('/atlas/fuse', { method: 'POST' }),
+      'Re-fusing failed',
+    );
+  }
+
+  /** Connected accounts (empty when nothing is connected) */
+  async atlasConnections(): Promise<SourceConnection[]> {
+    return unwrap(
+      await this.request<SourceConnection[]>('/atlas/connections'),
+      'Loading the connections failed',
+    );
+  }
+
+  /**
+   * Connects Sports Tracker and starts the first sync (in the background).
+   * Throws ApiRequestError with code SPORTS_TRACKER_LOGIN_REFUSED when Sports Tracker
+   * refuses the sign-in, or SPORTS_TRACKER_KEY_INVALID when the session key does not work.
+   * @param credentials - Username and password (used once, never stored) or a session key
+   * @returns The connection (status syncing)
+   */
+  async atlasConnectSportsTracker(credentials: {
+    username?: string;
+    password?: string;
+    sessionKey?: string;
+  }): Promise<SourceConnection> {
+    return unwrap(
+      await this.request<SourceConnection>('/atlas/connections/sports-tracker', {
+        method: 'POST',
+        body: JSON.stringify(credentials),
+      }),
+      'Connecting Sports Tracker failed',
+    );
+  }
+
+  /**
+   * Syncs Sports Tracker again with the stored session key.
+   * Throws ApiRequestError with code SPORTS_TRACKER_KEY_EXPIRED when the key has expired.
+   * @returns The connection (status syncing)
+   */
+  async atlasSyncSportsTracker(): Promise<SourceConnection> {
+    return unwrap(
+      await this.request<SourceConnection>('/atlas/connections/sports-tracker/sync', {
+        method: 'POST',
+      }),
+      'Syncing Sports Tracker failed',
+    );
+  }
+
+  /** Forgets the Sports Tracker session key (imported data stays) */
+  async atlasDisconnectSportsTracker(): Promise<void> {
+    unwrap(
+      await this.request<{ removed: boolean }>('/atlas/connections/sports-tracker', {
+        method: 'DELETE',
+      }),
+      'Disconnecting Sports Tracker failed',
     );
   }
 

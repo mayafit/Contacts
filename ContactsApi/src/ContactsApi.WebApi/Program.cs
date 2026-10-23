@@ -66,6 +66,11 @@ builder.Services.AddDbContext<ContactsApi.Infrastructure.Atlas.AtlasDbContext>(o
 builder.Services.AddScoped<ContactsApi.Infrastructure.Atlas.AtlasService>();
 builder.Services.AddScoped<AccessTokenService>();
 builder.Services.AddHostedService<AtlasMigrator>();
+// Connected sources (Sports Tracker): connect, background sync
+builder.Services.AddHttpClient(ContactsApi.Infrastructure.Atlas.SportsTrackerClient.HttpClientName, c => c.Timeout = TimeSpan.FromSeconds(60));
+builder.Services.AddSingleton<AtlasSyncQueue>();
+builder.Services.AddScoped<AtlasConnectionService>();
+builder.Services.AddHostedService<AtlasSyncWorker>();
 builder.Services.AddHttpContextAccessor();
 
 // MCP server over the Atlas service (tools in AtlasMcpTools), at /api/mcp

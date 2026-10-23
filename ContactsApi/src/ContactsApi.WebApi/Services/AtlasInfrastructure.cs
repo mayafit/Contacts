@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Text;
 using ContactsApi.Infrastructure.Atlas;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace ContactsApi.WebApi.Services;
 
@@ -60,15 +61,50 @@ public class AtlasMigrator : BackgroundService
                 _readiness.Ready = true;
                 _readiness.Error = null;
                 _logger.LogInformation("Atlas database ready");
+                await BackfillFusionAsync(stoppingToken);
                 return;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
+                if (_readiness.Ready)
+                {
+                    return;
+                }
+
                 _readiness.Error = ex.Message;
                 _logger.LogWarning("Atlas database not ready ({Message}); retrying in {Delay}", ex.Message, delay);
                 await Task.Delay(delay, stoppingToken);
                 delay = TimeSpan.FromSeconds(Math.Min(120, delay.TotalSeconds * 2));
             }
+        }
+    }
+
+    /// <summary>
+    /// Data imported before fusion existed: fuse every owner's activities once
+    /// (when no fused activity exists yet). Failures are logged; the app works on.
+    /// </summary>
+    private async Task BackfillFusionAsync(CancellationToken ct)
+    {
+        try
+        {
+            using var scope = _services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AtlasDbContext>();
+            if (await db.Fusions.AnyAsync(ct))
+            {
+                return;
+            }
+
+            var owners = await db.Activities.Select(a => a.OwnerId).Distinct().ToListAsync(ct);
+            var atlas = scope.ServiceProvider.GetRequiredService<AtlasService>();
+            foreach (var owner in owners)
+            {
+                var result = await atlas.FuseAsync(owner, ct);
+                _logger.LogInformation("Fusion backfill: {Fused} fused activities from {Activities} records", result.Fused, result.Activities);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Fusion backfill failed");
         }
     }
 }

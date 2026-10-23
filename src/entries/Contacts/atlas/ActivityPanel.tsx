@@ -1,14 +1,50 @@
 /**
  * @fileoverview Details of one activity: numbers, heart-rate and elevation
- * charts linked to the map, and editing
+ * charts linked to the map, editing, and the fused activity's sources,
+ * conflicts and places (split, merge)
  * @module Contacts/atlas/ActivityPanel
  */
 
 import React, { useMemo, useState } from 'react';
-import { Box, Button, IconButton, MenuItem, TextField, Tooltip, Typography } from '@mui/material';
-import { ArrowBack, DeleteOutline, Edit, Favorite } from '@mui/icons-material';
-import type { ActivityDetail, PointOutput, SeriesPoint } from './types';
-import { ACTIVITY_TYPES, HEALTH_COLOR, typeColor, isSet } from './types';
+import {
+  Alert,
+  Box,
+  Button,
+  ButtonBase,
+  Chip,
+  IconButton,
+  MenuItem,
+  TextField,
+  Tooltip,
+  Typography,
+} from '@mui/material';
+import {
+  ArrowBack,
+  CallMerge,
+  CallSplit,
+  DeleteOutline,
+  Edit,
+  Favorite,
+  Place,
+  SportsScore,
+  TripOrigin,
+} from '@mui/icons-material';
+import type {
+  ActivityDetail,
+  ActivityMember,
+  LinkedPlace,
+  PointOutput,
+  SeriesPoint,
+} from './types';
+import {
+  ACTIVITY_TYPES,
+  HEALTH_COLOR,
+  VISIT_COLOR,
+  describeFieldSources,
+  sourceLabel,
+  typeColor,
+  isSet,
+} from './types';
 import { formatDistance, formatDuration, formatWhen } from './geo';
 import { tokens } from '../theme/contactsTheme';
 
@@ -19,7 +55,93 @@ export interface ActivityPanelProps {
   onCursor: (pos: [number, number] | null) => void;
   onSave: (patch: { name?: string; type?: string; notes?: string }) => Promise<void>;
   onDelete: () => void;
+  /** Splits a source record off this activity ("not the same activity") */
+  onSplit: (memberId: string) => Promise<void>;
+  /** Starts picking another activity to merge with this one */
+  onStartMerge: () => void;
+  /** Shows a linked place (its visit, or its position on the map) */
+  onShowPlace: (lat: number, lon: number, visitId: string) => void;
 }
+
+/** Icon and text of a linked place's role */
+const ROLE: Record<LinkedPlace['role'], { label: string; icon: React.ReactElement }> = {
+  start: { label: 'Start', icon: <TripOrigin sx={{ fontSize: 14 }} /> },
+  end: { label: 'End', icon: <SportsScore sx={{ fontSize: 14 }} /> },
+  during: { label: 'Stop', icon: <Place sx={{ fontSize: 14 }} /> },
+};
+
+/** Time of day, e.g. 14:05 */
+const clock = (iso: string): string =>
+  new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+
+/** One source record of a fused activity */
+const MemberRow: React.FC<{
+  member: ActivityMember;
+  busy: boolean;
+  onSplit: () => void;
+}> = ({ member: m, busy, onSplit }) => (
+  <Box
+    sx={{
+      display: 'flex',
+      alignItems: 'flex-start',
+      gap: 1,
+      py: 0.75,
+      borderBottom: `1px solid ${tokens.border}`,
+    }}
+  >
+    <Box
+      sx={{
+        width: 8,
+        height: 8,
+        mt: 0.75,
+        borderRadius: '50%',
+        bgcolor: typeColor(m.type),
+        flexShrink: 0,
+      }}
+    />
+    <Box sx={{ flex: 1, minWidth: 0 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
+        <Typography variant="body2" sx={{ fontWeight: 600 }}>
+          {sourceLabel(m.source)}
+        </Typography>
+        <Typography variant="body2" dir="auto" noWrap sx={{ color: tokens.textSecondary }}>
+          · {ACTIVITY_TYPES[m.type]?.label ?? m.type}
+          {m.name ? ` · ${m.name}` : ''}
+        </Typography>
+        {m.primary && (
+          <Chip size="small" label="primary" color="primary" sx={{ height: 18, fontSize: 11 }} />
+        )}
+        {m.pointCount > 0 && (
+          <Chip size="small" label="track" variant="outlined" sx={{ height: 18, fontSize: 11 }} />
+        )}
+      </Box>
+      <Typography variant="caption" sx={{ color: tokens.textMuted }}>
+        {[
+          `${clock(m.startTime)}–${clock(m.endTime)}`,
+          formatDistance(m.distanceM),
+          formatDuration(m.durationS),
+          m.avgHeartRate ? `${m.avgHeartRate} bpm` : '',
+        ]
+          .filter(Boolean)
+          .join(' · ')}
+      </Typography>
+    </Box>
+    {!m.primary && (
+      <Tooltip title="Not the same activity — split it off">
+        <span>
+          <IconButton
+            size="small"
+            disabled={busy}
+            onClick={onSplit}
+            aria-label={`Split off the ${sourceLabel(m.source)} record`}
+          >
+            <CallSplit fontSize="small" />
+          </IconButton>
+        </span>
+      </Tooltip>
+    )}
+  </Box>
+);
 
 /** Nearest track point to a time */
 const pointAt = (points: PointOutput[], t: number): PointOutput | undefined => {
@@ -103,9 +225,17 @@ const ActivityPanel: React.FC<ActivityPanelProps> = ({
   onCursor,
   onSave,
   onDelete,
+  onSplit,
+  onStartMerge,
+  onShowPlace,
 }) => {
   const s = detail.summary;
   const [editing, setEditing] = useState(false);
+  const [splitting, setSplitting] = useState(false);
+  const members = detail.members ?? [];
+  const conflicts = detail.conflicts ?? [];
+  const places = detail.places ?? [];
+  const provenance = describeFieldSources(detail.fieldSources);
   const [name, setName] = useState(s.name ?? '');
   const [type, setType] = useState(s.type);
   const [notes, setNotes] = useState(detail.notes ?? '');
@@ -157,7 +287,8 @@ const ActivityPanel: React.FC<ActivityPanelProps> = ({
         </Tooltip>
       </Box>
       <Typography variant="caption" sx={{ color: tokens.textMuted, display: 'block', ml: 5 }}>
-        {formatWhen(s.startTime)} · {s.source}
+        {formatWhen(s.startTime)} ·{' '}
+        {(s.sources?.length ? s.sources : [s.source]).map((x) => sourceLabel(x)).join(', ')}
       </Typography>
 
       {editing && (
@@ -218,6 +349,95 @@ const ActivityPanel: React.FC<ActivityPanelProps> = ({
           </Box>
         ))}
       </Box>
+
+      {conflicts.length > 0 && (
+        <Alert severity="warning" sx={{ mt: 1.5, '& .MuiAlert-message': { minWidth: 0 } }}>
+          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+            The sources disagree
+          </Typography>
+          {conflicts.map((c, i) => (
+            <Typography key={`${c.field}-${i}`} variant="caption" sx={{ display: 'block' }}>
+              {c.message}
+              {c.chosen ? ` — using ${c.chosen}` : ''}
+            </Typography>
+          ))}
+        </Alert>
+      )}
+
+      {(members.length > 1 || conflicts.length > 0) && (
+        <Box sx={{ mt: 1.5 }}>
+          <Typography variant="subtitle2" sx={{ color: tokens.textSecondary }}>
+            Sources
+          </Typography>
+          {members.map((m) => (
+            <MemberRow
+              key={m.id}
+              member={m}
+              busy={splitting}
+              onSplit={async () => {
+                setSplitting(true);
+                try {
+                  await onSplit(m.id);
+                } catch {
+                  // The page shows the error
+                } finally {
+                  setSplitting(false);
+                }
+              }}
+            />
+          ))}
+          {provenance && (
+            <Typography
+              variant="caption"
+              sx={{ display: 'block', mt: 0.75, color: tokens.textMuted }}
+            >
+              Where values come from: {provenance}
+            </Typography>
+          )}
+        </Box>
+      )}
+
+      {places.length > 0 && (
+        <Box sx={{ mt: 1.5 }}>
+          <Typography variant="subtitle2" sx={{ color: tokens.textSecondary }}>
+            Places
+          </Typography>
+          {places.map((p) => (
+            <ButtonBase
+              key={`${p.visitId}-${p.role}`}
+              onClick={() => onShowPlace(p.lat, p.lon, p.visitId)}
+              sx={{
+                display: 'flex',
+                justifyContent: 'flex-start',
+                alignItems: 'center',
+                gap: 1,
+                width: '100%',
+                textAlign: 'left',
+                py: 0.5,
+                borderRadius: '6px',
+                '&:hover': { bgcolor: tokens.hover },
+              }}
+            >
+              <Tooltip title={ROLE[p.role]?.label ?? p.role}>
+                <Box sx={{ display: 'flex', color: VISIT_COLOR }}>
+                  {ROLE[p.role]?.icon ?? ROLE.during.icon}
+                </Box>
+              </Tooltip>
+              <Typography variant="body2" dir="auto" noWrap sx={{ flex: 1, minWidth: 0 }}>
+                {p.placeName || 'Unnamed place'}
+              </Typography>
+              <Typography variant="caption" sx={{ color: tokens.textMuted, flexShrink: 0 }}>
+                {clock(p.startTime)}
+                {p.role === 'during' ? `–${clock(p.endTime)}` : ''}
+              </Typography>
+            </ButtonBase>
+          ))}
+        </Box>
+      )}
+
+      <Button size="small" startIcon={<CallMerge />} onClick={onStartMerge} sx={{ mt: 1 }}>
+        Merge with another activity…
+      </Button>
 
       {hr.length > 1 ? (
         <Chart

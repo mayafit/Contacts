@@ -21,9 +21,8 @@ public class AtlasNotFoundException : Exception
 /// Everything the app and AI clients do with Atlas data. Every method takes the
 /// owner (Google account id) and only ever touches that owner's rows.
 /// </summary>
-public class AtlasService
-{
-    private readonly AtlasDbContext _db;
+public partial class AtlasService
+{private readonly AtlasDbContext _db;
     private readonly ILogger<AtlasService> _logger;
 
     /// <summary>Creates the service</summary>
@@ -54,6 +53,23 @@ public class AtlasService
             await using var tx = await _db.Database.BeginTransactionAsync(ct);
             var result = await IngestCoreAsync(owner, req, ct);
             await tx.CommitAsync(ct);
+
+            // Fuse what this batch touched with what was already there. A failure
+            // here never fails the import; the next run (or "re-fuse") catches up.
+            var times = req.Activities.Where(a => a.StartTime.HasValue).Select(a => Utc(a.StartTime!.Value)).ToList();
+            if (times.Count > 0)
+            {
+                try
+                {
+                    var ends = req.Activities.Select(a => a.EndTime ?? a.StartTime).Where(t => t.HasValue).Select(t => Utc(t!.Value));
+                    await FuseCoreAsync(owner, times.Min(), ends.Append(times.Max()).Max(), ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(ex, "Fusion after ingest failed");
+                }
+            }
+
             return result;
         }
         finally
@@ -79,6 +95,22 @@ public class AtlasService
         {
             run = new ImportRun { OwnerId = owner, Source = source, FileName = req.FileName };
             _db.Imports.Add(run);
+        }
+
+        // A visit that names its place without an id: the place is made (or found)
+        // by name and position, like any other place
+        if (req.Visits.Any(v => v.PlaceExternalId == null && !string.IsNullOrWhiteSpace(v.PlaceName)))
+        {
+            req.Visits = req.Visits
+                .Select(v => v.PlaceExternalId == null && !string.IsNullOrWhiteSpace(v.PlaceName)
+                    ? v with { PlaceExternalId = PlaceKey(v.PlaceName, v.Lat, v.Lon) }
+                    : v)
+                .ToList();
+            req.Places.AddRange(req.Visits
+                .Where(v => v.PlaceName != null && v.PlaceExternalId == PlaceKey(v.PlaceName, v.Lat, v.Lon))
+                .Select(v => new PlaceInput(v.PlaceExternalId, v.PlaceName!, v.Lat, v.Lon))
+                .Where(p => req.Places.All(x => x.ExternalId != p.ExternalId))
+                .DistinctBy(p => p.ExternalId));
         }
 
         // Places first: visits refer to them
@@ -220,6 +252,9 @@ public class AtlasService
             }
 
             Geo.Summarize(activity);
+            // Heart rate the source summarised, when the track has none
+            activity.AvgHeartRate ??= a.AvgHeartRate;
+            activity.MaxHeartRate ??= a.MaxHeartRate;
             if (activity.StartTime == default)
             {
                 // No time at all: it cannot be placed on the timeline
@@ -335,7 +370,8 @@ public class AtlasService
     /// <summary>The owner's activities in the query's area, types and text (not its time)</summary>
     private IQueryable<AtlasActivity> FilterActivities(string owner, AtlasQuery q)
     {
-        var aq = _db.Activities.AsNoTracking().Where(a => a.OwnerId == owner);
+        // One row per real-world activity: records that stand alone, and the primary of each fused one
+        var aq = _db.Activities.AsNoTracking().Where(a => a.OwnerId == owner && (a.ClusterId == null || a.ClusterId == a.Id));
         if (HasBox(q))
         {
             aq = aq.Where(a => a.MaxLat >= q.MinLat && a.MinLat <= q.MaxLat && a.MaxLon >= q.MinLon && a.MinLon <= q.MaxLon);
@@ -344,14 +380,15 @@ public class AtlasService
         if (q.Types is { Count: > 0 })
         {
             var types = q.Types.Select(NormalizeType).ToList();
-            aq = aq.Where(a => types.Contains(a.Type));
+            aq = aq.Where(a => types.Contains(a.Fusion != null && a.Fusion.Type != null ? a.Fusion.Type : a.Type));
         }
 
         var text = q.Text?.Trim();
         if (!string.IsNullOrEmpty(text))
         {
             var pattern = $"%{EscapeLike(text)}%";
-            aq = aq.Where(a => EF.Functions.ILike(a.Name ?? "", pattern) || EF.Functions.ILike(a.Notes ?? "", pattern));
+            aq = aq.Where(a => EF.Functions.ILike(a.Name ?? "", pattern) || EF.Functions.ILike(a.Notes ?? "", pattern)
+                               || (a.Fusion != null && EF.Functions.ILike(a.Fusion.Name ?? "", pattern)));
         }
 
         return aq;
@@ -382,8 +419,18 @@ public class AtlasService
     /// </summary>
     public async Task<ActivityDetail> GetActivityAsync(string owner, Guid id, int maxPoints = 2000, CancellationToken ct = default)
     {
-        var a = await _db.Activities.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id && x.OwnerId == owner, ct)
+        var a = await _db.Activities.AsNoTracking().Include(x => x.Fusion).FirstOrDefaultAsync(x => x.Id == id && x.OwnerId == owner, ct)
                 ?? throw new AtlasNotFoundException("Activity");
+        if (a.ClusterId.HasValue && a.ClusterId != a.Id)
+        {
+            // A member's id: show the fused activity it belongs to
+            a = await _db.Activities.AsNoTracking().Include(x => x.Fusion).FirstOrDefaultAsync(x => x.Id == a.ClusterId && x.OwnerId == owner, ct) ?? a;
+            id = a.Id;
+        }
+
+        var members = a.ClusterId.HasValue
+            ? await _db.Activities.AsNoTracking().Where(x => x.OwnerId == owner && x.ClusterId == a.ClusterId).ToListAsync(ct)
+            : new List<AtlasActivity> { a };
         var count = a.PointCount;
         var step = Math.Max(1, (int)Math.Ceiling(count / (double)Math.Clamp(maxPoints, 10, 20000)));
         var points = await _db.TrackPoints.AsNoTracking()
@@ -396,24 +443,100 @@ public class AtlasService
             points = points.Where((_, i) => i % step == 0 || i == points.Count - 1).ToList();
         }
 
+        var fieldSources = a.Fusion != null
+            ? System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(a.Fusion.FieldSources) ?? new()
+            : new Dictionary<string, string> { ["track"] = a.Source };
+        var conflicts = a.Fusion != null
+            ? System.Text.Json.JsonSerializer.Deserialize<List<FusionConflict>>(a.Fusion.Conflicts, JsonCamel) ?? new()
+            : new List<FusionConflict>();
+
+        // Heart rate: the primary's track, else another member's track, else health samples
         string? hrSource = null;
         var hr = new List<SeriesPoint>();
         if (points.Any(p => p.Hr.HasValue))
         {
             hrSource = "track";
             hr = points.Where(p => p.Hr.HasValue).Select(p => new SeriesPoint(p.T, p.Hr!.Value)).ToList();
+            fieldSources["heartRate"] = a.Source;
         }
         else
         {
-            var samples = await HealthAsync(owner, "heart_rate", a.StartTime, a.EndTime, 600, ct);
-            if (samples.Count > 0)
+            var other = members.Where(m => m.Id != a.Id && m.AvgHeartRate.HasValue && m.PointCount > 0)
+                .OrderBy(m => SourceRank(m.Source)).FirstOrDefault();
+            if (other != null)
             {
-                hrSource = "health";
-                hr = samples;
+                hr = await _db.TrackPoints.AsNoTracking()
+                    .Where(p => p.ActivityId == other.Id && p.HeartRate != null)
+                    .OrderBy(p => p.Time)
+                    .Select(p => new SeriesPoint(p.Time, p.HeartRate!.Value, null, null))
+                    .ToListAsync(ct);
+                if (hr.Count > 0)
+                {
+                    hrSource = "track";
+                    fieldSources["heartRate"] = other.Source;
+                }
+            }
+
+            if (hr.Count == 0)
+            {
+                var samples = await HealthAsync(owner, "heart_rate", a.Fusion?.StartTime ?? a.StartTime, a.Fusion?.EndTime ?? a.EndTime, 600, ct);
+                if (samples.Count > 0)
+                {
+                    hrSource = "health";
+                    hr = samples;
+                    var healthSource = await _db.HealthSamples.AsNoTracking()
+                        .Where(s => s.OwnerId == owner && s.Type == "heart_rate" && s.StartTime >= a.StartTime && s.StartTime <= a.EndTime)
+                        .Select(s => s.Source).FirstOrDefaultAsync(ct);
+                    fieldSources["heartRate"] = healthSource ?? "health";
+                }
             }
         }
 
-        return new ActivityDetail(Summarize(a), a.Notes, points, hrSource, hr);
+        var memberRows = members
+            .OrderByDescending(m => m.Id == a.Id).ThenBy(m => SourceRank(m.Source))
+            .Select(m => new ActivityMember(m.Id, m.Source, m.Type, m.Name, m.StartTime, m.EndTime, m.DistanceM, m.DurationS,
+                m.AvgHeartRate, m.MaxHeartRate, m.PointCount, m.Id == a.Id, m.ImportId))
+            .ToList();
+        var places = await LinkedPlacesAsync(owner, a, points, ct);
+        return new ActivityDetail(Summarize(a), a.Notes, points, hrSource, hr, memberRows, conflicts, fieldSources, places);
+    }
+
+    private static readonly System.Text.Json.JsonSerializerOptions JsonCamel = new(System.Text.Json.JsonSerializerDefaults.Web);
+
+    /// <summary>
+    /// Visits around an activity: where it started, ended, or stopped on the way
+    /// (within ~500 m of the track and 30 minutes of its times)
+    /// </summary>
+    private async Task<List<LinkedPlace>> LinkedPlacesAsync(string owner, AtlasActivity a, List<PointOutput> points, CancellationToken ct)
+    {
+        if (!a.MinLat.HasValue || !a.MaxLat.HasValue || !a.MinLon.HasValue || !a.MaxLon.HasValue)
+        {
+            return new List<LinkedPlace>();
+        }
+
+        const double pad = 0.005;
+        var start = (a.Fusion?.StartTime ?? a.StartTime).AddMinutes(-30);
+        var end = (a.Fusion?.EndTime ?? a.EndTime).AddMinutes(30);
+        var visits = await _db.Visits.AsNoTracking().Include(v => v.Place)
+            .Where(v => v.OwnerId == owner && v.EndTime >= start && v.StartTime <= end
+                        && v.Lat >= a.MinLat - pad && v.Lat <= a.MaxLat + pad && v.Lon >= a.MinLon - pad && v.Lon <= a.MaxLon + pad)
+            .OrderBy(v => v.StartTime)
+            .Take(50)
+            .ToListAsync(ct);
+        var first = points.FirstOrDefault();
+        var last = points.LastOrDefault();
+        return visits
+            .Where(v => points.Count == 0 || points.Any(p => Geo.Haversine(p.Lat, p.Lon, v.Lat, v.Lon) <= 500))
+            .Select(v =>
+            {
+                var role = first != null && v.EndTime <= a.StartTime.AddMinutes(15) && Geo.Haversine(first.Lat, first.Lon, v.Lat, v.Lon) <= 500
+                    ? "start"
+                    : last != null && v.StartTime >= a.EndTime.AddMinutes(-15) && Geo.Haversine(last.Lat, last.Lon, v.Lat, v.Lon) <= 500
+                        ? "end"
+                        : "during";
+                return new LinkedPlace(v.Id, v.Place?.Name, v.Place?.Address, role, v.StartTime, v.EndTime, v.Lat, v.Lon);
+            })
+            .ToList();
     }
 
     /// <summary>
@@ -463,7 +586,7 @@ public class AtlasService
         {
             var starts = await FilterActivities(owner, filter)
                 .Where(a => a.StartTime >= from && a.StartTime <= to)
-                .Select(a => new { a.StartTime, a.Type })
+                .Select(a => new { a.StartTime, Type = a.Fusion != null && a.Fusion.Type != null ? a.Fusion.Type : a.Type })
                 .ToListAsync(ct);
             rows.AddRange(starts.GroupBy(a => (Bucket: BucketStart(a.StartTime, bucket, zone), a.Type))
                 .Select(g => new HistogramRow(g.Key.Bucket, g.Key.Type, g.Count())));
@@ -552,8 +675,8 @@ public class AtlasService
     /// <summary>Totals, date range, per-type counts and the imports</summary>
     public async Task<AtlasSummary> SummaryAsync(string owner, CancellationToken ct = default)
     {
-        var acts = _db.Activities.AsNoTracking().Where(a => a.OwnerId == owner);
-        var byType = await acts.GroupBy(a => a.Type)
+        var acts = _db.Activities.AsNoTracking().Where(a => a.OwnerId == owner && (a.ClusterId == null || a.ClusterId == a.Id));
+        var byType = await acts.GroupBy(a => a.Fusion != null && a.Fusion.Type != null ? a.Fusion.Type : a.Type)
             .Select(g => new { g.Key, Count = g.Count(), Distance = g.Sum(a => a.DistanceM ?? 0) })
             .ToListAsync(ct);
         var firstA = await acts.MinAsync(a => (DateTime?)a.StartTime, ct);
@@ -587,6 +710,7 @@ public class AtlasService
         if (patch.Type != null)
         {
             a.Type = NormalizeType(patch.Type);
+            a.TypeByUser = true;
         }
 
         if (patch.Notes != null)
@@ -596,13 +720,33 @@ public class AtlasService
 
         a.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
-        return Summarize(a);
+        if (a.ClusterId.HasValue)
+        {
+            // The fused activity takes the new type / name
+            var gate = Gates.GetOrAdd(owner, _ => new SemaphoreSlim(1, 1));
+            await gate.WaitAsync(ct);
+            try
+            {
+                await FuseCoreAsync(owner, a.StartTime, a.EndTime, ct);
+            }
+            finally
+            {
+                gate.Release();
+            }
+        }
+
+        var cluster = a.ClusterId ?? a.Id;
+        return await _db.Activities.AsNoTracking().Where(x => x.Id == cluster && x.OwnerId == owner).Select(ToSummary).FirstAsync(ct);
     }
 
-    /// <summary>Deletes an activity and its track</summary>
+    /// <summary>Deletes an activity and its track; a fused activity with all its source records</summary>
     public async Task DeleteActivityAsync(string owner, Guid id, CancellationToken ct = default)
     {
-        if (await _db.Activities.Where(x => x.Id == id && x.OwnerId == owner).ExecuteDeleteAsync(ct) == 0)
+        var cluster = await _db.Activities.Where(x => x.Id == id && x.OwnerId == owner).Select(x => x.ClusterId).FirstOrDefaultAsync(ct);
+        var removed = cluster.HasValue
+            ? await _db.Activities.Where(x => x.OwnerId == owner && (x.ClusterId == cluster || x.Id == id)).ExecuteDeleteAsync(ct)
+            : await _db.Activities.Where(x => x.Id == id && x.OwnerId == owner).ExecuteDeleteAsync(ct);
+        if (removed == 0)
         {
             throw new AtlasNotFoundException("Activity");
         }
@@ -667,15 +811,38 @@ public class AtlasService
         removed += await _db.HealthSamples.Where(x => x.OwnerId == owner && x.ImportId == importId).ExecuteDeleteAsync(ct);
         removed += await _db.Places.Where(x => x.OwnerId == owner && x.ImportId == importId).ExecuteDeleteAsync(ct);
         await _db.Imports.Where(i => i.Id == importId && i.OwnerId == owner).ExecuteDeleteAsync(ct);
+        // Records whose fused activity's primary was deleted stand alone until re-fused
+        await _db.Activities.Where(x => x.OwnerId == owner && x.ClusterId != null && !_db.Activities.Any(p => p.Id == x.ClusterId))
+            .ExecuteUpdateAsync(s => s.SetProperty(x => x.ClusterId, (Guid?)null), ct);
         _logger.LogInformation("Deleted import with {Count} items", removed);
+        await FuseAsync(owner, CancellationToken.None);
         return removed;
     }
 
     // ---------------------------------------------------------------- helpers
 
+    /// <summary>
+    /// An activity as listed: the primary record, with what fusion added from the
+    /// others (type by source priority, the wider times, values the primary lacks)
+    /// </summary>
     private static readonly System.Linq.Expressions.Expression<Func<AtlasActivity, ActivitySummary>> ToSummary = a =>
-        new ActivitySummary(a.Id, a.Type, a.Name, a.StartTime, a.EndTime, a.DistanceM, a.DurationS, a.ElevationGainM,
-            a.AvgHeartRate, a.MaxHeartRate, a.Source, a.Polyline, a.MinLat, a.MinLon, a.MaxLat, a.MaxLon, a.PointCount);
+        new ActivitySummary(a.Id,
+            a.Fusion != null && a.Fusion.Type != null ? a.Fusion.Type : a.Type,
+            a.Name ?? (a.Fusion != null ? a.Fusion.Name : null),
+            a.Fusion != null ? a.Fusion.StartTime : a.StartTime,
+            a.Fusion != null ? a.Fusion.EndTime : a.EndTime,
+            a.DistanceM ?? (a.Fusion != null ? a.Fusion.DistanceM : null),
+            a.DurationS,
+            a.ElevationGainM ?? (a.Fusion != null ? a.Fusion.ElevationGainM : null),
+            a.AvgHeartRate ?? (a.Fusion != null ? a.Fusion.AvgHeartRate : null),
+            a.MaxHeartRate ?? (a.Fusion != null ? a.Fusion.MaxHeartRate : null),
+            a.Source, a.Polyline, a.MinLat, a.MinLon, a.MaxLat, a.MaxLon, a.PointCount,
+            SplitSources(a.Fusion != null ? a.Fusion.Sources : a.Source),
+            a.Fusion != null ? a.Fusion.MemberCount : 1,
+            a.Fusion != null ? a.Fusion.ConflictCount : 0);
+
+    private static List<string> SplitSources(string sources) =>
+        sources.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
 
     private static readonly Func<AtlasActivity, ActivitySummary> ToSummaryCompiled = ToSummary.Compile();
 
