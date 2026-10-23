@@ -77,6 +77,17 @@ public class FusionRegressionTests
     }
 
     [Fact]
+    public void A_short_walk_inside_a_long_drive_stays_separate()
+    {
+        var drive = C("google-timeline", "drive", 0, 40);
+        var walk = C("google-fit", "walk", 10, 15);
+        Assert.Equal(2, Fusion.Group(new[] { drive, walk }, [], []).Count);
+        var ride = C("sports-tracker", "ride", 0, 60);
+        var guess = C("google-timeline", "drive", 5, 55);
+        Assert.Single(Fusion.Group(new[] { ride, guess }, [], []));
+    }
+
+    [Fact]
     public void A_moment_joins_what_it_falls_within_and_the_user_type_wins()
     {
         var ride = C("sports-tracker", "ride", 0, 60);
