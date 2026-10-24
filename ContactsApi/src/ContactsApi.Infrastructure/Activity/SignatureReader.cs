@@ -58,14 +58,20 @@ public class SignatureReader
             list.Q = $"from:({from}) newer_than:3y -in:chats";
             list.MaxResults = max;
             list.Fields = "messages/id";
+            // No match can come back as no response at all
             var page = await list.ExecuteAsync(ct);
             var samples = new List<SignatureSample>();
-            foreach (var id in page.Messages?.Select(m => m.Id) ?? Enumerable.Empty<string>())
+            foreach (var id in page?.Messages?.Select(m => m?.Id).OfType<string>() ?? Enumerable.Empty<string>())
             {
                 var get = _gmail.Users.Messages.Get("me", id);
                 get.Format = UsersResource.MessagesResource.GetRequest.FormatEnum.Full;
                 get.Fields = "internalDate,payload(mimeType,headers,body/data,parts(mimeType,headers,body/data,parts(mimeType,headers,body/data,parts(mimeType,headers,body/data))))";
                 var m = await get.ExecuteAsync(ct);
+                if (m == null)
+                {
+                    continue;
+                }
+
                 var tail = SignatureText.AuthorTail(BodyText(m.Payload));
                 if (tail.Length > 0)
                 {

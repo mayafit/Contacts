@@ -59,4 +59,16 @@ public class SignatureTextTests
             "Thanks\nDana Cohen | CTO\nOn Mon, Oct 19, 2026 at 10:00 AM Alon Mayaffit <\nalon@x.com> wrote:\n> Alon 050-1111111");
         Assert.Equal("Thanks\nDana Cohen | CTO", tail);
     }
+
+    [Fact]
+    public void Removes_newsletter_tracking_from_links()
+    {
+        Assert.Equal("http://lobby99.org.il",
+            SignatureText.CleanUrl("http://lobby99.org.il?utm_source=x&utm_campaign=6c3&utm_medium=email&utm_term=0_f3"));
+        Assert.Equal("https://www.youtube.com/@Lobby99",
+            SignatureText.CleanUrl(" https://www.youtube.com/@Lobby99?utm_source=a&mc_cid=b "));
+        Assert.Equal("https://shop.example.com/item?id=7#top",
+            SignatureText.CleanUrl("https://shop.example.com/item?utm_source=a&id=7#top"));
+        Assert.Equal("https://example.com/", SignatureText.CleanUrl("https://example.com/"));
+    }
 }
