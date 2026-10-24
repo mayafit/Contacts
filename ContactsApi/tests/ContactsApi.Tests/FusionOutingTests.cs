@@ -55,6 +55,17 @@ public class FusionOutingTests
         // No time conflicts for the pieces; the lost distance is reported
         Assert.DoesNotContain(fused.Conflicts, c => c.Message.Contains("Sports Tracker starts") || c.Message.StartsWith("Google Timeline"));
         Assert.Contains(fused.Conflicts, c => c.Field == "distanceM" && c.Message.Contains("its own track is 21.5 km"));
+        // The phone's segments cover parts of the outing: not a distance disagreement
+        Assert.DoesNotContain(fused.Conflicts, c => c.Field == "distanceM" && c.Message.Contains("Google Timeline"));
+    }
+
+    [Fact]
+    public void A_moment_record_has_no_time_conflicts()
+    {
+        var moment = Rec("samsung-health", "other", 2.3, 2.3, null, 0);
+        var fused = Fusion.Fuse(new[] { Out, Back, Watch, moment });
+        Assert.Contains(fused.Members, m => m.Id == moment.Id);
+        Assert.DoesNotContain(fused.Conflicts, c => c.Values.Any(v => v.Value == moment.End.ToString("u")));
     }
 
     [Fact]
