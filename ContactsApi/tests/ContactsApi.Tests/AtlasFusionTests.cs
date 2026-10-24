@@ -157,6 +157,20 @@ public class FusionToleranceTests
     }
 
     [Fact]
+    public void Consecutive_segments_are_never_one_activity()
+    {
+        var drive = new FusionCandidate(Guid.NewGuid(), "google-timeline", "drive", null, T0, T0.AddMinutes(10),
+            5_000, null, null, null, 32.8, 35.0, 32.85, 35.05, 7);
+        var walk = new FusionCandidate(Guid.NewGuid(), "google-timeline", "walk", null, T0.AddMinutes(10), T0.AddMinutes(13),
+            200, null, null, null, 32.84, 35.04, 32.85, 35.05, 2);
+        Assert.Equal(2, Fusion.Group(new[] { drive, walk }, [], []).Count);
+
+        var fitWalk = walk with { Id = Guid.NewGuid(), Source = "google-fit" };
+        Assert.Equal(2, Fusion.Group(new[] { drive, fitWalk }, [], []).Count);
+        Assert.Single(Fusion.Group(new[] { walk, fitWalk }, [], []));
+    }
+
+    [Fact]
     public void Wider_tolerances_accept_looser_matches()
     {
         var ride = C("sports-tracker", 0, 60);
