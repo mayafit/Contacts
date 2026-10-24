@@ -876,6 +876,8 @@ public partial class AtlasService
         public double Avg { get; set; }
         public double Max { get; set; }
         public string Source { get; set; } = string.Empty;
+        public int Samples { get; set; }
+        public double Minutes { get; set; }
     }
 
     private sealed record HeartRateStats(int Avg, int Max, string Source);
@@ -911,12 +913,16 @@ public partial class AtlasService
         var starts = groups.Select(g => DateTime.SpecifyKind(g.Start, DateTimeKind.Utc)).ToArray();
         var ends = groups.Select(g => DateTime.SpecifyKind(g.End, DateTimeKind.Utc)).ToArray();
         var rows = await _db.Database.SqlQuery<HeartRateRow>($@"
-            SELECT g.id AS ""ActivityId"", avg(h.""Value"") AS ""Avg"", max(h.""Value"") AS ""Max"", min(h.""Source"") AS ""Source""
+            SELECT g.id AS ""ActivityId"", avg(h.""Value"") AS ""Avg"", max(h.""Value"") AS ""Max"", min(h.""Source"") AS ""Source"",
+                   count(*)::int AS ""Samples"", max(extract(epoch FROM g.e - g.s) / 60)::float8 AS ""Minutes""
               FROM unnest({ids}, {starts}, {ends}) AS g(id, s, e)
               JOIN atlas.health_samples h ON h.""OwnerId"" = {owner} AND h.""Type"" = 'heart_rate'
                    AND h.""StartTime"" >= g.s AND h.""StartTime"" <= g.e
              GROUP BY g.id").ToListAsync(ct);
-        return rows.ToDictionary(r => r.ActivityId, r => new HeartRateStats((int)Math.Round(r.Avg), (int)Math.Round(r.Max), r.Source));
+        // Only from a real series (at least one value per 5 minutes): a few scattered
+        // values, often resting heart rate, would give a misleading average
+        return rows.Where(r => r.Samples >= 3 && r.Samples >= r.Minutes / 5)
+            .ToDictionary(r => r.ActivityId, r => new HeartRateStats((int)Math.Round(r.Avg), (int)Math.Round(r.Max), r.Source));
     }
 
     // ---------------------------------------------------------------- user decisions

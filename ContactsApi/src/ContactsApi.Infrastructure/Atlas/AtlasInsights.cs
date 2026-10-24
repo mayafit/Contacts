@@ -41,7 +41,7 @@ public record InsightTravel(int Flights, double FlightKm, int DaysAway);
 
 /// <summary>How complete and consistent the data is</summary>
 public record InsightCoverage(int Sports, int WithHeartRate, int Recorded, int InferredOnly, int Fused, int WithConflicts,
-    List<SourceCount> Sources);
+    List<SourceCount> Sources, int Implausible = 0);
 
 /// <summary>Activities that a source contributes to</summary>
 public record SourceCount(string Source, int Activities);
@@ -129,6 +129,17 @@ public partial class AtlasService
             .ToListAsync(ct);
     }
 
+    /// <summary>Fastest believable average speed per type (km/h); faster means misclassified</summary>
+    private static readonly Dictionary<string, double> MaxSpeed = new()
+    {
+        ["walk"] = 9, ["hike"] = 9, ["run"] = 25, ["ride"] = 70, ["swim"] = 8, ["ski"] = 150
+    };
+
+    /// <summary>Whether the activity's average speed is believable for its type</summary>
+    private static bool Plausible(InsightRow a) =>
+        !MaxSpeed.TryGetValue(a.Type, out var max) || a.DistanceM is not > 0 || Hours(a) <= 0
+        || a.DistanceM.Value / 1000 / Hours(a) <= max;
+
     private static double Hours(InsightRow a) =>
         a.DurationS is > 0 ? a.DurationS.Value / 3600 : Math.Max(0, (a.End - a.Start).TotalHours);
 
@@ -173,7 +184,7 @@ public partial class AtlasService
                     Math.Round(g.Sum(a => a.ClimbM ?? 0)),
                     withHr.Count > 0 ? (int)Math.Round(withHr.Average(a => a.AvgHr!.Value)) : null,
                     timed.Count > 0 ? Math.Round(timed.Sum(a => a.DistanceM!.Value) / 1000 / timed.Sum(Hours), 1) : null,
-                    g.Any(a => a.DistanceM is > 0) ? Math.Round(g.Max(a => a.DistanceM ?? 0) / 1000, 1) : null);
+                    g.Any(a => a.DistanceM is > 0 && Plausible(a)) ? Math.Round(g.Where(Plausible).Max(a => a.DistanceM ?? 0) / 1000, 1) : null);
             })
             .OrderByDescending(t => t.Hours)
             .ToList();
@@ -201,7 +212,8 @@ public partial class AtlasService
         }
 
         var (topPlaces, newPlaces, unnamedOften) = await TopPlacesAsync(owner, visits, q.From, ct);
-        var records = Records(acts);
+        // Records only from believable activities (a "walk" at 300 km/h was a flight)
+        var records = Records(acts.Where(Plausible).ToList());
         var streaks = Streaks(acts.Where(a => Sports.Contains(a.Type)).ToList(), Local);
         var travel = await TravelAsync(owner, acts, visits, Local, ct);
 
@@ -216,7 +228,8 @@ public partial class AtlasService
             sports.Count(a => a.Sources == "google-timeline"),
             acts.Count(a => a.Members > 1),
             acts.Count(a => a.Conflicts > 0),
-            sourceCounts);
+            sourceCounts,
+            acts.Count(a => !Plausible(a)));
 
         var proposals = await ProposalsAsync(owner, q, records, unnamedOften, newPlaces, coverage, travel, ct);
         return new Insights(q.From, q.To, totals, previous, byType, series, byWeekday, byHour, topPlaces, records, streaks,
@@ -421,6 +434,13 @@ public partial class AtlasService
             proposals.Add(new Proposal("conflicts", "warning", $"{coverage.WithConflicts} activities where the sources disagree",
                 "Type, distance, times or tracks differ between sources. Review them: split what is not the same activity.",
                 new ProposalAction("filter", ConflictsOnly: true)));
+        }
+
+        if (coverage.Implausible >= 3)
+        {
+            proposals.Add(new Proposal("implausible", "tip", $"{coverage.Implausible} activities with an impossible speed",
+                "For example walks at highway speed: Google Timeline probably misclassified them (a drive or a flight). They are left out of records; change their type to correct them.",
+                null));
         }
 
         var noHr = coverage.Sports - coverage.WithHeartRate;

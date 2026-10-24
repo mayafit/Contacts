@@ -793,6 +793,11 @@ const InsightsPanel: React.FC<InsightsPanelProps> = ({
                 {data.coverage.recorded} recorded · {data.coverage.inferredOnly} only inferred
               </Fact>
               <Fact label="Fused">{data.coverage.fused} from several sources</Fact>
+              {(data.coverage.implausible ?? 0) > 0 && (
+                <Fact label="Impossible speed">
+                  {data.coverage.implausible} probably misclassified · left out of records
+                </Fact>
+              )}
               <Fact label="Sources disagree">
                 {data.coverage.withConflicts}
                 {data.coverage.withConflicts > 0 && (

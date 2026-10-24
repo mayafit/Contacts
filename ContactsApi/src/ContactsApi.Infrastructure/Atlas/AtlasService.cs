@@ -892,7 +892,9 @@ public partial class AtlasService
             "walking" or "on_foot" => "walk",
             "in_passenger_vehicle" or "in_vehicle" or "driving" or "car" or "motorcycling" => "drive",
             "flying" or "plane" => "flight",
-            "in_bus" or "in_train" or "in_subway" or "in_tram" or "in_ferry" or "bus" or "train" => "transit",
+            "in_bus" or "in_train" or "in_subway" or "in_tram" or "in_ferry" or "bus" or "train"
+                or "in_gondola_lift" or "in_cable_car" or "in_taxi" or "in_vehicle_ferry" => "transit",
+            "boating" or "sailing" or "kayaking" or "rowing" or "paddling" or "surfing" => "other",
             "skiing" or "snowboarding" => "ski",
             "swimming" => "swim",
             // Google Timeline's "could not tell"
