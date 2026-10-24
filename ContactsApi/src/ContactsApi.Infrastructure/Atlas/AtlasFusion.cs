@@ -122,8 +122,10 @@ public static class Fusion
         if (a.Source == b.Source)
         {
             // The same ride recorded by two devices into one source (phone and watch
-            // into Sports Tracker): times decide; a watch's GPS may be far off
+            // into Sports Tracker): started a minute or two apart, a watch's GPS may
+            // be far off; the near-full overlap below still decides
             lt = Math.Max(lt, 500);
+            tt = Math.Max(tt, 300);
         }
 
         var dStart = (b.Start - a.Start).TotalSeconds;
