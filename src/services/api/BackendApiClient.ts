@@ -982,6 +982,22 @@ export class BackendApiClient {
   }
 
   /**
+   * Marks addresses as the user's own ("This is me"): mail with them is no
+   * conversation, they leave replies, rhythm and suggestions
+   * @param emails - Addresses
+   * @returns All addresses marked so far
+   */
+  async markOwnEmails(emails: string[]): Promise<string[]> {
+    return unwrap(
+      await this.request<string[]>('/activity/self', {
+        method: 'POST',
+        body: JSON.stringify({ emails }),
+      }),
+      'Marking the address failed',
+    );
+  }
+
+  /**
    * People seen in mail or meetings whose name or address matches
    * @param queries - Name variants (e.g. Hebrew and English spellings)
    * @param limit - Most matches

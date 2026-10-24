@@ -123,6 +123,9 @@ public class ActivitySnapshot
     /// <summary>Activity per lower-case email address</summary>
     public Dictionary<string, PersonActivity> People { get; set; } = new();
 
+    /// <summary>The user's own addresses the last scan used (mail between them is not a conversation)</summary>
+    public List<string>? MyEmails { get; set; }
+
     /// <summary>
     /// Names and addresses from mail headers and meeting guests. Null in snapshots
     /// made before it existed (a full scan builds it).

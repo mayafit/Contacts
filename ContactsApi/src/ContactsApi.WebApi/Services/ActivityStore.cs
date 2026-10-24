@@ -64,4 +64,30 @@ public class ActivityStore
     public Task RemoveAsync(string userId) => _cache.RemoveAsync(Key(userId));
 
     private static string Key(string userId) => $"activity:{userId}";
+
+    private static string SelfKey(string userId) => $"self-emails:{userId}";
+
+    /// <summary>Addresses the user marked as their own ("This is me")</summary>
+    public async Task<List<string>> GetSelfAsync(string userId)
+    {
+        var stored = await _cache.GetStringAsync(SelfKey(userId));
+        if (stored == null)
+        {
+            return new List<string>();
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<string>>(_protector.Unprotect(stored), Json) ?? new List<string>();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Own addresses could not be read");
+            return new List<string>();
+        }
+    }
+
+    /// <summary>Saves the addresses the user marked as their own (kept until changed)</summary>
+    public Task SaveSelfAsync(string userId, IEnumerable<string> emails) =>
+        _cache.SetStringAsync(SelfKey(userId), _protector.Protect(JsonSerializer.Serialize(emails.Distinct().Take(50).ToList(), Json)));
 }

@@ -90,6 +90,21 @@ public class GoogleActivityClient
         _logger = logger;
     }
 
+    /// <summary>The account's "send mail as" addresses (empty when Gmail does not tell)</summary>
+    public async Task<List<string>> GetSendAsAddressesAsync(CancellationToken ct)
+    {
+        try
+        {
+            var list = await _gmail.Users.Settings.SendAs.List("me").ExecuteAsync(ct);
+            return list?.SendAs?.Select(s => s.SendAsEmail).OfType<string>().ToList() ?? new List<string>();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogInformation("Gmail aliases unavailable: {Message}", ex.Message);
+            return new List<string>();
+        }
+    }
+
     /// <summary>The mailbox address and its current history id</summary>
     /// <returns>Address and history id</returns>
     public async Task<(string Email, ulong? HistoryId)> GetProfileAsync(CancellationToken ct)
