@@ -3,7 +3,8 @@
  * @module Contacts/atlas/geo
  */
 
-import { isSet } from './types';
+import type { ActivitySummary } from './types';
+import { ACTIVITY_TYPES, isSet } from './types';
 
 /**
  * Decodes a Google encoded polyline (precision 5).
@@ -157,3 +158,69 @@ export const formatWhen = (iso: string): string =>
     hour: '2-digit',
     minute: '2-digit',
   });
+
+/**
+ * The great-circle route between two points (the way planes fly), as a line of
+ * points; longitudes are unwrapped so the line never jumps across the map.
+ * @param from - [lat, lon] of the start
+ * @param to - [lat, lon] of the end
+ * @param segments - Number of pieces
+ * @returns [lat, lon] points, start and end included
+ */
+export const greatCircle = (
+  from: [number, number],
+  to: [number, number],
+  segments = 64,
+): [number, number][] => {
+  const rad = Math.PI / 180;
+  const [lat1, lon1] = [from[0] * rad, from[1] * rad];
+  const [lat2, lon2] = [to[0] * rad, to[1] * rad];
+  const d =
+    2 *
+    Math.asin(
+      Math.sqrt(
+        Math.sin((lat2 - lat1) / 2) ** 2 +
+          Math.cos(lat1) * Math.cos(lat2) * Math.sin((lon2 - lon1) / 2) ** 2,
+      ),
+    );
+  if (d < 1e-9) {
+    return [from, to];
+  }
+  const out: [number, number][] = [];
+  let prevLon = from[1];
+  for (let i = 0; i <= segments; i++) {
+    const f = i / segments;
+    const a = Math.sin((1 - f) * d) / Math.sin(d);
+    const b = Math.sin(f * d) / Math.sin(d);
+    const x = a * Math.cos(lat1) * Math.cos(lon1) + b * Math.cos(lat2) * Math.cos(lon2);
+    const y = a * Math.cos(lat1) * Math.sin(lon1) + b * Math.cos(lat2) * Math.sin(lon2);
+    const z = a * Math.sin(lat1) + b * Math.sin(lat2);
+    const lat = Math.atan2(z, Math.sqrt(x * x + y * y)) / rad;
+    let lon = Math.atan2(y, x) / rad;
+    // Keep each step within 180° of the previous one
+    while (lon - prevLon > 180) {
+      lon -= 360;
+    }
+    while (lon - prevLon < -180) {
+      lon += 360;
+    }
+    prevLon = lon;
+    out.push([lat, lon]);
+  }
+  return out;
+};
+
+/**
+ * What a track is, for its tooltip: "Flight · 26 Aug 2026 20:12 · 6:17 h · 5,794 km"
+ * @param a - Activity
+ * @returns Text
+ */
+export const describeActivity = (a: ActivitySummary): string =>
+  [
+    a.name || ACTIVITY_TYPES[a.type]?.label || a.type,
+    formatWhen(a.startTime),
+    formatDuration((Date.parse(a.endTime) - Date.parse(a.startTime)) / 1000),
+    a.distanceM ? formatDistance(a.distanceM) : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');

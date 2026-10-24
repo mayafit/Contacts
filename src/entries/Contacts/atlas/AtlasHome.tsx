@@ -28,6 +28,7 @@ import {
 import { backendApiClient } from '../../../services/api/BackendApiClient';
 import type { ActivityDetail, AtlasQuery, AtlasSummary, SearchResult, VisitSummary } from './types';
 import AtlasMap, { type Box as Area } from './AtlasMap';
+import { loadStartRange, saveStartRange, startRangeOf, type StartRange } from './startRange';
 import AtlasTimeline, { type Range } from './AtlasTimeline';
 import ResultsList from './ResultsList';
 import ActivityPanel from './ActivityPanel';
@@ -66,6 +67,14 @@ const AtlasHome: React.FC = () => {
     to: Date.now() + 7 * 86_400_000,
   });
   const [selection, setSelection] = useState<Range | null>(null);
+  const [startRange, setStartRange] = useState<StartRange>(loadStartRange);
+
+  /** A time range as the filter, with the timeline zoomed to it */
+  const showRange = useCallback((r: Range) => {
+    setSelection(r);
+    const pad = (r.to - r.from) * 0.05;
+    setView({ from: r.from - pad, to: r.to + pad });
+  }, []);
   const [area, setArea] = useState<Area | null>(null);
   const [drawing, setDrawing] = useState(false);
   const [types, setTypes] = useState<string[]>([]);
@@ -109,7 +118,11 @@ const AtlasHome: React.FC = () => {
           return;
         }
         const s = await loadSummary();
-        if (s?.first && s?.last) {
+        // Open with the chosen time (last 3 months by default), not all of it
+        const opening = startRangeOf(loadStartRange(), Date.now());
+        if (opening) {
+          showRange(opening);
+        } else if (s?.first && s?.last) {
           const pad = Math.max(86_400_000, (Date.parse(s.last) - Date.parse(s.first)) * 0.03);
           setView({ from: Date.parse(s.first) - pad, to: Date.parse(s.last) + pad });
         }
@@ -552,6 +565,25 @@ const AtlasHome: React.FC = () => {
               reloadKey={reloadKey}
               filter={timelineFilter}
               highlight={highlight}
+              startRange={startRange}
+              onStartRange={(r) => {
+                saveStartRange(r);
+                setStartRange(r);
+                const range = startRangeOf(r, Date.now());
+                if (range) {
+                  showRange(range);
+                } else {
+                  setSelection(null);
+                  const s = summary;
+                  if (s?.first && s?.last) {
+                    const pad = Math.max(
+                      86_400_000,
+                      (Date.parse(s.last) - Date.parse(s.first)) * 0.03,
+                    );
+                    setView({ from: Date.parse(s.first) - pad, to: Date.parse(s.last) + pad });
+                  }
+                }
+              }}
             />
           </Box>
           <Box
