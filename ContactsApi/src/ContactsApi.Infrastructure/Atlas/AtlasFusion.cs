@@ -32,7 +32,8 @@ public record FusionRules(IReadOnlyDictionary<string, Tolerance> Sources, double
         ("gpx", new Tolerance(30, 25)),
         ("tcx", new Tolerance(30, 25)),
         ("manual", new Tolerance(900, 500)),
-        ("google-fit", new Tolerance(120, 100)),
+        // Watch GPS: often off by a few hundred meters
+        ("google-fit", new Tolerance(120, 300)),
         ("fitbit", new Tolerance(60, 100)),
         ("google-timeline", new Tolerance(600, 300)),
         ("other", new Tolerance(300, 200))

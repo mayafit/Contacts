@@ -374,3 +374,48 @@ public class FusionQueueDbTests
         Assert.Equal(1, detail.MatchConfidence);
     }
 }
+
+/// <summary>The ride on 2 Jan 2025: Sports Tracker's moving time vs the track and the watch</summary>
+public class RideWindowDbTests
+{
+    [Fact]
+    public async Task A_ride_covers_its_whole_track_and_gets_the_watch_heart_rate()
+    {
+        var cs = Environment.GetEnvironmentVariable("ATLAS_TEST_DB");
+        if (string.IsNullOrEmpty(cs))
+        {
+            return;
+        }
+
+        await using var db = new AtlasDbContext(new DbContextOptionsBuilder<AtlasDbContext>()
+            .UseNpgsql(cs, o => o.MigrationsHistoryTable("__ef_migrations", "atlas")).Options);
+        await db.Database.MigrateAsync();
+        var owner = "window-" + Guid.NewGuid();
+        var svc = new AtlasService(db, NullLogger<AtlasService>.Instance);
+        var t0 = new DateTime(2025, 1, 2, 3, 27, 0, DateTimeKind.Utc);
+
+        // Sports Tracker: start + 71 min of moving time, but the track runs 92 minutes
+        var track = Enumerable.Range(0, 185).Select(i => new PointInput(t0.AddSeconds(i * 30), 32.0 + i * 0.0005, 34.8)).ToList();
+        await svc.IngestAsync(owner, new IngestRequest
+        {
+            Source = "sports-tracker",
+            Activities = { new ActivityInput("st-0102", "cycling", null, t0, t0.AddMinutes(71), DurationS: 71 * 60, Points: track) }
+        });
+        // The watch: a value every 2 seconds for the whole ride, harder in the second half
+        await svc.IngestAsync(owner, new IngestRequest
+        {
+            Source = "google-fit",
+            Health = Enumerable.Range(0, 92 * 30).Select(i => new HealthInput("heart_rate", t0.AddSeconds(i * 2), i < 71 * 30 ? 130 : 160)).ToList()
+        });
+
+        var ride = Assert.Single((await svc.SearchAsync(owner, new AtlasQuery())).Activities);
+        Assert.Equal(t0.AddSeconds(184 * 30), ride.EndTime);
+        Assert.Equal(71 * 60, ride.DurationS);
+        Assert.InRange(ride.AvgHeartRate!.Value, 136, 137);
+        Assert.Contains("google-fit", ride.Sources);
+        var detail = await svc.GetActivityAsync(owner, ride.Id);
+        Assert.Equal("health", detail.HeartRateSource);
+        Assert.Equal("google-fit", detail.FieldSources["heartRate"]);
+    }
+}
+
