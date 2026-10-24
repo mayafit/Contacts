@@ -99,7 +99,8 @@ public static class Fusion
     /// <summary>
     /// How well record <paramref name="b"/> matches record <paramref name="a"/>.
     /// Times must agree within the two sources' combined time tolerance, or overlap
-    /// by at least half of the shorter and a quarter of the longer record; the
+    /// by at least half of the shorter and a quarter of the longer record (they
+    /// must overlap in any case: consecutive items are different activities); the
     /// areas must touch (widened by the combined location tolerance); and when both
     /// have tracks, they are compared at the same moments. Two records of one source
     /// only match when their times agree within tolerance (the same recording twice).
@@ -129,7 +130,9 @@ public static class Fusion
         double timeScore;
         if (a.Source == b.Source)
         {
-            if (!withinTime)
+            // The same recording twice: times agree and they almost fully overlap
+            // (consecutive segments of one source are never one activity)
+            if (!withinTime || overlap < longer * 0.8)
             {
                 return null;
             }
@@ -146,6 +149,11 @@ public static class Fusion
             }
 
             timeScore = 1;
+        }
+        else if (overlap <= 0)
+        {
+            // One right after the other is not the same activity, however close
+            return null;
         }
         else if (withinTime)
         {
