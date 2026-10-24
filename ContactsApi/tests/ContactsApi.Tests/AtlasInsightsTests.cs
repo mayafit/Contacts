@@ -65,18 +65,34 @@ public class AtlasInsightsDbTests
                 .ToList()
         });
 
+        // Timeline "walks" at highway speed (misclassified drives), one with two scattered heart-rate values
+        await svc.IngestAsync(owner, new IngestRequest
+        {
+            Source = "google-timeline",
+            Activities = Enumerable.Range(0, 3).Select(i => new ActivityInput($"fast-walk-{i}", "WALKING", null,
+                today.AddDays(-45 + i).AddHours(3), today.AddDays(-45 + i).AddHours(4), DistanceM: 300_000)).ToList()
+        });
+        await svc.IngestAsync(owner, new IngestRequest
+        {
+            Source = "fitbit",
+            Health = { new HealthInput("heart_rate", today.AddDays(-45).AddHours(3.2), 70), new HealthInput("heart_rate", today.AddDays(-45).AddHours(3.8), 72) }
+        });
+
         var q = new AtlasQuery { From = today.AddDays(-60), To = DateTime.UtcNow };
         var insights = await svc.InsightsAsync(owner, q, "Asia/Jerusalem");
 
-        Assert.Equal(17, insights.Totals.Activities);
+        Assert.Equal(20, insights.Totals.Activities);
+        Assert.Equal(3, insights.Coverage.Implausible);
+        Assert.DoesNotContain(insights.Records, r => r.Type == "walk" && r.Kind == "longest");
+        Assert.Null(insights.ByType.Single(t => t.Type == "walk").AvgHeartRate); // two values in an hour are no series
         Assert.NotNull(insights.Previous);
         Assert.Equal(0, insights.Previous!.Activities);
         var rideStats = insights.ByType.Single(t => t.Type == "ride");
         Assert.Equal(10, rideStats.Count);
         Assert.NotNull(rideStats.AvgSpeedKmh);
         Assert.Equal("week", insights.Series.Bucket);
-        Assert.Equal(17, insights.ByWeekday.Sum());
-        Assert.Equal(17, insights.ByHour.Sum());
+        Assert.Equal(20, insights.ByWeekday.Sum());
+        Assert.Equal(20, insights.ByHour.Sum());
         Assert.Contains(insights.Records, r => r.Kind == "longest" && r.Type == "ride" && r.Label == "Longest ride");
         Assert.Contains(insights.Records, r => r.Kind == "fastest" && r.Type == "run" && r.Value.EndsWith("/km"));
         Assert.True(insights.Streaks.LongestActiveDays >= 3);
@@ -94,6 +110,7 @@ public class AtlasInsightsDbTests
         Assert.Contains("unnamed-place", kinds);
         Assert.Contains("away", kinds);
         Assert.Contains("record", kinds);
+        Assert.Contains("implausible", kinds);
         Assert.Equal("warning", insights.Proposals[0].Severity);
 
         // Only what the sources disagree on
