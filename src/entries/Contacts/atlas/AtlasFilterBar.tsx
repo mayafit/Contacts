@@ -1,12 +1,12 @@
 /**
  * @fileoverview The active filters under the Atlas header: one removable chip per
- * filter (time, area, types, text), "Clear all" and the result count
+ * filter (time, area, types, text, sources disagree), "Clear all" and the result count
  * @module Contacts/atlas/AtlasFilterBar
  */
 
 import React from 'react';
 import { Box, Button, Chip, Tooltip, Typography } from '@mui/material';
-import { Category, CropFree, FilterAlt, Schedule, Search } from '@mui/icons-material';
+import { Category, CropFree, FilterAlt, Schedule, Search, WarningAmber } from '@mui/icons-material';
 import type { SearchResult } from './types';
 import { FILTER_COLOR } from './types';
 import type { AreaBox } from './filters';
@@ -28,6 +28,8 @@ export interface AtlasFilterBarProps {
   types: string[];
   /** Text filter as applied to the search ('' for none) */
   text: string;
+  /** Only activities whose sources disagree */
+  conflictsOnly?: boolean;
   /** The search result (for the count), null while none has arrived */
   result: SearchResult | null;
   loading: boolean;
@@ -39,6 +41,7 @@ export interface AtlasFilterBarProps {
   onFocusArea: () => void;
   onClearTypes: () => void;
   onClearText: () => void;
+  onClearConflicts?: () => void;
   onClearAll: () => void;
 }
 
@@ -66,6 +69,7 @@ const AtlasFilterBar: React.FC<AtlasFilterBarProps> = ({
   area,
   types,
   text,
+  conflictsOnly = false,
   result,
   loading,
   onClearTime,
@@ -74,9 +78,10 @@ const AtlasFilterBar: React.FC<AtlasFilterBarProps> = ({
   onFocusArea,
   onClearTypes,
   onClearText,
+  onClearConflicts,
   onClearAll,
 }) => {
-  const active = !!selection || !!area || types.length > 0 || text !== '';
+  const active = !!selection || !!area || types.length > 0 || text !== '' || conflictsOnly;
   const count = loading ? 'Searching…' : result ? formatResultCount(result) : '';
 
   return (
@@ -142,6 +147,17 @@ const AtlasFilterBar: React.FC<AtlasFilterBarProps> = ({
                 icon={<Search />}
                 label={`“${text}”`}
                 onDelete={onClearText}
+                sx={chipSx}
+              />
+            </Tooltip>
+          )}
+          {conflictsOnly && (
+            <Tooltip title="Only activities whose sources disagree">
+              <Chip
+                size="small"
+                icon={<WarningAmber />}
+                label="Sources disagree"
+                onDelete={onClearConflicts}
                 sx={chipSx}
               />
             </Tooltip>

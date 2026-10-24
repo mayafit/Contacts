@@ -150,7 +150,34 @@ The activity panel shows:
   - *Merge with…* (pick another activity from the list or map)
 - **Places:** the linked visits (start, end, stops) with Google Timeline place names.
 
-## Insights (later phases)
+## Insights v1 (11.4, built)
+
+An **Insights** tab next to Results, computed for the current query (time, area, types, text,
+"sources disagree"), and the MCP / assistant tool `atlas_insights`:
+
+- **Statistics:**
+  - totals with the change against the period before
+  - per type: count, km, hours, climb, speed, heart rate, longest
+  - a trend by day, week or month
+  - weekdays and hours
+- **What merging reveals:**
+  - **Records:** longest, by time, climb, fastest, highest heart rate
+  - **Streaks:** active days in a row, days since the last activity
+  - **Places:** top places by time spent, new places, unnamed places
+  - **Travel:** flights, days more than 100 km from Home
+  - **Data quality:** heart-rate coverage, recorded vs only inferred, fused, conflicts, sources
+- **Proposals** (rule-based, each with an action):
+  - **Rhythm:** a sport's gap is twice its usual one.
+  - **Training load:** last 7 days against the 4 weeks before: above 1.5× or below 0.5×.
+  - **Review conflicts.**
+  - **Add heart-rate data.**
+  - **Name a frequently visited unnamed place.**
+  - **New places.**
+  - **An all-time best** in the period.
+  - **Days away.**
+- **"Explain with AI"** hands the insights to the assistant for a written account.
+
+## Insights, next (later phases)
 
 - **Places:** most visited, new places, routines (weekday and hour), time at home, work and elsewhere.
 - **Movement:**

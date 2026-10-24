@@ -3,7 +3,7 @@
  * @module Contacts/atlas/AtlasHome
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Box,
@@ -11,6 +11,8 @@ import {
   IconButton,
   InputBase,
   Paper,
+  Tab,
+  Tabs,
   Tooltip,
   Typography,
 } from '@mui/material';
@@ -31,6 +33,8 @@ import AtlasMap, { type Box as Area } from './AtlasMap';
 import { loadStartRange, saveStartRange, startRangeOf, type StartRange } from './startRange';
 import AtlasTimeline, { type Range } from './AtlasTimeline';
 import ResultsList from './ResultsList';
+import InsightsPanel, { type InsightsFilter } from './InsightsPanel';
+import { areaAround } from './insights';
 import ActivityPanel from './ActivityPanel';
 import ImportDialog from './ImportDialog';
 import AiAccessDialog from './AiAccessDialog';
@@ -78,6 +82,14 @@ const AtlasHome: React.FC = () => {
   const [area, setArea] = useState<Area | null>(null);
   const [drawing, setDrawing] = useState(false);
   const [types, setTypes] = useState<string[]>([]);
+  // Only fused activities whose sources disagree
+  const [conflictsOnly, setConflictsOnly] = useState(false);
+  // The right panel's tab, kept while the filters change and while a detail is open
+  const [panelTab, setPanelTab] = useState<'results' | 'insights'>('results');
+  // A question for the assistant ("Explain with AI"); a new id sends it
+  const [assistantRequest, setAssistantRequest] = useState<{ text: string; id: number } | null>(
+    null,
+  );
   const [text, setText] = useState('');
   const [query, setQuery] = useState('');
   const [result, setResult] = useState<SearchResult | null>(null);
@@ -146,23 +158,33 @@ const AtlasHome: React.FC = () => {
     return () => clearTimeout(t);
   }, [text]);
 
-  const q: AtlasQuery = useMemo(
+  // The filters (time, area, types, text, conflicts): the insights use them as they are
+  const filters: AtlasQuery = useMemo(
     () => ({
       from: selection ? new Date(selection.from).toISOString() : undefined,
       to: selection ? new Date(selection.to).toISOString() : undefined,
       ...(area ?? {}),
       types: types.length ? types : undefined,
       text: query || undefined,
-      limit: 500,
+      conflictsOnly: conflictsOnly || undefined,
     }),
-    [selection, area, types, query],
+    [selection, area, types, query, conflictsOnly],
   );
+  const q: AtlasQuery = useMemo(() => ({ ...filters, limit: 500 }), [filters]);
   const fitKey = JSON.stringify(q);
+  // The filters for the assistant's prompt (read when it is asked, not on every change)
+  const filtersRef = useRef(filters);
+  filtersRef.current = filters;
 
-  // The timeline counts what the map shows (area, types, text; its own time)
+  // The timeline counts what the map shows (area, types, text, conflicts; its own time)
   const timelineFilter: AtlasQuery = useMemo(
-    () => ({ ...(area ?? {}), types: types.length ? types : undefined, text: query || undefined }),
-    [area, types, query],
+    () => ({
+      ...(area ?? {}),
+      types: types.length ? types : undefined,
+      text: query || undefined,
+      conflictsOnly: conflictsOnly || undefined,
+    }),
+    [area, types, query, conflictsOnly],
   );
 
   // The selected activity or visit, marked on the timeline
@@ -280,13 +302,47 @@ const AtlasHome: React.FC = () => {
         : null,
     );
     setTypes(s.types ?? []);
+    setConflictsOnly(!!s.conflictsOnly);
     setText(s.text ?? '');
   }, []);
 
   const toolset = useMemo(
-    () => atlasToolset({ show: showQuery, openActivity: (id) => void openActivity(id), summary }),
+    () =>
+      atlasToolset({
+        show: showQuery,
+        openActivity: (id) => void openActivity(id),
+        summary,
+        filters: () => filtersRef.current,
+      }),
     [showQuery, openActivity, summary],
   );
+
+  /** A place from the insights: the area around it, with the results */
+  const showPlace = useCallback((lat: number, lon: number) => {
+    setDetail(null);
+    setVisit(null);
+    setDrawing(false);
+    setArea(areaAround(lat, lon));
+    setFocusArea((n) => n + 1);
+    setPanelTab('results');
+  }, []);
+
+  /** A filter from the insights (types, conflicts); conflicts are shown in the results */
+  const applyInsightsFilter = useCallback((f: InsightsFilter) => {
+    if (f.types?.length) {
+      setTypes(f.types);
+    }
+    if (f.conflictsOnly) {
+      setConflictsOnly(true);
+      setPanelTab('results');
+    }
+  }, []);
+
+  /** Opens the assistant with a question */
+  const explain = useCallback((prompt: string) => {
+    setAssistantOpen(true);
+    setAssistantRequest({ text: prompt, id: Date.now() });
+  }, []);
 
   const changed = () => {
     setReloadKey((k) => k + 1);
@@ -299,6 +355,7 @@ const AtlasHome: React.FC = () => {
     setArea(null);
     setDrawing(false);
     setTypes([]);
+    setConflictsOnly(false);
     setText('');
     setQuery('');
   };
@@ -312,7 +369,8 @@ const AtlasHome: React.FC = () => {
     setView({ from: selection.from - pad, to: selection.to + pad });
   };
 
-  const filtered = !!selection || !!area || types.length > 0 || query !== '';
+  const showInsights = !mergeFrom && !detail && !visit && panelTab === 'insights';
+  const filtered = !!selection || !!area || types.length > 0 || query !== '' || conflictsOnly;
 
   if (status && !status.ready) {
     return (
@@ -461,6 +519,7 @@ const AtlasHome: React.FC = () => {
         area={area}
         types={types}
         text={query}
+        conflictsOnly={conflictsOnly}
         result={result}
         loading={loading}
         onClearTime={() => setSelection(null)}
@@ -471,6 +530,7 @@ const AtlasHome: React.FC = () => {
         }}
         onFocusArea={() => setFocusArea((n) => n + 1)}
         onClearTypes={() => setTypes([])}
+        onClearConflicts={() => setConflictsOnly(false)}
         onClearText={() => {
           setText('');
           setQuery('');
@@ -711,23 +771,66 @@ const AtlasHome: React.FC = () => {
                 </Button>
               </Box>
             ) : (
-              <ResultsList
-                result={result}
-                loading={loading}
-                types={types}
-                onToggleType={(t) =>
-                  setTypes((ts) => (ts.includes(t) ? ts.filter((x) => x !== t) : [...ts, t]))
-                }
-                onSelectActivity={selectActivity}
-                onSelectVisit={(v) => {
-                  if (!mergeFrom) {
-                    setVisit(v);
-                  }
-                }}
-                filtered={filtered}
-                onClearFilters={clearFilters}
-              />
+              <>
+                {!mergeFrom && (
+                  <Tabs
+                    value={panelTab}
+                    onChange={(_, v: 'results' | 'insights') => setPanelTab(v)}
+                    variant="fullWidth"
+                    aria-label="Results or insights"
+                    sx={{
+                      minHeight: 40,
+                      flexShrink: 0,
+                      borderBottom: `1px solid ${tokens.border}`,
+                      '& .MuiTab-root': { minHeight: 40, py: 0, textTransform: 'none' },
+                    }}
+                  >
+                    <Tab value="results" label="Results" />
+                    <Tab value="insights" label="Insights" />
+                  </Tabs>
+                )}
+                {(mergeFrom || panelTab === 'results') && (
+                  <ResultsList
+                    result={result}
+                    loading={loading}
+                    types={types}
+                    onToggleType={(t) =>
+                      setTypes((ts) => (ts.includes(t) ? ts.filter((x) => x !== t) : [...ts, t]))
+                    }
+                    onSelectActivity={selectActivity}
+                    onSelectVisit={(v) => {
+                      if (!mergeFrom) {
+                        setVisit(v);
+                      }
+                    }}
+                    filtered={filtered}
+                    onClearFilters={clearFilters}
+                  />
+                )}
+              </>
             )}
+            {/* Kept mounted (hidden) so going back to it does not load again */}
+            <Box
+              sx={{
+                display: showInsights ? 'flex' : 'none',
+                flexDirection: 'column',
+                flex: 1,
+                minHeight: 0,
+              }}
+            >
+              <InsightsPanel
+                query={filters}
+                active={showInsights && !!status?.ready}
+                reloadKey={reloadKey}
+                assistantEnabled={assistantEnabled}
+                onOpenActivity={(id) => void openActivity(id)}
+                onShowPlace={showPlace}
+                onApplyFilter={applyInsightsFilter}
+                onOpenFusion={() => setFusionOpen(true)}
+                onOpenImport={() => setImportOpen(true)}
+                onExplain={explain}
+              />
+            </Box>
           </Box>
         </Box>
         {assistantEnabled && (
@@ -735,6 +838,7 @@ const AtlasHome: React.FC = () => {
             open={assistantOpen}
             onClose={() => setAssistantOpen(false)}
             toolset={toolset}
+            request={assistantRequest}
             suggestions={SUGGESTIONS}
             entities={{}}
             groups={{}}

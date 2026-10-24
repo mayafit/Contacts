@@ -15,6 +15,7 @@ import type {
   FusionSettings,
   FusionStatus,
   HistogramRow,
+  Insights,
   NearResult,
   ParsedData,
   SearchResult,
@@ -674,6 +675,22 @@ export class BackendApiClient {
         body: JSON.stringify({ from, to, bucket, tz: timeZone, filter }),
       }),
       'Timeline failed',
+    );
+  }
+
+  /**
+   * Insights for a query: totals, trends, places, records and proposals.
+   * @param query - The same filters as the search (the limit is ignored)
+   * @param timeZone - IANA zone for weekdays and hours (default UTC)
+   * @returns Insights
+   */
+  async atlasInsights(query: AtlasQuery, timeZone?: string): Promise<Insights> {
+    return unwrap(
+      await this.request<Insights>('/atlas/insights', {
+        method: 'POST',
+        body: JSON.stringify({ query, tz: timeZone }),
+      }),
+      'Insights failed',
     );
   }
 
