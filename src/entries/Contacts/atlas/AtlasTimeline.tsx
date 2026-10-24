@@ -6,13 +6,14 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Box, Button, IconButton, Tooltip, Typography } from '@mui/material';
+import { Box, Button, IconButton, MenuItem, TextField, Tooltip, Typography } from '@mui/material';
 import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut } from '@mui/icons-material';
 import type { AtlasQuery, HistogramRow } from './types';
 import { FILTER_COLOR, kindColor } from './types';
 import AtlasLegend from './AtlasLegend';
 import { MAX_SPAN_MS, MIN_SPAN_MS, bucketFor, bucketMs, panRange, zoomRange } from './geo';
 import { formatTimeFilter } from './filters';
+import { START_RANGES, type StartRange } from './startRange';
 import { backendApiClient } from '../../../services/api/BackendApiClient';
 import { tokens } from '../theme/contactsTheme';
 
@@ -36,12 +37,19 @@ export interface AtlasTimelineProps {
   filter?: AtlasQuery;
   /** Time of the item selected on the map or in the list */
   highlight?: Range | null;
+  /** What Atlas opens with (last 3 months…) */
+  startRange?: StartRange;
+  /** A new choice: applied now and remembered */
+  onStartRange?: (r: StartRange) => void;
 }
 
 const HEIGHT = 120;
 /** Height of the health-data band at the top */
 const HEALTH_BAND = 6;
 const AXIS = 18;
+/** Row under the axis with the years */
+const YEAR_ROW = 15;
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 /**
  * Timeline strip.
@@ -56,6 +64,8 @@ const AtlasTimeline: React.FC<AtlasTimelineProps> = ({
   reloadKey,
   filter,
   highlight,
+  startRange,
+  onStartRange,
 }) => {
   const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(800);
@@ -201,9 +211,9 @@ const AtlasTimeline: React.FC<AtlasTimelineProps> = ({
             step === 'year'
               ? String(d.getFullYear())
               : step === 'month'
-                ? d.toLocaleDateString('en-GB', { month: 'short', year: '2-digit' })
+                ? MONTHS[d.getMonth()]
                 : step === 'day'
-                  ? d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+                  ? `${d.getDate()} ${MONTHS[d.getMonth()]}`
                   : `${d.getHours()}:00`,
         });
       }
@@ -218,8 +228,29 @@ const AtlasTimeline: React.FC<AtlasTimelineProps> = ({
       }
     }
     const every = Math.max(1, Math.ceil(out.length / Math.max(1, width / 70)));
-    return out.filter((_, i) => i % every === 0);
+    return { step, list: out.filter((_, i) => i % every === 0) };
   }, [view, width]);
+
+  // The years in view, under the axis: a label where each year starts (the
+  // first one at the left edge), so the year is always known when zoomed in
+  const years = useMemo(() => {
+    if (ticks.step === 'year') {
+      return [];
+    }
+    const out: { t: number; x: number; label: string; boundary: boolean }[] = [];
+    for (let y = new Date(view.from).getFullYear(); y <= new Date(view.to).getFullYear(); y++) {
+      const t = new Date(y, 0, 1).getTime();
+      const boundary = t > view.from;
+      out.push({
+        t,
+        x: boundary ? ((t - view.from) / (view.to - view.from)) * width : 0,
+        label: String(y),
+        boundary,
+      });
+    }
+    // Drop a label that would overlap the next one
+    return out.filter((yr, i) => i === out.length - 1 || out[i + 1].x - yr.x > 34);
+  }, [ticks.step, view, width]);
 
   const px = (e: React.PointerEvent) => e.clientX - ref.current!.getBoundingClientRect().left;
 
@@ -275,6 +306,33 @@ const AtlasTimeline: React.FC<AtlasTimelineProps> = ({
               : 'Drag to choose a time range · wheel or pinch to zoom · scroll sideways or shift-drag to move'}
         </Typography>
         <Box sx={{ flex: 1 }} />
+        {startRange && onStartRange && (
+          <Tooltip title="The time Atlas opens with (choosing one also shows it now)">
+            <TextField
+              select
+              size="small"
+              variant="standard"
+              value={startRange}
+              onChange={(e) => onStartRange(e.target.value as StartRange)}
+              aria-label="Open with"
+              InputProps={{ disableUnderline: true }}
+              SelectProps={{
+                renderValue: (v) =>
+                  `Open with: ${START_RANGES.find((r) => r.value === v)?.label ?? ''}`,
+              }}
+              sx={{
+                mr: 1,
+                '& .MuiSelect-select': { fontSize: 12, color: tokens.textSecondary, py: 0.25 },
+              }}
+            >
+              {START_RANGES.map((r) => (
+                <MenuItem key={r.value} value={r.value} dense>
+                  {r.label}
+                </MenuItem>
+              ))}
+            </TextField>
+          </Tooltip>
+        )}
         <Tooltip title="Earlier">
           <IconButton
             size="small"
@@ -387,7 +445,7 @@ const AtlasTimeline: React.FC<AtlasTimelineProps> = ({
         onPointerCancel={endPointer}
         sx={{
           position: 'relative',
-          height: HEIGHT,
+          height: HEIGHT + (years.length ? YEAR_ROW : 0),
           cursor: drag?.kind === 'pan' ? 'grabbing' : 'crosshair',
           userSelect: 'none',
           touchAction: 'none',
@@ -395,7 +453,7 @@ const AtlasTimeline: React.FC<AtlasTimelineProps> = ({
         role="slider"
         aria-label="Timeline"
       >
-        <svg width={width} height={HEIGHT}>
+        <svg width={width} height={HEIGHT + (years.length ? YEAR_ROW : 0)}>
           {bars.map((b, i) => (
             <rect
               key={i}
@@ -410,7 +468,31 @@ const AtlasTimeline: React.FC<AtlasTimelineProps> = ({
             </rect>
           ))}
           <line x1={0} x2={width} y1={HEIGHT - AXIS} y2={HEIGHT - AXIS} stroke={tokens.border} />
-          {ticks.map((t) => (
+          {years.map((yr) => (
+            <g key={yr.t}>
+              {yr.boundary && (
+                <line
+                  x1={yr.x}
+                  x2={yr.x}
+                  y1={0}
+                  y2={HEIGHT + YEAR_ROW}
+                  stroke={tokens.textMuted}
+                  strokeOpacity={0.45}
+                  strokeDasharray="2 3"
+                />
+              )}
+              <text
+                x={yr.x + 3}
+                y={HEIGHT + YEAR_ROW - 3}
+                fontSize={11}
+                fontWeight={600}
+                fill={tokens.textSecondary}
+              >
+                {yr.label}
+              </text>
+            </g>
+          ))}
+          {ticks.list.map((t) => (
             <g key={t.t}>
               <line
                 x1={x(t.t)}

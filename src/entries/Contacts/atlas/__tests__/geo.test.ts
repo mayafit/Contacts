@@ -1,5 +1,7 @@
 import {
   bucketFor,
+  describeActivity,
+  greatCircle,
   decodePolyline,
   formatDistance,
   formatDuration,
@@ -56,5 +58,32 @@ describe('atlas geo helpers', () => {
     // 0.06 degrees of latitude ≈ 6.67 km
     expect(trackLength(track)).toBeGreaterThan(6600);
     expect(trackLength(track)).toBeLessThan(6700);
+  });
+
+  it('draws flights as great-circle arcs', () => {
+    // Tel Aviv to San Francisco flies far north, without jumping across the map
+    const arc = greatCircle([32.0, 34.9], [37.6, -122.4]);
+    expect(arc[0][0]).toBeCloseTo(32.0, 5);
+    expect(arc[0][1]).toBeCloseTo(34.9, 5);
+    expect(arc[arc.length - 1][0]).toBeCloseTo(37.6, 5);
+    expect(arc[arc.length - 1][1]).toBeCloseTo(-122.4, 5);
+    expect(Math.max(...arc.map((p) => p[0]))).toBeGreaterThan(65);
+    arc.slice(1).forEach((p, i) => expect(Math.abs(p[1] - arc[i][1])).toBeLessThan(30));
+    expect(greatCircle([32, 35], [32, 35])).toHaveLength(2);
+  });
+
+  it('describes an activity for its tooltip', () => {
+    const text = describeActivity({
+      id: 'f1',
+      type: 'flight',
+      name: null,
+      startTime: '2026-08-26T20:12:00Z',
+      endTime: '2026-08-27T02:29:00Z',
+      distanceM: 5_794_000,
+      source: 'google-timeline',
+    } as Parameters<typeof describeActivity>[0]);
+    expect(text).toMatch(
+      /^Flight · .+ · 6:17 h · 5794(\.0)? km$|^Flight · .+ · 6:17 h · 5,794 km$/,
+    );
   });
 });

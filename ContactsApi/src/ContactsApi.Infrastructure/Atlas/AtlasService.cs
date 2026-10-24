@@ -890,7 +890,8 @@ public partial class AtlasService
             "in_bus" or "in_train" or "in_subway" or "in_tram" or "in_ferry" or "bus" or "train" => "transit",
             "skiing" or "snowboarding" => "ski",
             "swimming" => "swim",
-            "" => "other",
+            // Google Timeline's "could not tell"
+            "" or "unknown" or "unknown_activity_type" or "unknown_activity" => "other",
             _ => t.Length > 32 ? t[..32] : t
         };
     }

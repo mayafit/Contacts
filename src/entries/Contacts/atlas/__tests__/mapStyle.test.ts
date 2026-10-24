@@ -24,3 +24,17 @@ describe('map style', () => {
     expect(style.layers[2].layout).toEqual({ 'line-cap': 'round' });
   });
 });
+
+describe('base map choice', () => {
+  it('defaults to streets and remembers a choice', () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const m = require('../mapStyle');
+    localStorage.clear();
+    expect(m.loadMapStyle()).toBe('streets');
+    m.saveMapStyle('satellite');
+    expect(m.loadMapStyle()).toBe('satellite');
+    localStorage.setItem('atlas.mapStyle', 'nonsense');
+    expect(m.loadMapStyle()).toBe('streets');
+    expect(m.MAP_STYLES.find((s: { value: string }) => s.value === 'streets').light).toBe(true);
+  });
+});
