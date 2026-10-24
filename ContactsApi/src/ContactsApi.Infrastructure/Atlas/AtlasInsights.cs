@@ -571,8 +571,8 @@ public partial class AtlasService
             {
                 var best = await FilterActivities(owner, new AtlasQuery())
                     .Where(a => (a.Fusion != null && a.Fusion.Type != null ? a.Fusion.Type : a.Type) == r.Type)
-                    .Where(a => (a.DistanceM ?? (a.Fusion != null ? a.Fusion.DistanceM : null)) != null)
-                    .OrderByDescending(a => a.DistanceM ?? (a.Fusion != null ? a.Fusion.DistanceM : null))
+                    .Where(a => (a.Fusion != null && a.Fusion.DistanceM != null ? a.Fusion.DistanceM : a.DistanceM) != null)
+                    .OrderByDescending(a => a.Fusion != null && a.Fusion.DistanceM != null ? a.Fusion.DistanceM : a.DistanceM)
                     .ThenBy(a => a.StartTime)
                     .Select(a => a.Id).FirstOrDefaultAsync(ct);
                 if (best == r.ActivityId)

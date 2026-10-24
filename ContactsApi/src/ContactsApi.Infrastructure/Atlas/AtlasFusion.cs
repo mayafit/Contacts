@@ -74,6 +74,9 @@ public record FusedGroup(
     /// <summary>The joined track of an outing of several recordings; null otherwise</summary>
     public string? Polyline { get; init; }
 
+    /// <summary>The area of an outing of several recordings (all of them); null otherwise</summary>
+    public (double MinLat, double MinLon, double MaxLat, double MaxLon)? Box { get; init; }
+
     /// <summary>The weakest member match (null when the user decided every one)</summary>
     public double? MatchConfidence => Evidence.Where(e => !e.UserDecision).Select(e => (double?)e.Confidence).Min();
 }
@@ -316,7 +319,7 @@ public static class Fusion
     {
         var best = Best(group);
         var segments = new List<FusionCandidate> { best };
-        var rest = group.Where(m => m.Id != best.Id && Recording(m)).ToList();
+        var rest = Order(group.Where(m => m.Id != best.Id && Recording(m)));
         for (var added = true; added;)
         {
             added = false;
@@ -400,7 +403,9 @@ public static class Fusion
     /// Groups records into real-world activities, best matches first. User
     /// decisions win: pairs marked "together" are always joined, pairs marked
     /// "apart" never end up in one group (directly or through others), and two
-    /// records of one source that do not match never share a group.
+    /// records of one source at the same time that do not match never share a
+    /// group. Besides matches, a recording joins the one it continues (stopped and
+    /// started again) and a record joins the recording it lies within.
     /// </summary>
     /// <returns>Groups, each a list of record ids (singletons included)</returns>
     public static List<List<Guid>> Group(
@@ -687,7 +692,10 @@ public static class Fusion
         {
             Segments = segments,
             DurationS = Math.Round(segments.Sum(s => (s.End - s.Start).TotalSeconds)),
-            Polyline = polyline.Length > 0 ? polyline : null
+            Polyline = polyline.Length > 0 ? polyline : null,
+            Box = segments.All(s => s.MinLat.HasValue)
+                ? (segments.Min(s => s.MinLat!.Value), segments.Min(s => s.MinLon!.Value), segments.Max(s => s.MaxLat!.Value), segments.Max(s => s.MaxLon!.Value))
+                : null
         };
     }
 
@@ -722,14 +730,15 @@ public static class Fusion
                 values, type));
         }
 
-        var distances = group.Where(m => m.DistanceM is > 0).ToList();
+        // Each record's believable distance (a lost source summary has its own conflict)
+        var distances = group.Where(m => DistanceOf(m) is > 0).ToList();
         if (distances.Count > 1)
         {
-            var max = distances.Max(m => m.DistanceM!.Value);
-            var min = distances.Min(m => m.DistanceM!.Value);
+            var max = distances.Max(m => DistanceOf(m)!.Value);
+            var min = distances.Min(m => DistanceOf(m)!.Value);
             if (max - min > 500 && max - min > max * 0.1)
             {
-                var values = distances.Select(m => new SourceValue(m.Source, $"{m.DistanceM!.Value / 1000:0.0} km")).ToList();
+                var values = distances.Select(m => new SourceValue(m.Source, $"{DistanceOf(m)!.Value / 1000:0.0} km")).ToList();
                 conflicts.Add(new FusionConflict("distanceM",
                     string.Join(", ", values.Select(v => $"{Label(v.Source)}: {v.Value}")),
                     values, distance.HasValue ? $"{distance.Value / 1000:0.0} km" : ""));
@@ -1100,7 +1109,7 @@ public partial class AtlasService
         foreach (var g in fused)
         {
             var health = hrById.GetValueOrDefault(g.PrimaryId);
-            if (g.Members.Count == 1 && health == null)
+            if (g.Members.Count == 1 && health == null && g.DistanceM == g.Members[0].DistanceM)
             {
                 continue;
             }
@@ -1138,6 +1147,10 @@ public partial class AtlasService
                 DurationS = g.DurationS,
                 Polyline = g.Polyline,
                 SegmentCount = g.Segments.Count,
+                MinLat = g.Box?.MinLat,
+                MinLon = g.Box?.MinLon,
+                MaxLat = g.Box?.MaxLat,
+                MaxLon = g.Box?.MaxLon,
                 ElevationGainM = g.ElevationGainM,
                 AvgHeartRate = g.AvgHeartRate ?? health?.Avg,
                 MaxHeartRate = g.MaxHeartRate ?? health?.Max,

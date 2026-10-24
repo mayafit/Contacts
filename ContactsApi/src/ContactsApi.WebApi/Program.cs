@@ -220,6 +220,8 @@ app.UseWhen(ctx => ctx.Request.Path.StartsWithSegments("/api") && !ctx.Request.P
             {
                 if (attempt < 2)
                 {
+                    // A busy Redis: give it a moment
+                    await Task.Delay(300, ctx.RequestAborted);
                     continue;
                 }
 

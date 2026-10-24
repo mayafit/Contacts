@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace ContactsApi.Infrastructure.Atlas.Migrations
 {
     [DbContext(typeof(AtlasDbContext))]
-    [Migration("20261024204111_FusionOutings")]
+    [Migration("20261024205418_FusionOutings")]
     partial class FusionOutings
     {
         /// <inheritdoc />
@@ -138,8 +138,20 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                     b.Property<int?>("MaxHeartRate")
                         .HasColumnType("integer");
 
+                    b.Property<double?>("MaxLat")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("MaxLon")
+                        .HasColumnType("double precision");
+
                     b.Property<int>("MemberCount")
                         .HasColumnType("integer");
+
+                    b.Property<double?>("MinLat")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("MinLon")
+                        .HasColumnType("double precision");
 
                     b.Property<string>("Name")
                         .HasColumnType("text");
