@@ -399,7 +399,11 @@ public partial class AtlasService
 
         if (HasBox(q))
         {
-            aq = aq.Where(a => a.MaxLat >= q.MinLat && a.MinLat <= q.MaxLat && a.MaxLon >= q.MinLon && a.MinLon <= q.MaxLon);
+            // An outing of several recordings covers all of their area
+            aq = aq.Where(a => (a.Fusion != null && a.Fusion.MaxLat != null ? a.Fusion.MaxLat : a.MaxLat) >= q.MinLat
+                               && (a.Fusion != null && a.Fusion.MinLat != null ? a.Fusion.MinLat : a.MinLat) <= q.MaxLat
+                               && (a.Fusion != null && a.Fusion.MaxLon != null ? a.Fusion.MaxLon : a.MaxLon) >= q.MinLon
+                               && (a.Fusion != null && a.Fusion.MinLon != null ? a.Fusion.MinLon : a.MinLon) <= q.MaxLon);
         }
 
         if (q.Types is { Count: > 0 })
@@ -456,14 +460,29 @@ public partial class AtlasService
         var members = a.ClusterId.HasValue
             ? await _db.Activities.AsNoTracking().Where(x => x.OwnerId == owner && x.ClusterId == a.ClusterId).ToListAsync(ct)
             : new List<AtlasActivity> { a };
-        var count = a.PointCount;
+        // The analysis reads the full track; the app gets it thinned. An outing
+        // recorded in pieces: all of them
+        var trackIds = new List<Guid> { id };
+        if (a.Fusion is { SegmentCount: > 1 })
+        {
+            trackIds.AddRange((System.Text.Json.JsonSerializer.Deserialize<List<MatchEvidence>>(a.Fusion.Evidence, JsonCamel) ?? new())
+                .Where(e => e.Segment).Select(e => e.MemberId));
+        }
+
+        var count = members.Where(m => trackIds.Contains(m.Id)).Select(m => m.PointCount).DefaultIfEmpty(a.PointCount).Sum();
         var step = Math.Max(1, (int)Math.Ceiling(count / (double)Math.Clamp(maxPoints, 10, 20000)));
-        // The analysis reads the full track; the app gets it thinned
-        var full = await _db.TrackPoints.AsNoTracking()
-            .Where(p => p.ActivityId == id)
+        var rows = await _db.TrackPoints.AsNoTracking()
+            .Where(p => trackIds.Contains(p.ActivityId))
             .OrderBy(p => p.Time)
-            .Select(p => new TrackAnalysis.Sample(p.Time, p.Lat, p.Lon, p.Elevation, p.HeartRate, p.Speed, p.Cadence))
+            .Select(p => new { p.ActivityId, Sample = new TrackAnalysis.Sample(p.Time, p.Lat, p.Lon, p.Elevation, p.HeartRate, p.Speed, p.Cadence) })
             .ToListAsync(ct);
+        // Recordings may overlap by a few seconds: one after the other, not interleaved
+        var full = new List<TrackAnalysis.Sample>(rows.Count);
+        foreach (var piece in rows.GroupBy(r => r.ActivityId).OrderBy(g => g.First().Sample.T))
+        {
+            var after = full.Count > 0 ? full[^1].T : DateTime.MinValue;
+            full.AddRange(piece.Select(r => r.Sample).Where(p => p.T > after));
+        }
 
         var fieldSources = a.Fusion != null
             ? System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(a.Fusion.FieldSources) ?? new()
@@ -723,7 +742,7 @@ public partial class AtlasService
     {
         var acts = _db.Activities.AsNoTracking().Where(a => a.OwnerId == owner && (a.ClusterId == null || a.ClusterId == a.Id));
         var byType = await acts.GroupBy(a => a.Fusion != null && a.Fusion.Type != null ? a.Fusion.Type : a.Type)
-            .Select(g => new { g.Key, Count = g.Count(), Distance = g.Sum(a => a.DistanceM ?? 0) })
+            .Select(g => new { g.Key, Count = g.Count(), Distance = g.Sum(a => (a.Fusion != null && a.Fusion.DistanceM != null ? a.Fusion.DistanceM : a.DistanceM) ?? 0) })
             .ToListAsync(ct);
         var firstA = await acts.MinAsync(a => (DateTime?)a.StartTime, ct);
         var lastA = await acts.MaxAsync(a => (DateTime?)a.EndTime, ct);
@@ -877,12 +896,17 @@ public partial class AtlasService
             a.Name ?? (a.Fusion != null ? a.Fusion.Name : null),
             a.Fusion != null ? a.Fusion.StartTime : a.StartTime,
             a.Fusion != null ? a.Fusion.EndTime : a.EndTime,
-            a.DistanceM ?? (a.Fusion != null ? a.Fusion.DistanceM : null),
-            a.DurationS,
-            a.ElevationGainM ?? (a.Fusion != null ? a.Fusion.ElevationGainM : null),
-            a.AvgHeartRate ?? (a.Fusion != null ? a.Fusion.AvgHeartRate : null),
-            a.MaxHeartRate ?? (a.Fusion != null ? a.Fusion.MaxHeartRate : null),
-            a.Source, a.Polyline, a.MinLat, a.MinLon, a.MaxLat, a.MaxLon, a.PointCount,
+            a.Fusion != null && a.Fusion.DistanceM != null ? a.Fusion.DistanceM : a.DistanceM,
+            a.Fusion != null && a.Fusion.DurationS != null ? a.Fusion.DurationS : a.DurationS,
+            a.Fusion != null && a.Fusion.ElevationGainM != null ? a.Fusion.ElevationGainM : a.ElevationGainM,
+            a.Fusion != null && a.Fusion.AvgHeartRate != null ? a.Fusion.AvgHeartRate : a.AvgHeartRate,
+            a.Fusion != null && a.Fusion.MaxHeartRate != null ? a.Fusion.MaxHeartRate : a.MaxHeartRate,
+            a.Source, a.Fusion != null && a.Fusion.Polyline != null ? a.Fusion.Polyline : a.Polyline,
+            a.Fusion != null && a.Fusion.MinLat != null ? a.Fusion.MinLat : a.MinLat,
+            a.Fusion != null && a.Fusion.MinLon != null ? a.Fusion.MinLon : a.MinLon,
+            a.Fusion != null && a.Fusion.MaxLat != null ? a.Fusion.MaxLat : a.MaxLat,
+            a.Fusion != null && a.Fusion.MaxLon != null ? a.Fusion.MaxLon : a.MaxLon,
+            a.PointCount,
             SplitSources(a.Fusion != null ? a.Fusion.Sources : a.Source),
             a.Fusion != null ? a.Fusion.MemberCount : 1,
             a.Fusion != null ? a.Fusion.ConflictCount : 0);

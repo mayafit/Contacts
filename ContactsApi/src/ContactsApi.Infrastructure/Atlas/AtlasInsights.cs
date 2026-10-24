@@ -88,11 +88,11 @@ public partial class AtlasService
                 a.Fusion != null && a.Fusion.Type != null ? a.Fusion.Type : a.Type,
                 a.Fusion != null ? a.Fusion.StartTime : a.StartTime,
                 a.Fusion != null ? a.Fusion.EndTime : a.EndTime,
-                a.DistanceM ?? (a.Fusion != null ? a.Fusion.DistanceM : null),
-                a.DurationS,
-                a.ElevationGainM ?? (a.Fusion != null ? a.Fusion.ElevationGainM : null),
-                a.AvgHeartRate ?? (a.Fusion != null ? a.Fusion.AvgHeartRate : null),
-                a.MaxHeartRate ?? (a.Fusion != null ? a.Fusion.MaxHeartRate : null),
+                a.Fusion != null && a.Fusion.DistanceM != null ? a.Fusion.DistanceM : a.DistanceM,
+                a.Fusion != null && a.Fusion.DurationS != null ? a.Fusion.DurationS : a.DurationS,
+                a.Fusion != null && a.Fusion.ElevationGainM != null ? a.Fusion.ElevationGainM : a.ElevationGainM,
+                a.Fusion != null && a.Fusion.AvgHeartRate != null ? a.Fusion.AvgHeartRate : a.AvgHeartRate,
+                a.Fusion != null && a.Fusion.MaxHeartRate != null ? a.Fusion.MaxHeartRate : a.MaxHeartRate,
                 a.Fusion != null ? a.Fusion.Sources : a.Source,
                 a.Fusion != null ? a.Fusion.MemberCount : 1,
                 a.Fusion != null ? a.Fusion.ConflictCount : 0,
@@ -571,8 +571,8 @@ public partial class AtlasService
             {
                 var best = await FilterActivities(owner, new AtlasQuery())
                     .Where(a => (a.Fusion != null && a.Fusion.Type != null ? a.Fusion.Type : a.Type) == r.Type)
-                    .Where(a => (a.DistanceM ?? (a.Fusion != null ? a.Fusion.DistanceM : null)) != null)
-                    .OrderByDescending(a => a.DistanceM ?? (a.Fusion != null ? a.Fusion.DistanceM : null))
+                    .Where(a => (a.Fusion != null && a.Fusion.DistanceM != null ? a.Fusion.DistanceM : a.DistanceM) != null)
+                    .OrderByDescending(a => a.Fusion != null && a.Fusion.DistanceM != null ? a.Fusion.DistanceM : a.DistanceM)
                     .ThenBy(a => a.StartTime)
                     .Select(a => a.Id).FirstOrDefaultAsync(ct);
                 if (best == r.ActivityId)

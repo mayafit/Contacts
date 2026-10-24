@@ -103,9 +103,11 @@ public record ActivityDetail(
 /// <param name="LocationToleranceM">The two sources' combined location tolerance</param>
 /// <param name="Confidence">0-1</param>
 /// <param name="UserDecision">The user merged it</param>
+/// <param name="Segment">A piece of the same recording (stopped and started again), joined by continuation</param>
+/// <param name="Contained">A piece that lies within one of the activity's recordings (a phone's segment of it)</param>
 public record MatchEvidence(
     Guid MemberId, string Source, double StartDeltaS, double EndDeltaS, double TimeToleranceS,
-    double? TrackDeviationM, double LocationToleranceM, double Confidence, bool UserDecision);
+    double? TrackDeviationM, double LocationToleranceM, double Confidence, bool UserDecision, bool Segment = false, bool Contained = false);
 
 /// <summary>A source's accuracy as the app shows and edits it</summary>
 public record SourceToleranceDto(string Source, double TimeToleranceS, double LocationToleranceM, bool IsDefault = false);
