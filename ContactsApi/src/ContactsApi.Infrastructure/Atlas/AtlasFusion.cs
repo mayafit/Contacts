@@ -11,10 +11,15 @@ using Microsoft.Extensions.Logging;
 namespace ContactsApi.Infrastructure.Atlas;
 
 /// <summary>What fusion needs to know about one activity record</summary>
+/// <param name="First">Where its track starts (recorded sources only)</param>
+/// <param name="Last">Where its track ends</param>
+/// <param name="TrackM">Length of its (simplified) track: a check on the distance the source reports</param>
+/// <param name="Polyline">Its simplified track, to draw an outing of several recordings</param>
 public record FusionCandidate(
     Guid Id, string Source, string Type, string? Name, DateTime Start, DateTime End,
     double? DistanceM, double? ElevationGainM, int? AvgHeartRate, int? MaxHeartRate,
-    double? MinLat, double? MinLon, double? MaxLat, double? MaxLon, int PointCount, bool TypeByUser = false);
+    double? MinLat, double? MinLon, double? MaxLat, double? MaxLon, int PointCount, bool TypeByUser = false,
+    (double Lat, double Lon)? First = null, (double Lat, double Lon)? Last = null, double? TrackM = null, string? Polyline = null);
 
 /// <summary>A position at a time, from a record's track (a sample of it)</summary>
 public record TrackSample(DateTime T, double Lat, double Lon);
@@ -53,11 +58,25 @@ public record FusionRules(IReadOnlyDictionary<string, Tolerance> Sources, double
 }
 
 /// <summary>One fused activity: its primary record, members, fused values and how they matched</summary>
+/// <param name="Segments">The recordings the outing is made of, in time order (the primary alone when it was one recording)</param>
+/// <param name="DurationS">Recorded time of an outing of several recordings (their sum); null otherwise</param>
 public record FusedGroup(
     Guid PrimaryId, List<FusionCandidate> Members, string Type, string? Name, DateTime Start, DateTime End,
     double? DistanceM, double? ElevationGainM, int? AvgHeartRate, int? MaxHeartRate,
     Dictionary<string, string> FieldSources, List<FusionConflict> Conflicts, List<MatchEvidence> Evidence)
 {
+    /// <summary>The recordings the outing is made of, in time order</summary>
+    public List<FusionCandidate> Segments { get; init; } = new();
+
+    /// <summary>Recorded time of an outing of several recordings (their sum); null otherwise</summary>
+    public double? DurationS { get; init; }
+
+    /// <summary>The joined track of an outing of several recordings; null otherwise</summary>
+    public string? Polyline { get; init; }
+
+    /// <summary>The area of an outing of several recordings (all of them); null otherwise</summary>
+    public (double MinLat, double MinLon, double MaxLat, double MaxLon)? Box { get; init; }
+
     /// <summary>The weakest member match (null when the user decided every one)</summary>
     public double? MatchConfidence => Evidence.Where(e => !e.UserDecision).Select(e => (double?)e.Confidence).Min();
 }
@@ -213,6 +232,113 @@ public static class Fusion
             deviation.HasValue ? Math.Round(deviation.Value) : null, lt, Math.Round(timeScore * locationScore, 3), false);
     }
 
+    /// <summary>Longest pause between two recordings of one outing</summary>
+    public const double MaxSegmentGapS = 15 * 60;
+
+    /// <summary>
+    /// Whether one recording continues the other: the recording was stopped and
+    /// started again (or split by the app). Both are recordings with a track from
+    /// a source that records workouts (not a phone's guess), of the same kind, the
+    /// second starts at most 15 minutes after the first ended, and where the first
+    /// stopped (within the sources' location tolerance, at least 300 m: GPS at a
+    /// standstill wanders).
+    /// </summary>
+    public static bool Continues(FusionCandidate a, FusionCandidate b, FusionRules rules)
+    {
+        if (a.Start > b.Start)
+        {
+            (a, b) = (b, a);
+        }
+
+        if (a.Id == b.Id || !Recording(a) || !Recording(b) || !SameKind(a.Type, b.Type))
+        {
+            return false;
+        }
+
+        var (ta, tb) = (rules.For(a.Source), rules.For(b.Source));
+        var gap = (b.Start - a.End).TotalSeconds;
+        if (gap < -(ta.TimeS + tb.TimeS) || gap > MaxSegmentGapS)
+        {
+            return false;
+        }
+
+        return Geo.Haversine(a.Last!.Value.Lat, a.Last.Value.Lon, b.First!.Value.Lat, b.First.Value.Lon)
+               <= Math.Max(300, ta.LocationM + tb.LocationM);
+    }
+
+    /// <summary>
+    /// Whether <paramref name="inner"/> is a piece of the recording <paramref name="outer"/>:
+    /// the same type (not "other"), entirely within its time (give or take the
+    /// sources' tolerance) and its area. A phone splits a ride into segments around
+    /// stops; each is far shorter than the recording, so it would not match it.
+    /// </summary>
+    public static bool Within(FusionCandidate outer, FusionCandidate inner, FusionRules rules)
+    {
+        if (outer.Id == inner.Id || !Recording(outer) || inner.Type != outer.Type || inner.Type == "other" || !inner.MinLat.HasValue)
+        {
+            return false;
+        }
+
+        var (to, ti) = (rules.For(outer.Source), rules.For(inner.Source));
+        var tt = to.TimeS + ti.TimeS;
+        return inner.Start >= outer.Start.AddSeconds(-tt) && inner.End <= outer.End.AddSeconds(tt)
+               && BoxesTouch(outer, inner, to.LocationM + ti.LocationM);
+    }
+
+    private static bool BoxesTouch(FusionCandidate a, FusionCandidate b, double meters)
+    {
+        if (!a.MinLat.HasValue || !b.MinLat.HasValue)
+        {
+            return true;
+        }
+
+        var padLat = meters / MetersPerDegree;
+        var padLon = meters / (MetersPerDegree * Math.Max(0.1, Math.Cos(a.MinLat.Value * Math.PI / 180)));
+        return a.MinLat - padLat <= b.MaxLat && b.MinLat - padLat <= a.MaxLat
+               && a.MinLon - padLon <= b.MaxLon && b.MinLon - padLon <= a.MaxLon;
+    }
+
+    /// <summary>A recording with a track whose ends are known, from a source that records workouts</summary>
+    private static bool Recording(FusionCandidate c) =>
+        c.PointCount > 1 && c.First.HasValue && c.Last.HasValue && Rank(c.Source) < Rank("google-timeline");
+
+    private static bool SameKind(string a, string b) => a == b || a == "other" || b == "other";
+
+    /// <summary>
+    /// The distance of a record: the source's, unless it is less than half of the
+    /// record's own track (a source summary that lost most of the recording)
+    /// </summary>
+    public static double? DistanceOf(FusionCandidate c) =>
+        c.TrackM is > 0 && (c.DistanceM is not > 0 || c.DistanceM < c.TrackM * 0.5) ? Math.Round(c.TrackM.Value) : c.DistanceM;
+
+    /// <summary>
+    /// The recordings of a group that make up its outing: the best record and every
+    /// recording joined to it through continuations, in time order
+    /// </summary>
+    public static List<FusionCandidate> Segments(IReadOnlyList<FusionCandidate> group, FusionRules rules)
+    {
+        var best = Best(group);
+        var segments = new List<FusionCandidate> { best };
+        var rest = Order(group.Where(m => m.Id != best.Id && Recording(m)));
+        for (var added = true; added;)
+        {
+            added = false;
+            foreach (var m in rest.ToList())
+            {
+                // Not overlapping what is already in: a continuation, not a second device
+                if (segments.Any(s => Continues(s, m, rules))
+                    && segments.All(s => (Min(s.End, m.End) - Max(s.Start, m.Start)).TotalSeconds <= rules.For(s.Source).TimeS + rules.For(m.Source).TimeS))
+                {
+                    segments.Add(m);
+                    rest.Remove(m);
+                    added = true;
+                }
+            }
+        }
+
+        return segments.OrderBy(s => s.Start).ToList();
+    }
+
     /// <summary>
     /// Median distance between two tracks at the same moments (the second track's
     /// position interpolated at each sample time of the first); null when they
@@ -277,7 +403,9 @@ public static class Fusion
     /// Groups records into real-world activities, best matches first. User
     /// decisions win: pairs marked "together" are always joined, pairs marked
     /// "apart" never end up in one group (directly or through others), and two
-    /// records of one source that do not match never share a group.
+    /// records of one source at the same time that do not match never share a
+    /// group. Besides matches, a recording joins the one it continues (stopped and
+    /// started again) and a record joins the recording it lies within.
     /// </summary>
     /// <returns>Groups, each a list of record ids (singletons included)</returns>
     public static List<List<Guid>> Group(
@@ -317,19 +445,23 @@ public static class Fusion
 
             if (!force)
             {
+                // Two records of one source at the same time that do not match are two activities
                 if (members[rx].Any(m => members[ry].Any(n =>
                         apartSet.Contains(Key(m, n))
-                        || (byId[m].Source == byId[n].Source && Evaluate(byId[m], byId[n], rules) == null))))
+                        || (byId[m].Source == byId[n].Source && Overlaps(byId[m], byId[n], rules)
+                            && Evaluate(byId[m], byId[n], rules) == null))))
                 {
                     return;
                 }
 
                 // Not through a chain: every member must match the joined group's
-                // best record itself (except what the user merged)
+                // best record itself, or one of the recordings that continue it
+                // (except what the user merged)
                 var joined = members[rx].Concat(members[ry]).Select(id => byId[id]).ToList();
-                var best = Best(joined);
-                if (joined.Any(m => m.Id != best.Id && !userJoined.Contains(m.Id)
-                                    && !(Evaluate(best, m, rules, samples)?.Confidence >= rules.Threshold)))
+                var anchors = Segments(joined, rules);
+                if (joined.Any(m => !anchors.Contains(m) && !userJoined.Contains(m.Id)
+                                    && !anchors.Any(s => Evaluate(s, m, rules, samples)?.Confidence >= rules.Threshold
+                                                         || Within(s, m, rules))))
                 {
                     return;
                 }
@@ -364,8 +496,27 @@ public static class Fusion
             Union(a.Id, b.Id, force: false);
         }
 
+        // Then pieces of a recording that a phone saw separately (same type, inside it)
+        foreach (var (a, b) in Sweep(items, rules).Where(p => !apartSet.Contains(Key(p.A.Id, p.B.Id))))
+        {
+            if (Within(a, b, rules) || Within(b, a, rules))
+            {
+                Union(a.Id, b.Id, force: false);
+            }
+        }
+
+        // Then the pieces of one outing (a recording stopped and started again)
+        foreach (var (a, b) in Sweep(items, rules).Where(p => !apartSet.Contains(Key(p.A.Id, p.B.Id)) && Continues(p.A, p.B, rules)))
+        {
+            Union(a.Id, b.Id, force: false);
+        }
+
         return members.Values.Select(m => m.ToList()).ToList();
     }
+
+    /// <summary>Whether two records overlap by more than their sources' time tolerance</summary>
+    private static bool Overlaps(FusionCandidate a, FusionCandidate b, FusionRules rules) =>
+        (Min(a.End, b.End) - Max(a.Start, b.Start)).TotalSeconds > rules.For(a.Source).TimeS + rules.For(b.Source).TimeS;
 
     /// <summary>
     /// The fused activity of a group: the best record is the primary (a real
@@ -381,6 +532,12 @@ public static class Fusion
         var ordered = Order(group);
         var primary = ordered[0];
         var byRank = group.OrderBy(m => Rank(m.Source)).ThenByDescending(m => m.PointCount).ToList();
+        var segments = Segments(group, rules);
+        if (segments.Count > 1)
+        {
+            return FuseOuting(group, ordered, segments, rules, samples, userJoined);
+        }
+
         var fields = new Dictionary<string, string> { ["track"] = primary.Source };
 
         var byUser = group.FirstOrDefault(m => m.TypeByUser);
@@ -405,7 +562,7 @@ public static class Fusion
             fields["time"] = byRank[0].Source;
         }
 
-        var distance = primary.DistanceM.HasValue ? primary : byRank.FirstOrDefault(m => m.DistanceM.HasValue);
+        var distance = DistanceOf(primary).HasValue ? primary : byRank.FirstOrDefault(m => DistanceOf(m).HasValue);
         if (distance != null)
         {
             fields["distanceM"] = distance.Source;
@@ -420,14 +577,126 @@ public static class Fusion
 
         // How each member matches the primary (measured, even when joined through another member)
         var evidence = ordered.Skip(1)
-            .Select(m => Evaluate(primary, m, rules, samples) is { } e
-                ? e with { UserDecision = userJoined?.Contains(m.Id) == true }
-                : Measure(primary, m, rules, samples, userJoined?.Contains(m.Id) == true))
+            .Select(m => Link(primary, new[] { primary }, m, rules, samples, userJoined?.Contains(m.Id) == true))
             .ToList();
 
+        var distanceM = distance != null ? DistanceOf(distance) : null;
+        var conflicts = Conflicts(group, primary, typed.Type, distanceM, evidence.Where(e => !e.Segment && !e.Contained).ToList());
+        if (distance != null && distanceM != distance.DistanceM && distance.DistanceM.HasValue)
+        {
+            conflicts.Add(TrackDistanceConflict(distance));
+        }
+
         return new FusedGroup(primary.Id, ordered, typed.Type, named?.Name, start, end,
-            distance?.DistanceM, climb?.ElevationGainM, hr?.AvgHeartRate, hr?.MaxHeartRate,
-            fields, Conflicts(group, primary, typed.Type, distance?.DistanceM, evidence), evidence);
+            distanceM, climb?.ElevationGainM, hr?.AvgHeartRate, hr?.MaxHeartRate,
+            fields, conflicts, evidence) { Segments = new List<FusionCandidate> { primary } };
+    }
+
+    /// <summary>
+    /// How a member relates to the activity: its match, or (a piece of one of the
+    /// recordings) a containment, which has no time conflicts by nature
+    /// </summary>
+    private static MatchEvidence Link(FusionCandidate reference, IReadOnlyList<FusionCandidate> recordings, FusionCandidate m,
+        FusionRules rules, IReadOnlyDictionary<Guid, List<TrackSample>>? samples, bool user)
+    {
+        if (Evaluate(reference, m, rules, samples) is { } e)
+        {
+            return e with { UserDecision = user };
+        }
+
+        var measured = Measure(reference, m, rules, samples, user);
+        return recordings.Any(r => Within(r, m, rules)) ? measured with { Confidence = 1, Contained = true } : measured;
+    }
+
+    private static FusionConflict TrackDistanceConflict(FusionCandidate c) =>
+        new("distanceM",
+            $"{Label(c.Source)} reports {c.DistanceM!.Value / 1000:0.0} km, but its own track is {c.TrackM!.Value / 1000:0.0} km long — using the track",
+            new List<SourceValue> { new(c.Source, $"{c.DistanceM.Value / 1000:0.0} km"), new("track", $"{c.TrackM.Value / 1000:0.0} km") },
+            $"{c.TrackM.Value / 1000:0.0} km");
+
+    /// <summary>
+    /// An outing recorded in pieces: it spans them all; distance, climb and recorded
+    /// time are their sums; the other records are measured against the whole outing
+    /// </summary>
+    private static FusedGroup FuseOuting(IReadOnlyList<FusionCandidate> group, List<FusionCandidate> ordered,
+        List<FusionCandidate> segments, FusionRules rules, IReadOnlyDictionary<Guid, List<TrackSample>>? samples,
+        IReadOnlySet<Guid>? userJoined)
+    {
+        var primary = ordered[0];
+        var byRank = group.OrderBy(m => Rank(m.Source)).ThenByDescending(m => m.PointCount).ToList();
+        var byUser = group.FirstOrDefault(m => m.TypeByUser);
+        var typed = byUser ?? byRank.FirstOrDefault(m => m.Type != "other") ?? primary;
+        var named = segments.FirstOrDefault(m => m.Name != null) ?? byRank.FirstOrDefault(m => m.Name != null);
+        var hr = segments.Any(s => s.AvgHeartRate.HasValue) ? null : byRank.FirstOrDefault(m => m.AvgHeartRate.HasValue);
+        var segmentHr = segments.Where(s => s.AvgHeartRate.HasValue).ToList();
+        int? avgHr = hr?.AvgHeartRate, maxHr = hr?.MaxHeartRate;
+        if (segmentHr.Count > 0)
+        {
+            var seconds = segmentHr.Sum(s => Math.Max(1, (s.End - s.Start).TotalSeconds));
+            avgHr = (int)Math.Round(segmentHr.Sum(s => s.AvgHeartRate!.Value * Math.Max(1, (s.End - s.Start).TotalSeconds)) / seconds);
+            maxHr = segmentHr.Max(s => s.MaxHeartRate ?? s.AvgHeartRate);
+        }
+
+        var distances = segments.Select(DistanceOf).ToList();
+        double? distance = distances.Any(d => d.HasValue) ? Math.Round(distances.Sum(d => d ?? 0)) : null;
+        double? climb = segments.Any(s => s.ElevationGainM.HasValue) ? Math.Round(segments.Sum(s => s.ElevationGainM ?? 0)) : null;
+        var fields = new Dictionary<string, string>
+        {
+            ["track"] = primary.Source, ["time"] = primary.Source, ["type"] = byUser != null ? "user" : typed.Source
+        };
+        if (named != null)
+        {
+            fields["name"] = named.Source;
+        }
+
+        if (distance.HasValue)
+        {
+            fields["distanceM"] = primary.Source;
+        }
+
+        if (avgHr.HasValue)
+        {
+            fields["heartRate"] = segmentHr.Count > 0 ? segmentHr[0].Source : hr!.Source;
+        }
+
+        var start = segments[0].Start;
+        var end = segments.Max(s => s.End);
+        var outing = primary with { Start = start, End = end, DistanceM = distance };
+        var evidence = ordered.Where(m => m.Id != primary.Id)
+            .Select(m =>
+            {
+                var user = userJoined?.Contains(m.Id) == true;
+                if (segments.Contains(m))
+                {
+                    // A piece of the outing: its own times, matched by continuation
+                    var (tp, tm) = (rules.For(primary.Source), rules.For(m.Source));
+                    return new MatchEvidence(m.Id, m.Source, Math.Round((m.Start - start).TotalSeconds), Math.Round((m.End - end).TotalSeconds),
+                        tp.TimeS + tm.TimeS, null, tp.LocationM + tm.LocationM, 1, user, Segment: true);
+                }
+
+                return Link(outing, segments, m, rules, samples, user);
+            })
+            .ToList();
+
+        var others = group.Where(m => !segments.Contains(m)).ToList();
+        // Times only from other recordings: a phone cuts an outing around its stops,
+        // so its segments never start and end with it
+        var timed = evidence.Where(e => !e.Segment && !e.Contained && Rank(e.Source) < Rank("google-timeline")).ToList();
+        var conflicts = Conflicts(others.Append(outing).ToList(), outing, typed.Type, distance, timed);
+        conflicts.AddRange(segments.Where(s => DistanceOf(s) != s.DistanceM && s.DistanceM.HasValue).Select(TrackDistanceConflict));
+        var polyline = Geo.EncodePolyline(Geo.Simplify(segments
+            .SelectMany(s => s.Polyline != null ? AtlasService.DecodePolyline(s.Polyline) : new List<(double, double)>())
+            .ToList()));
+        return new FusedGroup(primary.Id, ordered, typed.Type, named?.Name, start, end, distance, climb, avgHr, maxHr,
+            fields, conflicts, evidence)
+        {
+            Segments = segments,
+            DurationS = Math.Round(segments.Sum(s => (s.End - s.Start).TotalSeconds)),
+            Polyline = polyline.Length > 0 ? polyline : null,
+            Box = segments.All(s => s.MinLat.HasValue)
+                ? (segments.Min(s => s.MinLat!.Value), segments.Min(s => s.MinLon!.Value), segments.Max(s => s.MaxLat!.Value), segments.Max(s => s.MaxLon!.Value))
+                : null
+        };
     }
 
     /// <summary>Records best first: a real track, then the most trusted source, then the most points</summary>
@@ -461,14 +730,15 @@ public static class Fusion
                 values, type));
         }
 
-        var distances = group.Where(m => m.DistanceM is > 0).ToList();
+        // Each record's believable distance (a lost source summary has its own conflict)
+        var distances = group.Where(m => DistanceOf(m) is > 0).ToList();
         if (distances.Count > 1)
         {
-            var max = distances.Max(m => m.DistanceM!.Value);
-            var min = distances.Min(m => m.DistanceM!.Value);
+            var max = distances.Max(m => DistanceOf(m)!.Value);
+            var min = distances.Min(m => DistanceOf(m)!.Value);
             if (max - min > 500 && max - min > max * 0.1)
             {
-                var values = distances.Select(m => new SourceValue(m.Source, $"{m.DistanceM!.Value / 1000:0.0} km")).ToList();
+                var values = distances.Select(m => new SourceValue(m.Source, $"{DistanceOf(m)!.Value / 1000:0.0} km")).ToList();
                 conflicts.Add(new FusionConflict("distanceM",
                     string.Join(", ", values.Select(v => $"{Label(v.Source)}: {v.Value}")),
                     values, distance.HasValue ? $"{distance.Value / 1000:0.0} km" : ""));
@@ -775,12 +1045,41 @@ public partial class AtlasService
 
         var items = await q
             .Select(a => new FusionCandidate(a.Id, a.Source, a.Type, a.Name, a.StartTime, a.EndTime, a.DistanceM, a.ElevationGainM,
-                a.AvgHeartRate, a.MaxHeartRate, a.MinLat, a.MinLon, a.MaxLat, a.MaxLon, a.PointCount, a.TypeByUser))
+                a.AvgHeartRate, a.MaxHeartRate, a.MinLat, a.MinLon, a.MaxLat, a.MaxLon, a.PointCount, a.TypeByUser, null, null, null, null))
             .ToListAsync(ct);
         if (items.Count == 0)
         {
             return new FuseResult(0, 0, 0);
         }
+
+        // Where recordings start and end, and how long their tracks are (from the
+        // simplified track): to join an outing recorded in pieces, and to check distances
+        var recordedIds = items.Where(i => i.PointCount > 1 && i.Source != "google-timeline").Select(i => i.Id).ToList();
+        var polylines = await _db.Activities.AsNoTracking()
+            .Where(a => recordedIds.Contains(a.Id) && a.Polyline != null)
+            .Select(a => new { a.Id, a.Polyline })
+            .ToDictionaryAsync(a => a.Id, a => a.Polyline!, ct);
+        items = items.Select(i =>
+        {
+            if (!polylines.TryGetValue(i.Id, out var encoded))
+            {
+                return i;
+            }
+
+            var track = DecodePolyline(encoded);
+            if (track.Count < 2)
+            {
+                return i;
+            }
+
+            double length = 0;
+            for (var k = 1; k < track.Count; k++)
+            {
+                length += Geo.Haversine(track[k - 1].Lat, track[k - 1].Lon, track[k].Lat, track[k].Lon);
+            }
+
+            return i with { First = track[0], Last = track[^1], TrackM = length, Polyline = encoded };
+        }).ToList();
 
         var ids = items.Select(i => i.Id).ToList();
         var decisions = await _db.FusionDecisions.AsNoTracking()
@@ -810,7 +1109,7 @@ public partial class AtlasService
         foreach (var g in fused)
         {
             var health = hrById.GetValueOrDefault(g.PrimaryId);
-            if (g.Members.Count == 1 && health == null)
+            if (g.Members.Count == 1 && health == null && g.DistanceM == g.Members[0].DistanceM)
             {
                 continue;
             }
@@ -845,6 +1144,13 @@ public partial class AtlasService
                 StartTime = g.Start,
                 EndTime = g.End,
                 DistanceM = g.DistanceM,
+                DurationS = g.DurationS,
+                Polyline = g.Polyline,
+                SegmentCount = g.Segments.Count,
+                MinLat = g.Box?.MinLat,
+                MinLon = g.Box?.MinLon,
+                MaxLat = g.Box?.MaxLat,
+                MaxLon = g.Box?.MaxLon,
                 ElevationGainM = g.ElevationGainM,
                 AvgHeartRate = g.AvgHeartRate ?? health?.Avg,
                 MaxHeartRate = g.MaxHeartRate ?? health?.Max,

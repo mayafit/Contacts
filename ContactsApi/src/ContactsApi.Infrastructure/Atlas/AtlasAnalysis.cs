@@ -177,14 +177,15 @@ public partial class AtlasService
     /// </summary>
     private async Task<SimilarActivities?> SimilarAsync(string owner, AtlasActivity a, ActivitySummary s, CancellationToken ct)
     {
-        if (s.DistanceM is not > 0 || a.Polyline == null || !a.MinLat.HasValue || !a.MaxLat.HasValue || !a.MinLon.HasValue || !a.MaxLon.HasValue)
+        // The activity as shown: an outing's whole track and area
+        if (s.DistanceM is not > 0 || s.Polyline == null || !s.MinLat.HasValue || !s.MaxLat.HasValue || !s.MinLon.HasValue || !s.MaxLon.HasValue)
         {
             return null;
         }
 
         var duration = s.DurationS is > 0 ? s.DurationS.Value : (s.EndTime - s.StartTime).TotalSeconds;
         double? speed = duration > 0 ? s.DistanceM.Value / duration * 3.6 : null;
-        var track = DecodePolyline(a.Polyline);
+        var track = DecodePolyline(s.Polyline);
         if (track.Count < 2)
         {
             return null;
@@ -194,16 +195,16 @@ public partial class AtlasService
         var hi = s.DistanceM.Value * 1.1;
         var candidates = await FilterActivities(owner, new AtlasQuery { Types = new List<string> { s.Type } })
             .Where(x => x.Id != a.Id && x.PointCount > 1 && x.Polyline != null)
-            .Where(x => x.MaxLat >= a.MinLat && x.MinLat <= a.MaxLat && x.MaxLon >= a.MinLon && x.MinLon <= a.MaxLon)
+            .Where(x => x.MaxLat >= s.MinLat && x.MinLat <= s.MaxLat && x.MaxLon >= s.MinLon && x.MinLon <= s.MaxLon)
             .Select(x => new
             {
                 x.Id,
                 Start = x.Fusion != null ? x.Fusion.StartTime : x.StartTime,
                 End = x.Fusion != null ? x.Fusion.EndTime : x.EndTime,
-                x.DurationS,
-                DistanceM = x.DistanceM ?? (x.Fusion != null ? x.Fusion.DistanceM : null),
-                AvgHr = x.AvgHeartRate ?? (x.Fusion != null ? x.Fusion.AvgHeartRate : null),
-                x.Polyline
+                DurationS = x.Fusion != null && x.Fusion.DurationS != null ? x.Fusion.DurationS : x.DurationS,
+                DistanceM = x.Fusion != null && x.Fusion.DistanceM != null ? x.Fusion.DistanceM : x.DistanceM,
+                AvgHr = x.Fusion != null && x.Fusion.AvgHeartRate != null ? x.Fusion.AvgHeartRate : x.AvgHeartRate,
+                Polyline = x.Fusion != null && x.Fusion.Polyline != null ? x.Fusion.Polyline : x.Polyline
             })
             .Where(x => x.DistanceM >= lo && x.DistanceM <= hi)
             .OrderByDescending(x => x.Start)
