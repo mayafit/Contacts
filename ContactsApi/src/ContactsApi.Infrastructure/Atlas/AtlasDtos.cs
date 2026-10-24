@@ -59,6 +59,8 @@ public class AtlasQuery
     public bool Activities { get; set; } = true;
     public bool Visits { get; set; } = true;
     public int Limit { get; set; } = 300;
+    /// <summary>Only fused activities whose sources disagree</summary>
+    public bool ConflictsOnly { get; set; }
 }
 
 /// <summary>An activity without its points</summary>

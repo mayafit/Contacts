@@ -236,6 +236,8 @@ export interface AtlasQuery {
   activities?: boolean;
   visits?: boolean;
   limit?: number;
+  /** Only fused activities whose sources disagree */
+  conflictsOnly?: boolean;
 }
 
 /** Search results */
@@ -319,6 +321,172 @@ export interface AtlasSummary {
 export interface NearResult {
   visits: VisitSummary[];
   activities: ActivitySummary[];
+}
+
+/** Totals of a period (insights) */
+export interface InsightsTotals {
+  activities: number;
+  /** Movement on own power and vehicles together */
+  distanceKm: number;
+  hours: number;
+  climbM: number;
+  visits: number;
+  /** Distinct places visited */
+  places: number;
+}
+
+/** Statistics of one activity type (insights) */
+export interface InsightsTypeStats {
+  /** ride, run, hike, walk, drive, flight, transit, ski, swim, other */
+  type: string;
+  count: number;
+  distanceKm: number;
+  hours: number;
+  climbM: number;
+  /** Over the activities with heart rate */
+  avgHeartRate: number | null;
+  avgSpeedKmh: number | null;
+  longestKm: number | null;
+}
+
+/** Size of a series bucket (insights) */
+export type InsightsBucket = 'day' | 'week' | 'month';
+
+/** One activity type in one series bucket (insights) */
+export interface InsightsSeriesPoint {
+  /** Start of the bucket, ISO */
+  t: string;
+  type: string;
+  distanceKm: number;
+  hours: number;
+  count: number;
+}
+
+/** The series over the period (insights) */
+export interface InsightsSeries {
+  bucket: InsightsBucket;
+  points: InsightsSeriesPoint[];
+}
+
+/** A place with the time spent there (insights) */
+export interface InsightsPlace {
+  placeId: string | null;
+  /** "Unnamed place" when generic */
+  name: string;
+  lat: number;
+  lon: number;
+  visits: number;
+  hours: number;
+  /** First visit ever (not only in the query) */
+  firstVisit: string;
+  lastVisit: string;
+  /** The first visit ever falls inside the query */
+  isNew: boolean;
+  unnamed: boolean;
+}
+
+/** A personal best within the query (insights) */
+export interface InsightsRecord {
+  kind: 'longest' | 'longestTime' | 'climb' | 'fastest' | 'maxHeartRate';
+  /** The activity type it applies to */
+  type: string;
+  /** e.g. "Longest ride" */
+  label: string;
+  /** Formatted, e.g. "87.4 km", "31.2 km/h", "178 bpm" */
+  value: string;
+  activityId: string;
+  date: string;
+}
+
+/** Activity streaks (insights) */
+export interface InsightsStreaks {
+  longestActiveDays: number;
+  longestActiveFrom: string | null;
+  daysSinceLast: number | null;
+  activeDays: number;
+}
+
+/** Travel (insights) */
+export interface InsightsTravel {
+  flights: number;
+  flightKm: number;
+  /** Days with a visit over 100 km from Home (0 when Home is unknown) */
+  daysAway: number;
+}
+
+/** Activities of one source (insights) */
+export interface InsightsSourceCount {
+  source: string;
+  activities: number;
+}
+
+/** How complete and consistent the data is (insights) */
+export interface InsightsCoverage {
+  /** Rides, runs, hikes, walks, swims and skis in the query */
+  sports: number;
+  /** Of the sports */
+  withHeartRate: number;
+  /** With a dedicated recording (Sports Tracker, GPX, TCX, Fit) */
+  recorded: number;
+  /** Only Google Timeline */
+  inferredOnly: number;
+  /** Combining several sources */
+  fused: number;
+  withConflicts: number;
+  sources: InsightsSourceCount[];
+}
+
+/** What a proposal's button does */
+export type InsightsProposalAction =
+  | { kind: 'activity'; activityId: string }
+  | { kind: 'place'; lat: number; lon: number; name: string | null }
+  | { kind: 'filter'; types?: string[]; conflictsOnly?: boolean }
+  | { kind: 'fusion' }
+  | { kind: 'import' };
+
+/** A proposal derived from the insights */
+export interface InsightsProposal {
+  kind:
+    | 'rhythm'
+    | 'load-high'
+    | 'load-low'
+    | 'conflicts'
+    | 'heart-rate'
+    | 'unnamed-place'
+    | 'new-places'
+    | 'record'
+    | 'away';
+  severity: 'info' | 'tip' | 'warning';
+  /** Short, e.g. "18 days since your last ride" */
+  title: string;
+  /** One or two sentences */
+  text: string;
+  action: InsightsProposalAction | null;
+}
+
+/** Insights for a query */
+export interface Insights {
+  /** The query's time range (null when open) */
+  from: string | null;
+  to: string | null;
+  totals: InsightsTotals;
+  /** The period of the same length right before (only with from and to) */
+  previous: InsightsTotals | null;
+  /** Most time first */
+  byType: InsightsTypeStats[];
+  series: InsightsSeries;
+  /** 7 counts of activities, Monday first (local time) */
+  byWeekday: number[];
+  /** 24 counts of activity starts (local time) */
+  byHour: number[];
+  /** Up to 10, most time first */
+  topPlaces: InsightsPlace[];
+  records: InsightsRecord[];
+  streaks: InsightsStreaks;
+  travel: InsightsTravel;
+  coverage: InsightsCoverage;
+  /** Most important first */
+  proposals: InsightsProposal[];
 }
 
 /** An MCP access token as listed */

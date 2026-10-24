@@ -362,7 +362,7 @@ public partial class AtlasService
             activities = await aq.OrderByDescending(a => a.StartTime).Take(limit).Select(ToSummary).ToListAsync(ct);
         }
 
-        if (q.Visits)
+        if (q.Visits && !q.ConflictsOnly)
         {
             var vq = FilterVisits(owner, q);
             if (q.From.HasValue)
@@ -392,6 +392,11 @@ public partial class AtlasService
     {
         // One row per real-world activity: records that stand alone, and the primary of each fused one
         var aq = _db.Activities.AsNoTracking().Where(a => a.OwnerId == owner && (a.ClusterId == null || a.ClusterId == a.Id));
+        if (q.ConflictsOnly)
+        {
+            aq = aq.Where(a => a.Fusion != null && a.Fusion.ConflictCount > 0);
+        }
+
         if (HasBox(q))
         {
             aq = aq.Where(a => a.MaxLat >= q.MinLat && a.MinLat <= q.MaxLat && a.MaxLon >= q.MinLon && a.MinLon <= q.MaxLon);
@@ -616,7 +621,7 @@ public partial class AtlasService
                 .Select(g => new HistogramRow(g.Key.Bucket, g.Key.Type, g.Count())));
         }
 
-        if (filter.Visits && filter.Types is not { Count: > 0 })
+        if (filter.Visits && !filter.ConflictsOnly && filter.Types is not { Count: > 0 })
         {
             var starts = await FilterVisits(owner, filter)
                 .Where(v => v.StartTime >= from && v.StartTime <= to)

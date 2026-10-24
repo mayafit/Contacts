@@ -31,6 +31,22 @@ public class AtlasMcpTools
     private string Owner => _http.HttpContext?.Items[OwnerItem] as string
                             ?? throw new UnauthorizedAccessException("No access token");
 
+    [McpServerTool(Name = "atlas_insights"), Description("Insights over the user's fused data for a query (all filters optional): totals with the change against the period before, per activity type (distance, time, climb, speed, heart rate), trend, weekdays and hours, personal records, active streaks, top places and new places, travel (flights, days away from home), data quality (heart-rate coverage, recorded vs inferred, conflicts) and proposals (rhythm, training load, places to name, data to add).")]
+    public Task<Insights> Insights(
+        [Description("Start of the time range, ISO 8601")] DateTime? from = null,
+        [Description("End of the time range, ISO 8601")] DateTime? to = null,
+        [Description("Bounding box south latitude")] double? minLat = null,
+        [Description("Bounding box west longitude")] double? minLon = null,
+        [Description("Bounding box north latitude")] double? maxLat = null,
+        [Description("Bounding box east longitude")] double? maxLon = null,
+        [Description("Activity types: ride, hike, run, walk, drive, flight, transit, ski, swim, other")] string[]? types = null,
+        [Description("Text in activity names/notes or place names")] string? text = null,
+        [Description("IANA time zone for weekdays and hours, e.g. Asia/Jerusalem")] string? timeZone = null) =>
+        _atlas.InsightsAsync(Owner, new AtlasQuery
+        {
+            From = from, To = to, MinLat = minLat, MinLon = minLon, MaxLat = maxLat, MaxLon = maxLon, Types = types?.ToList(), Text = text
+        }, timeZone);
+
     [McpServerTool(Name = "atlas_merge_activities"), Description("Join two activities that are the same real-world activity (the user's decision is remembered). Returns the merged activity.")]
     public Task<ActivityDetail> Merge(
         [Description("Activity id")] Guid id,
