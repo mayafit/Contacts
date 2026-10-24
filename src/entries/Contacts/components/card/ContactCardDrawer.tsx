@@ -338,9 +338,9 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({
                     target="_blank"
                     rel="noopener noreferrer"
                     underline="hover"
-                    sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, fontSize: 13 }}
+                    sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, fontSize: 14 }}
                   >
-                    Open in Google Contacts <OpenInNew sx={{ fontSize: 14 }} />
+                    Open in Google Contacts <OpenInNew sx={{ fontSize: 15 }} />
                   </Link>
                 </Box>
                 <Box
@@ -356,7 +356,7 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({
                       target="_blank"
                       rel="noopener noreferrer"
                       underline="hover"
-                      sx={{ fontSize: 13 }}
+                      sx={{ fontSize: 14 }}
                     >
                       {l.label}
                     </Link>

@@ -116,7 +116,7 @@ const Markdown: React.FC<MarkdownProps> = ({ text, onContact: contactHandler, on
           key={blocks.length}
           component="pre"
           sx={{
-            fontSize: 12,
+            fontSize: 13,
             p: 1,
             borderRadius: '6px',
             bgcolor: tokens.page,
@@ -144,7 +144,7 @@ const Markdown: React.FC<MarkdownProps> = ({ text, onContact: contactHandler, on
       }
       blocks.push(
         <Box key={blocks.length} sx={{ overflowX: 'auto' }}>
-          <Box component="table" sx={{ borderCollapse: 'collapse', fontSize: 13, width: '100%' }}>
+          <Box component="table" sx={{ borderCollapse: 'collapse', fontSize: 14, width: '100%' }}>
             <tbody>
               {rows.map((r, ri) => (
                 <tr key={ri}>

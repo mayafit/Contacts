@@ -313,7 +313,7 @@ const ReachOutSection: React.FC<ReachOutSectionProps> = ({
                       <Tooltip title="This is me: mail between my own addresses is not a conversation">
                         <Button
                           size="small"
-                          sx={{ minWidth: 0, fontSize: 12, flexShrink: 0 }}
+                          sx={{ minWidth: 0, fontSize: 13, flexShrink: 0 }}
                           onClick={() =>
                             onMarkOwn(
                               a.contact?.emailAddresses?.length
@@ -332,7 +332,7 @@ const ReachOutSection: React.FC<ReachOutSectionProps> = ({
                       href={gmailThreadUrl(a.thread.threadId, account)}
                       target="_blank"
                       rel="noopener noreferrer"
-                      sx={{ fontSize: 13, flexShrink: 0 }}
+                      sx={{ fontSize: 14, flexShrink: 0 }}
                     >
                       Open
                     </Link>

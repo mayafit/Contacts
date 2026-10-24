@@ -53,7 +53,7 @@ const codeOf = (e: unknown): string => (e instanceof ApiRequestError ? e.code : 
 const SessionKeySteps: React.FC = () => (
   <Box
     component="ol"
-    sx={{ m: 0, mb: 1.5, pl: 2.5, color: tokens.textSecondary, fontSize: 13, lineHeight: 1.6 }}
+    sx={{ m: 0, mb: 1.5, pl: 2.5, color: tokens.textSecondary, fontSize: 14, lineHeight: 1.6 }}
   >
     <li>
       Sign in at{' '}

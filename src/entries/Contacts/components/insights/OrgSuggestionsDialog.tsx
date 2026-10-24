@@ -173,7 +173,7 @@ const OrgSuggestionsDialog: React.FC<OrgSuggestionsDialogProps> = ({
               >
                 {r.current || 'no organization'}
               </Typography>
-              <ArrowForward sx={{ fontSize: 14, color: tokens.textMuted }} />
+              <ArrowForward sx={{ fontSize: 15, color: tokens.textMuted }} />
               <Typography
                 variant="caption"
                 noWrap

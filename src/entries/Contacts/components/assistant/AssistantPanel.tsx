@@ -100,43 +100,43 @@ const SUGGESTIONS = [
 const stepLabel = (s: ToolStep): { icon: React.ReactNode; text: string } => {
   const r = s.result;
   if (r.error) {
-    return { icon: <ErrorOutline sx={{ fontSize: 14 }} />, text: `${s.name}: ${String(r.error)}` };
+    return { icon: <ErrorOutline sx={{ fontSize: 15 }} />, text: `${s.name}: ${String(r.error)}` };
   }
   switch (s.name) {
     case 'find_person': {
       const mail = Array.isArray(r.mailAndCalendar) ? r.mailAndCalendar.length : null;
       const found = Array.isArray(r.contacts) ? r.contacts.length : 0;
       return {
-        icon: <Search sx={{ fontSize: 14 }} />,
+        icon: <Search sx={{ fontSize: 15 }} />,
         text: `Looked for “${String((s.args.names as string[] | undefined)?.[0] ?? '')}” · ${found} in contacts${mail === null ? '' : ` · ${mail} in mail & calendar`}`,
       };
     }
     case 'search_contacts':
       return {
-        icon: <Search sx={{ fontSize: 14 }} />,
+        icon: <Search sx={{ fontSize: 15 }} />,
         text: `Searched contacts · ${String(r.total)} found`,
       };
     case 'get_contact':
       return {
-        icon: <Person sx={{ fontSize: 14 }} />,
+        icon: <Person sx={{ fontSize: 15 }} />,
         text: `Read ${String(r.name ?? 'a contact')}`,
       };
     case 'web_search':
       return {
-        icon: <Public sx={{ fontSize: 14 }} />,
+        icon: <Public sx={{ fontSize: 15 }} />,
         text: `Searched the web: “${String(s.args.query ?? '')}”`,
       };
     case 'show_contacts':
       return {
-        icon: <TableRows sx={{ fontSize: 14 }} />,
+        icon: <TableRows sx={{ fontSize: 15 }} />,
         text: `Showing ${String(r.contacts)} contacts in the table`,
       };
     case 'open_contact':
-      return { icon: <Person sx={{ fontSize: 14 }} />, text: 'Opened a contact card' };
+      return { icon: <Person sx={{ fontSize: 15 }} />, text: 'Opened a contact card' };
     case 'open_merge':
-      return { icon: <Person sx={{ fontSize: 14 }} />, text: 'Opened the merge dialog' };
+      return { icon: <Person sx={{ fontSize: 15 }} />, text: 'Opened the merge dialog' };
     default:
-      return { icon: <InsightsIcon sx={{ fontSize: 14 }} />, text: s.name.replace(/_/g, ' ') };
+      return { icon: <InsightsIcon sx={{ fontSize: 15 }} />, text: s.name.replace(/_/g, ' ') };
   }
 };
 
@@ -273,7 +273,7 @@ const ProposalCard: React.FC<{
             component="button"
             type="button"
             onClick={() => setExpanded(true)}
-            sx={{ alignSelf: 'flex-start', fontSize: 13 }}
+            sx={{ alignSelf: 'flex-start', fontSize: 14 }}
           >
             and {rows.length - shown.length} more
           </Link>
@@ -595,7 +595,7 @@ const AssistantPanel: React.FC<AssistantPanelProps> = ({
                   borderRadius: '12px 12px 2px 12px',
                   bgcolor: 'rgba(57,135,229,0.16)',
                   whiteSpace: 'pre-wrap',
-                  fontSize: 14,
+                  fontSize: 15,
                 }}
               >
                 {item.text}
@@ -636,7 +636,7 @@ const AssistantPanel: React.FC<AssistantPanelProps> = ({
                         href={src.uri}
                         target="_blank"
                         rel="noopener noreferrer"
-                        sx={{ fontSize: 12 }}
+                        sx={{ fontSize: 13 }}
                       >
                         {src.title || 'source'}
                       </Link>
@@ -709,7 +709,7 @@ const AssistantPanel: React.FC<AssistantPanelProps> = ({
             }}
             placeholder="Ask about your contacts…"
             inputProps={{ 'aria-label': 'Message the assistant', dir: 'auto' }}
-            sx={{ flex: 1, fontSize: 14 }}
+            sx={{ flex: 1, fontSize: 15 }}
           />
           <IconButton
             size="small"

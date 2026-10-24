@@ -106,7 +106,7 @@ const SiteShell: React.FC = () => {
                 }}
               >
                 {a.icon}
-                <Typography sx={{ fontSize: 10.5, fontWeight: 600 }}>{a.label}</Typography>
+                <Typography sx={{ fontSize: 11.5, fontWeight: 600 }}>{a.label}</Typography>
               </ButtonBase>
             </Tooltip>
           );

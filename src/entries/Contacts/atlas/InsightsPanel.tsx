@@ -342,7 +342,7 @@ const TrendChart: React.FC<{ series: InsightsSeries; metric: TrendMetric }> = ({
             key={bars[i].t}
             x={i * slot + 1}
             y={TREND_H + LABEL_ROW - 3}
-            fontSize={10}
+            fontSize={11}
             fill={tokens.textMuted}
           >
             {l.label}
@@ -354,7 +354,7 @@ const TrendChart: React.FC<{ series: InsightsSeries; metric: TrendMetric }> = ({
           key={y.year}
           x={y.x + 1}
           y={height - 2}
-          fontSize={10}
+          fontSize={11}
           fontWeight={600}
           fill={tokens.textSecondary}
         >
@@ -407,7 +407,7 @@ const CountBars: React.FC<{
               <text
                 x={i * slot + slot / 2}
                 y={COUNT_H + LABEL_ROW - 3}
-                fontSize={10}
+                fontSize={11}
                 textAnchor="middle"
                 fill={tokens.textMuted}
               >
@@ -643,7 +643,7 @@ const InsightsPanel: React.FC<InsightsPanelProps> = ({
                   value={metric}
                   onChange={(_, v: TrendMetric | null) => v && setMetric(v)}
                   aria-label="Trend measure"
-                  sx={{ '& .MuiToggleButton-root': { py: 0, px: 0.75, fontSize: 11, height: 22 } }}
+                  sx={{ '& .MuiToggleButton-root': { py: 0, px: 0.75, fontSize: 12, height: 22 } }}
                 >
                   <ToggleButton value="distance">km</ToggleButton>
                   <ToggleButton value="time">hours</ToggleButton>
@@ -733,7 +733,7 @@ const InsightsPanel: React.FC<InsightsPanelProps> = ({
                         <Chip
                           size="small"
                           label="new"
-                          sx={{ height: 18, fontSize: 11, flexShrink: 0 }}
+                          sx={{ height: 18, fontSize: 12, flexShrink: 0 }}
                           color="primary"
                           variant="outlined"
                         />

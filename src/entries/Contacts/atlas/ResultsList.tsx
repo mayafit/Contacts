@@ -118,7 +118,7 @@ const ResultsList: React.FC<ResultsListProps> = ({
                         size="small"
                         label={`${it.a.memberCount} sources`}
                         variant="outlined"
-                        sx={{ height: 18, fontSize: 11, flexShrink: 0 }}
+                        sx={{ height: 18, fontSize: 12, flexShrink: 0 }}
                       />
                     </Tooltip>
                   )}
@@ -126,7 +126,7 @@ const ResultsList: React.FC<ResultsListProps> = ({
                     <Tooltip title="The sources disagree on some values">
                       <WarningAmber
                         aria-label="The sources disagree"
-                        sx={{ fontSize: 15, color: tokens.attention, flexShrink: 0 }}
+                        sx={{ fontSize: 16, color: tokens.attention, flexShrink: 0 }}
                       />
                     </Tooltip>
                   )}
