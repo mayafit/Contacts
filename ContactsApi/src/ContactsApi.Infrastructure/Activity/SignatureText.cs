@@ -14,6 +14,32 @@ namespace ContactsApi.Infrastructure.Activity;
 /// </summary>
 public static class SignatureText
 {
+    private static readonly System.Text.RegularExpressions.Regex Tracking = new(
+        @"^(utm_[a-z]+|fbclid|gclid|mc_cid|mc_eid|_hsenc|_hsmi|mkt_tok|ref_src)$",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    /// <summary>
+    /// A link from a signature without its tracking (newsletter links carry
+    /// utm_source, mc_cid…); other query parameters stay
+    /// </summary>
+    public static string CleanUrl(string url)
+    {
+        var trimmed = url.Trim();
+        var q = trimmed.IndexOf('?');
+        if (q < 0)
+        {
+            return trimmed;
+        }
+
+        var hash = trimmed.IndexOf('#', q);
+        var query = hash < 0 ? trimmed[(q + 1)..] : trimmed[(q + 1)..hash];
+        var kept = query.Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Where(p => !Tracking.IsMatch(p.Split('=')[0]))
+            .ToList();
+        var rest = hash < 0 ? string.Empty : trimmed[hash..];
+        return trimmed[..q] + (kept.Count > 0 ? "?" + string.Join("&", kept) : string.Empty) + rest;
+    }
+
     /// <summary>Lines that start quoted history, in English and Hebrew mail clients</summary>
     private static readonly Regex[] QuoteStarts =
     {
