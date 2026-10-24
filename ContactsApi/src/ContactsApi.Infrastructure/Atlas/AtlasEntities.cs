@@ -180,6 +180,12 @@ public class ActivityFusion
     public DateTime StartTime { get; set; }
     public DateTime EndTime { get; set; }
     public double? DistanceM { get; set; }
+    /// <summary>Recorded time of an outing of several recordings (their sum); null otherwise</summary>
+    public double? DurationS { get; set; }
+    /// <summary>The joined track of an outing of several recordings; null otherwise</summary>
+    public string? Polyline { get; set; }
+    /// <summary>How many recordings the outing is made of (1: one recording)</summary>
+    public int SegmentCount { get; set; } = 1;
     public double? ElevationGainM { get; set; }
     public int? AvgHeartRate { get; set; }
     public int? MaxHeartRate { get; set; }

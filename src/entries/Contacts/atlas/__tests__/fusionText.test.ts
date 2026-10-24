@@ -104,6 +104,13 @@ describe('fusion texts', () => {
     );
   });
 
+  it('says when it is a part of the recording', () => {
+    expect(describeEvidence(evidence({ segment: true }))).toMatch(
+      /^the next part of the recording/,
+    );
+    expect(describeEvidence(evidence({ contained: true }))).toMatch(/within the recording$/);
+  });
+
   it('says when the user merged it', () => {
     expect(describeEvidence(evidence({ userDecision: true }))).toBe('merged by you');
   });

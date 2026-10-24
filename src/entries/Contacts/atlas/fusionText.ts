@@ -132,6 +132,12 @@ export const describeEvidence = (e: MatchEvidence): string => {
   if (e.userDecision) {
     return 'merged by you';
   }
+  if (e.segment) {
+    return 'the next part of the recording: started again where it stopped';
+  }
+  if (e.contained) {
+    return 'a piece of it as another source saw it, within the recording';
+  }
   const track = isSet(e.trackDeviationM)
     ? `track ${formatMeters(e.trackDeviationM)} apart (±${formatMeters(e.locationToleranceM)})`
     : 'no track to compare';

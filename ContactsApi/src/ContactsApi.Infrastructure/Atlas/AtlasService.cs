@@ -456,11 +456,19 @@ public partial class AtlasService
         var members = a.ClusterId.HasValue
             ? await _db.Activities.AsNoTracking().Where(x => x.OwnerId == owner && x.ClusterId == a.ClusterId).ToListAsync(ct)
             : new List<AtlasActivity> { a };
-        var count = a.PointCount;
+        var count = members.Where(m => m.Id == a.Id || a.Fusion is { SegmentCount: > 1 }).Sum(m => m.PointCount);
         var step = Math.Max(1, (int)Math.Ceiling(count / (double)Math.Clamp(maxPoints, 10, 20000)));
         // The analysis reads the full track; the app gets it thinned
+        // An outing recorded in pieces: all of them
+        var trackIds = new List<Guid> { id };
+        if (a.Fusion is { SegmentCount: > 1 })
+        {
+            trackIds.AddRange((System.Text.Json.JsonSerializer.Deserialize<List<MatchEvidence>>(a.Fusion.Evidence, JsonCamel) ?? new())
+                .Where(e => e.Segment).Select(e => e.MemberId));
+        }
+
         var full = await _db.TrackPoints.AsNoTracking()
-            .Where(p => p.ActivityId == id)
+            .Where(p => trackIds.Contains(p.ActivityId))
             .OrderBy(p => p.Time)
             .Select(p => new TrackAnalysis.Sample(p.Time, p.Lat, p.Lon, p.Elevation, p.HeartRate, p.Speed, p.Cadence))
             .ToListAsync(ct);
@@ -877,12 +885,13 @@ public partial class AtlasService
             a.Name ?? (a.Fusion != null ? a.Fusion.Name : null),
             a.Fusion != null ? a.Fusion.StartTime : a.StartTime,
             a.Fusion != null ? a.Fusion.EndTime : a.EndTime,
-            a.DistanceM ?? (a.Fusion != null ? a.Fusion.DistanceM : null),
-            a.DurationS,
-            a.ElevationGainM ?? (a.Fusion != null ? a.Fusion.ElevationGainM : null),
-            a.AvgHeartRate ?? (a.Fusion != null ? a.Fusion.AvgHeartRate : null),
-            a.MaxHeartRate ?? (a.Fusion != null ? a.Fusion.MaxHeartRate : null),
-            a.Source, a.Polyline, a.MinLat, a.MinLon, a.MaxLat, a.MaxLon, a.PointCount,
+            a.Fusion != null && a.Fusion.DistanceM != null ? a.Fusion.DistanceM : a.DistanceM,
+            a.Fusion != null && a.Fusion.DurationS != null ? a.Fusion.DurationS : a.DurationS,
+            a.Fusion != null && a.Fusion.ElevationGainM != null ? a.Fusion.ElevationGainM : a.ElevationGainM,
+            a.Fusion != null && a.Fusion.AvgHeartRate != null ? a.Fusion.AvgHeartRate : a.AvgHeartRate,
+            a.Fusion != null && a.Fusion.MaxHeartRate != null ? a.Fusion.MaxHeartRate : a.MaxHeartRate,
+            a.Source, a.Fusion != null && a.Fusion.Polyline != null ? a.Fusion.Polyline : a.Polyline,
+            a.MinLat, a.MinLon, a.MaxLat, a.MaxLon, a.PointCount,
             SplitSources(a.Fusion != null ? a.Fusion.Sources : a.Source),
             a.Fusion != null ? a.Fusion.MemberCount : 1,
             a.Fusion != null ? a.Fusion.ConflictCount : 0);

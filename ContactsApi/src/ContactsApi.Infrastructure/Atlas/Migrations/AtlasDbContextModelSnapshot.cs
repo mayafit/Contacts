@@ -112,6 +112,9 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                     b.Property<double?>("DistanceM")
                         .HasColumnType("double precision");
 
+                    b.Property<double?>("DurationS")
+                        .HasColumnType("double precision");
+
                     b.Property<double?>("ElevationGainM")
                         .HasColumnType("double precision");
 
@@ -142,6 +145,12 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                         .IsRequired()
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Polyline")
+                        .HasColumnType("text");
+
+                    b.Property<int>("SegmentCount")
+                        .HasColumnType("integer");
 
                     b.Property<string>("Sources")
                         .IsRequired()

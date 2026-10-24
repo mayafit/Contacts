@@ -180,6 +180,10 @@ export interface MatchEvidence {
   confidence: number;
   /** The user merged it (no automatic evidence needed) */
   userDecision: boolean;
+  /** The next part of the same recording (stopped and started again); missing from older servers */
+  segment?: boolean;
+  /** A piece lying within one of the activity's recordings (a phone's segment of it); missing from older servers */
+  contained?: boolean;
 }
 
 /** How accurate one source's times and positions are */

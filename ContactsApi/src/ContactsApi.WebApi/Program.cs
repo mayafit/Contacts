@@ -203,6 +203,42 @@ app.UseCors();
 // Session management
 app.UseSession();
 
+// Load the session up front. Lazily, a Redis timeout is swallowed and the session
+// looks empty, so a signed-in user got 401 and was sent to sign in (2026-10-24, a
+// merge on a busy Pi). One retry, then 503: the app keeps the user signed in.
+app.UseWhen(ctx => ctx.Request.Path.StartsWithSegments("/api") && !ctx.Request.Path.StartsWithSegments("/api/mcp"),
+    api => api.Use(async (ctx, next) =>
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                await ctx.Session.LoadAsync(ctx.RequestAborted);
+                break;
+            }
+            catch (Exception ex) when (!ctx.RequestAborted.IsCancellationRequested)
+            {
+                if (attempt < 2)
+                {
+                    continue;
+                }
+
+                ctx.RequestServices.GetRequiredService<ILogger<Program>>()
+                    .LogWarning(ex, "Session store unavailable; answering 503 instead of signing the user out");
+                ctx.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+                ctx.Response.Headers.RetryAfter = "2";
+                await ctx.Response.WriteAsJsonAsync(new
+                {
+                    success = false,
+                    error = new { code = "SESSION_STORE_UNAVAILABLE", message = "The server is busy. Try again in a moment.", timestamp = DateTime.UtcNow }
+                });
+                return;
+            }
+        }
+
+        await next();
+    }));
+
 // Authentication & Authorization
 // app.UseAuthentication(); // TODO: Add when implementing proper auth
 // app.UseAuthorization();
