@@ -171,6 +171,16 @@ public class FusionToleranceTests
     }
 
     [Fact]
+    public void One_ride_recorded_by_phone_and_watch_is_one_activity_despite_the_watch_gps()
+    {
+        var phone = C("sports-tracker", 0, 136);
+        var watch = C("sports-tracker", 1, 136) with { Id = Guid.NewGuid() };
+        // The watch track runs ~250 m off the phone's
+        var tracks = new Dictionary<Guid, List<TrackSample>> { [phone.Id] = Track(0), [watch.Id] = Track(0.00225) };
+        Assert.Single(Fusion.Group(new[] { phone, watch }, [], [], FusionRules.Default, tracks));
+    }
+
+    [Fact]
     public void Wider_tolerances_accept_looser_matches()
     {
         var ride = C("sports-tracker", 0, 60);

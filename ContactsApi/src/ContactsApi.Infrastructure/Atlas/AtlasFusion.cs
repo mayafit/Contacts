@@ -119,6 +119,13 @@ public static class Fusion
         var (ta, tb) = (rules.For(a.Source), rules.For(b.Source));
         var tt = ta.TimeS + tb.TimeS;
         var lt = ta.LocationM + tb.LocationM;
+        if (a.Source == b.Source)
+        {
+            // The same ride recorded by two devices into one source (phone and watch
+            // into Sports Tracker): times decide; a watch's GPS may be far off
+            lt = Math.Max(lt, 500);
+        }
+
         var dStart = (b.Start - a.Start).TotalSeconds;
         var dEnd = (b.End - a.End).TotalSeconds;
         var withinTime = Math.Abs(dStart) <= tt && Math.Abs(dEnd) <= tt;
