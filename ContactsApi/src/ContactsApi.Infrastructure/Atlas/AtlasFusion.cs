@@ -581,7 +581,9 @@ public static class Fusion
             .ToList();
 
         var distanceM = distance != null ? DistanceOf(distance) : null;
-        var conflicts = Conflicts(group, primary, typed.Type, distanceM, evidence.Where(e => !e.Segment && !e.Contained).ToList());
+        // A piece within the recording covers only part of it: not a distance disagreement
+        var pieces = evidence.Where(e => e.Contained).Select(e => e.MemberId).ToHashSet();
+        var conflicts = Conflicts(group, primary, typed.Type, distanceM, evidence.Where(e => !e.Segment && !e.Contained).ToList(), pieces);
         if (distance != null && distanceM != distance.DistanceM && distance.DistanceM.HasValue)
         {
             conflicts.Add(TrackDistanceConflict(distance));
@@ -682,7 +684,10 @@ public static class Fusion
         // Times only from other recordings: a phone cuts an outing around its stops,
         // so its segments never start and end with it
         var timed = evidence.Where(e => !e.Segment && !e.Contained && Rank(e.Source) < Rank("google-timeline")).ToList();
-        var conflicts = Conflicts(others.Append(outing).ToList(), outing, typed.Type, distance, timed);
+        // Distances likewise: a phone's segment or a piece within a recording covers only part of the outing
+        var partial = others.Where(m => Rank(m.Source) >= Rank("google-timeline") || evidence.Any(e => e.MemberId == m.Id && e.Contained))
+            .Select(m => m.Id).ToHashSet();
+        var conflicts = Conflicts(others.Append(outing).ToList(), outing, typed.Type, distance, timed, partial);
         conflicts.AddRange(segments.Where(s => DistanceOf(s) != s.DistanceM && s.DistanceM.HasValue).Select(TrackDistanceConflict));
         var polyline = Geo.EncodePolyline(Geo.Simplify(segments
             .SelectMany(s => s.Polyline != null ? AtlasService.DecodePolyline(s.Polyline) : new List<(double, double)>())
@@ -718,7 +723,7 @@ public static class Fusion
     }
 
     private static List<FusionConflict> Conflicts(IReadOnlyList<FusionCandidate> group, FusionCandidate primary, string type,
-        double? distance, List<MatchEvidence> evidence)
+        double? distance, List<MatchEvidence> evidence, IReadOnlySet<Guid>? partial = null)
     {
         var conflicts = new List<FusionConflict>();
         var types = group.Where(m => m.Type != "other").GroupBy(m => m.Type).ToList();
@@ -731,7 +736,7 @@ public static class Fusion
         }
 
         // Each record's believable distance (a lost source summary has its own conflict)
-        var distances = group.Where(m => DistanceOf(m) is > 0).ToList();
+        var distances = group.Where(m => DistanceOf(m) is > 0 && partial?.Contains(m.Id) != true).ToList();
         if (distances.Count > 1)
         {
             var max = distances.Max(m => DistanceOf(m)!.Value);
@@ -746,7 +751,8 @@ public static class Fusion
         }
 
         // Times and tracks beyond the combined tolerance of the two sources
-        foreach (var e in evidence)
+        // A moment (a session without a duration) has no start and end to compare
+        foreach (var e in evidence.Where(e => group.Any(m => m.Id == e.MemberId && (m.End - m.Start).TotalSeconds >= 60)))
         {
             var member = group.First(m => m.Id == e.MemberId);
             if (Math.Abs(e.StartDeltaS) > e.TimeToleranceS)

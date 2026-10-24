@@ -55,6 +55,37 @@ public class FusionOutingTests
         // No time conflicts for the pieces; the lost distance is reported
         Assert.DoesNotContain(fused.Conflicts, c => c.Message.Contains("Sports Tracker starts") || c.Message.StartsWith("Google Timeline"));
         Assert.Contains(fused.Conflicts, c => c.Field == "distanceM" && c.Message.Contains("its own track is 21.5 km"));
+        // The phone's segments cover parts of the outing: not a distance disagreement
+        Assert.DoesNotContain(fused.Conflicts, c => c.Field == "distanceM" && c.Message.Contains("Google Timeline"));
+    }
+
+    [Fact]
+    public void Within_one_recording_a_piece_is_no_distance_conflict_but_a_moment_and_a_type_still_count()
+    {
+        var piece = Rec("google-timeline", "ride", 55.2, 71.3, 3_748, 9);
+        var drive = Rec("google-timeline", "drive", 5, 130, 30_000, 20);
+        var moment = Rec("samsung-health", "other", 2.3, 2.3, null, 0);
+        var fused = Fusion.Fuse(new[] { Out, piece, drive, moment });
+        Assert.True(Assert.Single(fused.Evidence, e => e.MemberId == piece.Id).Contained);
+        Assert.DoesNotContain(fused.Conflicts, c => c.Field == "distanceM" && c.Values.Any(v => v.Value == "3.7 km"));
+        Assert.DoesNotContain(fused.Conflicts, c => c.Values.Any(v => v.Value == moment.End.ToString("u")));
+        Assert.Contains(fused.Conflicts, c => c.Field == "type" && c.Message.Contains("Google Timeline says drive"));
+    }
+
+    [Fact]
+    public void In_an_outing_a_phone_segment_of_another_type_is_still_a_type_conflict()
+    {
+        var fused = Fusion.Fuse(new[] { Out, Back, Tl3 with { Type = "drive" } });
+        Assert.Contains(fused.Conflicts, c => c.Field == "type" && c.Message.Contains("Google Timeline says drive"));
+    }
+
+    [Fact]
+    public void A_moment_record_has_no_time_conflicts()
+    {
+        var moment = Rec("samsung-health", "other", 2.3, 2.3, null, 0);
+        var fused = Fusion.Fuse(new[] { Out, Back, Watch, moment });
+        Assert.Contains(fused.Members, m => m.Id == moment.Id);
+        Assert.DoesNotContain(fused.Conflicts, c => c.Values.Any(v => v.Value == moment.End.ToString("u")));
     }
 
     [Fact]
