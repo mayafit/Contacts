@@ -135,10 +135,17 @@ public partial class AtlasService
         ["walk"] = 9, ["hike"] = 9, ["run"] = 25, ["ride"] = 70, ["swim"] = 8, ["ski"] = 150
     };
 
-    /// <summary>Whether the activity's average speed is believable for its type</summary>
+    /// <summary>Longest believable duration per type (hours); longer means a segment that spans the day</summary>
+    private static readonly Dictionary<string, double> MaxHours = new()
+    {
+        ["walk"] = 12, ["hike"] = 16, ["run"] = 8, ["ride"] = 16, ["swim"] = 5, ["ski"] = 12
+    };
+
+    /// <summary>Whether the activity's average speed and duration are believable for its type</summary>
     private static bool Plausible(InsightRow a) =>
-        !MaxSpeed.TryGetValue(a.Type, out var max) || a.DistanceM is not > 0 || Hours(a) <= 0
-        || a.DistanceM.Value / 1000 / Hours(a) <= max;
+        (!MaxHours.TryGetValue(a.Type, out var hours) || Hours(a) <= hours)
+        && (!MaxSpeed.TryGetValue(a.Type, out var max) || a.DistanceM is not > 0 || Hours(a) <= 0
+            || a.DistanceM.Value / 1000 / Hours(a) <= max);
 
     private static double Hours(InsightRow a) =>
         a.DurationS is > 0 ? a.DurationS.Value / 3600 : Math.Max(0, (a.End - a.Start).TotalHours);
@@ -439,7 +446,7 @@ public partial class AtlasService
         if (coverage.Implausible >= 3)
         {
             proposals.Add(new Proposal("implausible", "tip", $"{coverage.Implausible} activities with an impossible speed",
-                "For example walks at highway speed: Google Timeline probably misclassified them (a drive or a flight). They are left out of records; change their type to correct them.",
+                "For example walks at highway speed or runs lasting a whole day: Google Timeline probably misclassified them or stretched them over hours. They are left out of records; change their type to correct them.",
                 null));
         }
 
