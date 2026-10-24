@@ -152,11 +152,13 @@ public class ActivityWorker : BackgroundService
             await Beat("contacts", 0);
             var people = new GooglePeopleApiClient(token, _loggerFactory.CreateLogger<GooglePeopleApiClient>());
             var contactEmails = new List<string>();
+            var cards = new List<IReadOnlyCollection<string?>>();
             string? page = null;
             do
             {
                 var (contacts, next) = await people.FetchAllContactsAsync(1000, page);
                 contactEmails.AddRange(contacts.SelectMany(c => c.EmailAddresses ?? new()).Select(e => e.Value ?? string.Empty));
+                cards.AddRange(contacts.Select(c => (IReadOnlyCollection<string?>)(c.EmailAddresses ?? new()).Select(e => e.Value).ToList()));
                 page = next;
                 await Beat("contacts", contactEmails.Count);
             }
@@ -164,7 +166,11 @@ public class ActivityWorker : BackgroundService
 
             var client = new GoogleActivityClient(Token, _loggerFactory.CreateLogger<GoogleActivityClient>());
             var (mailbox, historyId) = job.Gmail ? await client.GetProfileAsync(ct) : (string.Empty, (ulong?)null);
-            var mine = new[] { job.UserEmail, mailbox };
+            // All of the user's addresses: mail between them is not a conversation
+            var aliases = job.Gmail ? await client.GetSendAsAddressesAsync(ct) : new List<string>();
+            var marked = await _store.GetSelfAsync(job.UserId);
+            var mine = OwnAddresses.Expand(new[] { job.UserEmail, mailbox }.Concat(aliases).Concat(marked), cards);
+            snapshot.MyEmails = mine.OrderBy(e => e).ToList();
             var now = DateTime.UtcNow;
 
             var full = !job.Gmail

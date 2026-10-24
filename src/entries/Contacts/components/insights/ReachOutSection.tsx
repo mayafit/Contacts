@@ -52,6 +52,8 @@ export interface ReachOutSectionProps {
   onSignatures: () => void;
   /** Signed-in address, for Gmail links */
   account?: string;
+  /** "This is me": the addresses are the user's own */
+  onMarkOwn?: (emails: string[]) => void;
 }
 
 const ICONS: Record<ReasonKind, React.ReactNode> = {
@@ -102,6 +104,7 @@ const ReachOutSection: React.FC<ReachOutSectionProps> = ({
   withoutEmail,
   onSignatures,
   account,
+  onMarkOwn,
 }) => {
   const [dismissed, setDismissed] = useState<Record<string, number>>(loadDismissed);
   const [all, setAll] = useState(false);
@@ -306,6 +309,25 @@ const ReachOutSection: React.FC<ReachOutSectionProps> = ({
                         {a.daysSince} days · {a.thread.subject || '(no subject)'}
                       </Typography>
                     </Box>
+                    {onMarkOwn && (
+                      <Tooltip title="This is me: mail between my own addresses is not a conversation">
+                        <Button
+                          size="small"
+                          sx={{ minWidth: 0, fontSize: 12, flexShrink: 0 }}
+                          onClick={() =>
+                            onMarkOwn(
+                              a.contact?.emailAddresses?.length
+                                ? a.contact.emailAddresses
+                                    .map((e) => e.value ?? '')
+                                    .filter((e) => e.length > 0)
+                                : [a.email],
+                            )
+                          }
+                        >
+                          This is me
+                        </Button>
+                      </Tooltip>
+                    )}
                     <Link
                       href={gmailThreadUrl(a.thread.threadId, account)}
                       target="_blank"

@@ -75,6 +75,16 @@ public class ActivityResponse : ActivityStatusResponse
 
     /// <summary>Recent threads with people, newest first</summary>
     public List<MailThread> Threads { get; set; } = new();
+
+    /// <summary>The user's own addresses (left out of threads and people)</summary>
+    public List<string> MyEmails { get; set; } = new();
+}
+
+/// <summary>Addresses that are the user's own</summary>
+public class SelfRequest
+{
+    /// <summary>Email addresses</summary>
+    public List<string> Emails { get; set; } = new();
 }
 
 /// <summary>A contact without an email, with the names to look for</summary>
@@ -141,9 +151,71 @@ public class ActivityController : ControllerBase
 
         var snapshot = await _store.GetAsync(userId);
         var response = Fill(new ActivityResponse(), snapshot);
-        response.People = snapshot.People;
-        response.Threads = (snapshot.Threads ?? new()).Values.OrderByDescending(t => t.LastAt).ToList();
+
+        // The user's own addresses, including ones marked after the last scan: mail
+        // between them is not a conversation with someone
+        var mine = (snapshot.MyEmails ?? new())
+            .Concat(await _store.GetSelfAsync(userId))
+            .Select(OwnAddresses.Normalize)
+            .Where(e => e.Length > 0)
+            .ToHashSet();
+        response.MyEmails = mine.OrderBy(e => e).ToList();
+        response.People = snapshot.People.Where(p => !mine.Contains(p.Key)).ToDictionary(p => p.Key, p => p.Value);
+        response.Threads = (snapshot.Threads ?? new()).Values
+            .Select(t =>
+            {
+                var others = t.Counterparts.Where(c => !mine.Contains(OwnAddresses.Normalize(c))).ToList();
+                return others.Count == t.Counterparts.Count ? t : others.Count == 0 ? null : CopyWith(t, others);
+            })
+            .OfType<MailThread>()
+            .OrderByDescending(t => t.LastAt)
+            .ToList();
         return Ok(ApiResponse<ActivityResponse>.SuccessResponse(response));
+    }
+
+    private static MailThread CopyWith(MailThread t, List<string> counterparts) => new()
+    {
+        ThreadId = t.ThreadId, LastAt = t.LastAt, LastFromMe = t.LastFromMe, Counterparts = counterparts,
+        Subject = t.Subject, InInbox = t.InInbox, Messages = t.Messages, LastMessageId = t.LastMessageId
+    };
+
+    /// <summary>
+    /// Marks addresses as the user's own ("This is me"): left out of replies,
+    /// rhythm and suggestions from now on (and in the next scan)
+    /// </summary>
+    [HttpPost("self")]
+    public async Task<IActionResult> AddSelf([FromBody] SelfRequest request)
+    {
+        var userId = await SignedInUserAsync();
+        if (userId == null)
+        {
+            return SessionExpired();
+        }
+
+        var add = (request.Emails ?? new()).Select(OwnAddresses.Normalize).Where(OwnAddresses.IsAddress).ToList();
+        if (add.Count == 0)
+        {
+            return BadRequest(ApiResponse<object>.ErrorResponse("INVALID", "No email address given."));
+        }
+
+        var all = (await _store.GetSelfAsync(userId)).Concat(add).Distinct().ToList();
+        await _store.SaveSelfAsync(userId, all);
+        return Ok(ApiResponse<List<string>>.SuccessResponse(all));
+    }
+
+    /// <summary>Takes back a "This is me"</summary>
+    [HttpDelete("self/{email}")]
+    public async Task<IActionResult> RemoveSelf(string email)
+    {
+        var userId = await SignedInUserAsync();
+        if (userId == null)
+        {
+            return SessionExpired();
+        }
+
+        var all = (await _store.GetSelfAsync(userId)).Where(e => e != OwnAddresses.Normalize(email)).ToList();
+        await _store.SaveSelfAsync(userId, all);
+        return Ok(ApiResponse<List<string>>.SuccessResponse(all));
     }
 
     /// <summary>

@@ -1027,6 +1027,20 @@ const SignedInHome: React.FC = () => {
                     onSignatures={() => setSignatureTargets('auto')}
                     account={user?.email}
                     withoutEmail={filterCounts.noEmail ?? 0}
+                    onMarkOwn={(emails) => {
+                      void backendApiClient
+                        .markOwnEmails(emails)
+                        .then(() => activity.reload())
+                        .catch((e) =>
+                          logger.warn(
+                            {
+                              context: 'ContactsHome/markOwn',
+                              metadata: { message: (e as Error).message },
+                            },
+                            'Marking own address failed',
+                          ),
+                        );
+                    }}
                   />
                   <ActivitySection
                     activity={activity}
