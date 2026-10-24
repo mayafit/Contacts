@@ -99,7 +99,7 @@ const AiAccessDialog: React.FC<AiAccessDialogProps> = ({ open, onClose }) => {
               Copy it now: it is not shown again.
             </Typography>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Box component="code" sx={{ wordBreak: 'break-all', fontSize: 13 }}>
+              <Box component="code" sx={{ wordBreak: 'break-all', fontSize: 14 }}>
                 {created}
               </Box>
               <IconButton
@@ -114,7 +114,7 @@ const AiAccessDialog: React.FC<AiAccessDialogProps> = ({ open, onClose }) => {
               Claude Code:
             </Typography>
             <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-              <Box component="code" sx={{ wordBreak: 'break-all', fontSize: 12 }}>
+              <Box component="code" sx={{ wordBreak: 'break-all', fontSize: 13 }}>
                 {command}
               </Box>
               <IconButton

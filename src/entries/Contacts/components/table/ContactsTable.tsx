@@ -309,11 +309,11 @@ const ContactsTable: React.FC<ContactsTableProps> = ({
               key={l}
               label={l}
               size="small"
-              sx={{ height: 22, fontSize: 12, bgcolor: tokens.raised }}
+              sx={{ height: 22, fontSize: 13, bgcolor: tokens.raised }}
             />
           ))}
           {labels.length > 2 && (
-            <Box component="span" sx={{ color: tokens.textMuted, fontSize: 12 }}>
+            <Box component="span" sx={{ color: tokens.textMuted, fontSize: 13 }}>
               +{labels.length - 2}
             </Box>
           )}
@@ -407,7 +407,7 @@ const ContactsTable: React.FC<ContactsTableProps> = ({
                     justifyContent: 'flex-start',
                     gap: 0.5,
                     px: 1.5,
-                    fontSize: 12,
+                    fontSize: 13,
                     fontWeight: 600,
                     letterSpacing: '0.03em',
                     textTransform: 'uppercase',
@@ -418,9 +418,9 @@ const ContactsTable: React.FC<ContactsTableProps> = ({
                   {column.label}
                   {active &&
                     (sort.desc ? (
-                      <ArrowDownward sx={{ fontSize: 14 }} />
+                      <ArrowDownward sx={{ fontSize: 15 }} />
                     ) : (
-                      <ArrowUpward sx={{ fontSize: 14 }} />
+                      <ArrowUpward sx={{ fontSize: 15 }} />
                     ))}
                 </ButtonBase>
               );

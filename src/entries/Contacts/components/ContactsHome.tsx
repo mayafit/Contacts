@@ -441,7 +441,7 @@ const SignedInHome: React.FC = () => {
         <Box
           component="kbd"
           sx={{
-            fontSize: 11,
+            fontSize: 12,
             color: tokens.textMuted,
             border: `1px solid ${tokens.borderStrong}`,
             borderRadius: '5px',
@@ -697,7 +697,7 @@ const SignedInHome: React.FC = () => {
             displayEmpty
             onChange={(e) => setLabel(e.target.value)}
             aria-label="Filter by label"
-            sx={{ minWidth: 150, height: 32, fontSize: 13, borderRadius: '8px' }}
+            sx={{ minWidth: 150, height: 32, fontSize: 14, borderRadius: '8px' }}
             renderValue={(v) => (v ? (groups[v]?.name ?? 'Label') : 'All labels')}
           >
             <MenuItem value="">All labels</MenuItem>
@@ -855,7 +855,7 @@ const SignedInHome: React.FC = () => {
           scrollButtons={false}
           sx={{
             minHeight: 60,
-            '& .MuiTab-root': { minHeight: 60, px: 1.5, minWidth: 0, fontSize: 14 },
+            '& .MuiTab-root': { minHeight: 60, px: { xs: 1, sm: 1.5 }, minWidth: 0, fontSize: 15 },
           }}
         >
           <Tab value="contacts" label="Contacts" />
@@ -871,7 +871,7 @@ const SignedInHome: React.FC = () => {
                     component="span"
                     aria-label={`${duplicateGroups.length} groups`}
                     sx={{
-                      fontSize: 11,
+                      fontSize: 12,
                       fontWeight: 700,
                       lineHeight: '18px',
                       minWidth: 18,
@@ -939,7 +939,7 @@ const SignedInHome: React.FC = () => {
         >
           <Avatar
             src={user?.profilePicture}
-            sx={{ width: 32, height: 32, fontSize: 14, bgcolor: tokens.accent, color: '#fff' }}
+            sx={{ width: 32, height: 32, fontSize: 15, bgcolor: tokens.accent, color: '#fff' }}
           >
             {userInitial}
           </Avatar>

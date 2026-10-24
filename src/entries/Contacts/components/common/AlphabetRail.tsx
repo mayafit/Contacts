@@ -91,7 +91,7 @@ const AlphabetRail: React.FC<AlphabetRailProps> = ({ entries, activeLetter, onJu
                 width: 22,
                 minHeight: 16,
                 borderRadius: '6px',
-                fontSize: 11,
+                fontSize: 12,
                 lineHeight: '16px',
                 fontWeight: active ? 700 : 500,
                 color: active ? '#fff' : tokens.textSecondary,
