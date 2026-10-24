@@ -31,7 +31,7 @@ public class AtlasMcpTools
     private string Owner => _http.HttpContext?.Items[OwnerItem] as string
                             ?? throw new UnauthorizedAccessException("No access token");
 
-    [McpServerTool(Name = "atlas_insights"), Description("Insights over the user's fused data for a query (all filters optional): totals with the change against the period before, per activity type (distance, time, climb, speed, heart rate), trend, weekdays and hours, personal records, active streaks, top places and new places, travel (flights, days away from home), data quality (heart-rate coverage, recorded vs inferred, conflicts) and proposals (rhythm, training load, places to name, data to add).")]
+    [McpServerTool(Name = "atlas_insights"), Description("Insights over the user's fused data for a query (all filters optional): totals with the change against the period before, per activity type (distance, time, climb, speed, heart rate), trend, weekdays and hours, personal records, active streaks, top places and new places, travel (flights, days away from home), data quality (heart-rate coverage, recorded vs inferred, conflicts), proposals (rhythm, training load, places to name, data to add), weekly training load (hours, km, minutes × intensity), time in heart-rate zones and per-sport trends of speed and heart rate (last third vs first third of the period).")]
     public Task<Insights> Insights(
         [Description("Start of the time range, ISO 8601")] DateTime? from = null,
         [Description("End of the time range, ISO 8601")] DateTime? to = null,
@@ -87,7 +87,7 @@ public class AtlasMcpTools
             Types = types?.ToList(), Text = text, Activities = activities, Visits = visits, Limit = limit
         });
 
-    [McpServerTool(Name = "atlas_get_activity"), Description("One activity with its track (time, position, elevation, heart rate, speed) and its heart rate series (from the track, or from health samples recorded at the same time). Activities are fused from several sources (Sports Tracker, Google Timeline, Google Fit, Fitbit…): the result lists the source records (members), which source supplied each value (fieldSources), what they disagree on (conflicts), and the places visited at the start, end or on the way.")]
+    [McpServerTool(Name = "atlas_get_activity"), Description("One activity with its track (time, position, elevation, heart rate, speed) and its heart rate series (from the track, or from health samples recorded at the same time). Activities are fused from several sources (Sports Tracker, Google Timeline, Google Fit, Fitbit…): the result lists the source records (members), which source supplied each value (fieldSources), what they disagree on (conflicts), and the places visited at the start, end or on the way. Points carry distance from the start (d), speed and cadence. The analysis has moving vs stopped time, splits (per km for runs/walks/hikes, per 5 km for rides) with pace, heart rate and climb, time in heart-rate zones (from the user's own max), aerobic decoupling (drift), best efforts with their all-time rank, and the comparison with the same route and the same type over the last year.")]
     public Task<ActivityDetail> GetActivity(
         [Description("Activity id")] Guid id,
         [Description("Maximum track points returned (default 500)")] int maxPoints = 500) =>

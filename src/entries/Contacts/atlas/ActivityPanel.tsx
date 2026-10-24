@@ -1,6 +1,8 @@
 /**
- * @fileoverview Details of one activity: numbers, heart-rate and elevation
- * charts linked to the map, editing, and the fused activity's sources,
+ * @fileoverview Details of one activity: numbers, the analysis (moving
+ * summary; heart-rate, speed/pace, elevation and cadence charts synced to one
+ * cursor that the map follows; zones, splits, effort, comparison with the
+ * user's other activities), editing, and the fused activity's sources,
  * conflicts and places (split, merge)
  * @module Contacts/atlas/ActivityPanel
  */
@@ -15,6 +17,8 @@ import {
   IconButton,
   MenuItem,
   TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Tooltip,
   Typography,
 } from '@mui/material';
@@ -24,22 +28,13 @@ import {
   CallSplit,
   DeleteOutline,
   Edit,
-  Favorite,
   Place,
   SportsScore,
   TripOrigin,
 } from '@mui/icons-material';
-import type {
-  ActivityDetail,
-  ActivityMember,
-  LinkedPlace,
-  MatchEvidence,
-  PointOutput,
-  SeriesPoint,
-} from './types';
+import type { ActivityDetail, ActivityMember, LinkedPlace, MatchEvidence } from './types';
 import {
   ACTIVITY_TYPES,
-  HEALTH_COLOR,
   VISIT_COLOR,
   describeFieldSources,
   sourceLabel,
@@ -48,6 +43,17 @@ import {
 } from './types';
 import { formatDistance, formatDuration, formatWhen } from './geo';
 import { describeEvidence, formatPercent } from './fusionText';
+import { indexAt, timeAtDistance, trackSamples, type ChartAxis } from './analysis';
+import ActivityCharts from './ActivityCharts';
+import HrZonesBar from './HrZonesBar';
+import PanelSection from './PanelSection';
+import {
+  AnalysisSummary,
+  ComparedSection,
+  EffortSection,
+  SplitsTable,
+  routeRankText,
+} from './AnalysisSections';
 import { tokens } from '../theme/contactsTheme';
 
 /** Props for ActivityPanel */
@@ -63,6 +69,8 @@ export interface ActivityPanelProps {
   onStartMerge: () => void;
   /** Shows a linked place (its visit, or its position on the map) */
   onShowPlace: (lat: number, lon: number, visitId: string) => void;
+  /** Opens another activity (e.g. an earlier one on the same route) */
+  onOpenActivity: (id: string) => void;
 }
 
 /** Icon and text of a linked place's role */
@@ -156,77 +164,6 @@ const MemberRow: React.FC<{
   </Box>
 );
 
-/** Nearest track point to a time */
-const pointAt = (points: PointOutput[], t: number): PointOutput | undefined => {
-  let lo = 0;
-  let hi = points.length - 1;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (Date.parse(points[mid].t) < t) {
-      lo = mid + 1;
-    } else {
-      hi = mid;
-    }
-  }
-  return points[lo];
-};
-
-/** A line chart over the activity's time span; hovering reports the time */
-const Chart: React.FC<{
-  label: string;
-  unit: string;
-  color: string;
-  series: { t: number; v: number }[];
-  from: number;
-  to: number;
-  onHover: (t: number | null) => void;
-}> = ({ label, unit, color, series, from, to, onHover }) => {
-  const [hover, setHover] = useState<{ t: number; v: number } | null>(null);
-  const W = 340;
-  const H = 90;
-  if (series.length < 2) {
-    return null;
-  }
-  const min = Math.min(...series.map((p) => p.v));
-  const max = Math.max(...series.map((p) => p.v));
-  const x = (t: number) => ((t - from) / Math.max(1, to - from)) * W;
-  const y = (v: number) => H - 4 - ((v - min) / Math.max(1, max - min)) * (H - 10);
-  const d = series
-    .map((p, i) => `${i ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`)
-    .join('');
-  return (
-    <Box sx={{ mt: 1.5 }}>
-      <Typography variant="caption" sx={{ color: tokens.textSecondary }}>
-        {label} · {Math.round(min)}–{Math.round(max)} {unit}
-        {hover
-          ? ` · ${Math.round(hover.v)} ${unit} at ${new Date(hover.t).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`
-          : ''}
-      </Typography>
-      <svg
-        width="100%"
-        viewBox={`0 0 ${W} ${H}`}
-        style={{ display: 'block', cursor: 'crosshair' }}
-        onMouseMove={(e) => {
-          const rect = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
-          const t = from + ((e.clientX - rect.left) / rect.width) * (to - from);
-          const near = series.reduce((a, b) => (Math.abs(b.t - t) < Math.abs(a.t - t) ? b : a));
-          setHover(near);
-          onHover(near.t);
-        }}
-        onMouseLeave={() => {
-          setHover(null);
-          onHover(null);
-        }}
-      >
-        <path d={d} fill="none" stroke={color} strokeWidth={1.5} />
-        {hover && (
-          <line x1={x(hover.t)} x2={x(hover.t)} y1={0} y2={H} stroke="#fff" opacity={0.5} />
-        )}
-      </svg>
-    </Box>
-  );
-};
-
 /**
  * Activity details.
  * @param props - Component props
@@ -241,6 +178,7 @@ const ActivityPanel: React.FC<ActivityPanelProps> = ({
   onSplit,
   onStartMerge,
   onShowPlace,
+  onOpenActivity,
 }) => {
   const s = detail.summary;
   const [editing, setEditing] = useState(false);
@@ -251,23 +189,36 @@ const ActivityPanel: React.FC<ActivityPanelProps> = ({
   const evidence = detail.evidence ?? [];
   const matchConfidence = detail.matchConfidence ?? null;
   const provenance = describeFieldSources(detail.fieldSources);
+  const analysis = detail.analysis ?? null;
   const [name, setName] = useState(s.name ?? '');
   const [type, setType] = useState(s.type);
   const [notes, setNotes] = useState(detail.notes ?? '');
+  const [axis, setAxis] = useState<ChartAxis>('time');
+  // The charts' shared cursor, seconds from the start
+  const [cursorT, setCursorT] = useState<number | null>(null);
   const from = Date.parse(s.startTime);
   const to = Date.parse(s.endTime);
-  const hr = useMemo(
-    () => detail.heartRate.map((p: SeriesPoint) => ({ t: Date.parse(p.t), v: p.v })),
-    [detail],
+  const samples = useMemo(() => trackSamples(detail.points, from), [detail.points, from]);
+  const durationS = Math.max(
+    (to - from) / 1000,
+    samples.length ? samples[samples.length - 1].t : 0,
   );
-  const ele = useMemo(
-    () => detail.points.filter((p) => isSet(p.ele)).map((p) => ({ t: Date.parse(p.t), v: p.ele! })),
-    [detail],
-  );
-  const hover = (t: number | null) => {
-    const p = !isSet(t) ? undefined : pointAt(detail.points, t);
-    onCursor(p ? [p.lat, p.lon] : null);
+  const hasDistance = samples.length > 1 && samples[samples.length - 1].d > 0;
+  const trackOffsetS = detail.points.length ? (Date.parse(detail.points[0].t) - from) / 1000 : 0;
+  const pace = analysis?.pace ?? false;
+
+  /** Moves the cursor (charts and map) to a moment; null hides it */
+  const seek = (t: number | null) => {
+    setCursorT(t);
+    if (!isSet(t)) {
+      onCursor(null);
+      return;
+    }
+    const i = indexAt(samples, 't', t);
+    onCursor(i < 0 ? null : [samples[i].lat, samples[i].lon]);
   };
+  const hoverX = (x: number | null) =>
+    seek(!isSet(x) ? null : axis === 'time' || !hasDistance ? x : timeAtDistance(samples, x));
 
   const stats = [
     ['Distance', formatDistance(s.distanceM)],
@@ -279,6 +230,19 @@ const ActivityPanel: React.FC<ActivityPanelProps> = ({
     ],
     ['Heart rate', s.avgHeartRate ? `${s.avgHeartRate} avg · ${s.maxHeartRate} max` : ''],
   ].filter(([, v]) => v);
+
+  const zones = analysis?.zones ?? null;
+  const splits = analysis?.splits ?? [];
+  const bestEfforts = analysis?.bestEfforts ?? [];
+  const drift = analysis?.drift ?? null;
+  const similar = analysis?.similar ?? null;
+  const hasCompared =
+    !!similar &&
+    (similar.sameRoute.length > 0 ||
+      !!routeRankText(similar) ||
+      (similar.sameType.count >= 3 &&
+        (isSet(similar.sameType.speedPercentile) || isSet(similar.sameType.distancePercentile))));
+  const showSources = members.length > 1 || conflicts.length > 0;
 
   return (
     <Box sx={{ p: 2 }}>
@@ -364,36 +328,135 @@ const ActivityPanel: React.FC<ActivityPanelProps> = ({
           </Box>
         ))}
       </Box>
+      {analysis && <AnalysisSummary analysis={analysis} type={s.type} />}
 
-      {conflicts.length > 0 && (
-        <Alert severity="warning" sx={{ mt: 1.5, '& .MuiAlert-message': { minWidth: 0 } }}>
-          <Typography variant="body2" sx={{ fontWeight: 600 }}>
-            The sources disagree
-          </Typography>
-          {conflicts.map((c, i) => (
-            <Typography key={`${c.field}-${i}`} variant="caption" sx={{ display: 'block' }}>
-              {c.message}
-              {c.chosen ? ` — using ${c.chosen}` : ''}
-            </Typography>
-          ))}
-        </Alert>
+      {detail.notes && !editing && (
+        <Typography
+          variant="body2"
+          dir="auto"
+          sx={{ mt: 1.5, color: tokens.textSecondary, whiteSpace: 'pre-wrap' }}
+        >
+          {detail.notes}
+        </Typography>
       )}
 
-      {(members.length > 1 || conflicts.length > 0) && (
-        <Box sx={{ mt: 1.5 }}>
-          <Typography variant="subtitle2" sx={{ color: tokens.textSecondary }}>
-            Sources
-            {isSet(matchConfidence) && (
-              <Box
-                component="span"
-                title="The lowest match confidence of the combined records"
-                sx={{ ml: 1, fontWeight: 400, color: tokens.textMuted }}
-              >
-                match {formatPercent(matchConfidence)}
-              </Box>
-            )}
+      <PanelSection
+        title="Charts"
+        extra={
+          hasDistance ? (
+            <ToggleButtonGroup
+              size="small"
+              exclusive
+              value={axis}
+              onChange={(_, v: ChartAxis | null) => v && setAxis(v)}
+              aria-label="Charts over"
+              sx={{ '& .MuiToggleButton-root': { py: 0, px: 0.75, fontSize: 12, height: 22 } }}
+            >
+              <ToggleButton value="time">Time</ToggleButton>
+              <ToggleButton value="distance">Distance</ToggleButton>
+            </ToggleButtonGroup>
+          ) : undefined
+        }
+      >
+        <ActivityCharts
+          detail={detail}
+          analysis={analysis}
+          samples={samples}
+          axis={hasDistance ? axis : 'time'}
+          durationS={durationS}
+          cursorT={cursorT}
+          onHoverX={hoverX}
+        />
+      </PanelSection>
+
+      {zones && zones.seconds.some((x) => x > 0) && (
+        <PanelSection title="Heart-rate zones">
+          <HrZonesBar seconds={zones.seconds} bounds={zones.bounds} />
+          <Typography variant="caption" component="div" sx={{ mt: 0.5, color: tokens.textMuted }}>
+            Max HR {Math.round(zones.maxHr)} bpm (
+            {zones.maxHrSource === 'history' ? 'your history' : 'this activity'}) · avg{' '}
+            {Math.round(zones.avgHr)} · highest here {Math.round(zones.maxHrHere)}
           </Typography>
-          {members.map((m) => (
+        </PanelSection>
+      )}
+
+      {analysis && splits.length > 1 && (
+        <PanelSection title="Splits" hint={String(splits.length)}>
+          <SplitsTable splits={splits} splitM={analysis.splitM} pace={pace} />
+        </PanelSection>
+      )}
+
+      {(drift || bestEfforts.length > 0) && (
+        <PanelSection
+          title="Effort"
+          hint={drift ? `drift ${drift.decouplingPct.toFixed(1)}%` : undefined}
+        >
+          <EffortSection
+            drift={drift}
+            bestEfforts={bestEfforts}
+            pace={pace}
+            // The server counts from the first track point; the charts from the activity start
+            onSeek={(t) => seek(t + trackOffsetS)}
+          />
+        </PanelSection>
+      )}
+
+      {similar && hasCompared && (
+        <PanelSection title="Compared with you" hint={routeRankText(similar)}>
+          <ComparedSection
+            similar={similar}
+            current={{
+              id: s.id,
+              startTime: s.startTime,
+              durationS: s.durationS ?? null,
+              // Like the server: elapsed time when the source gave no duration
+              speedKmh:
+                s.distanceM && (s.durationS || to > from)
+                  ? (s.distanceM / (s.durationS || (to - from) / 1000)) * 3.6
+                  : null,
+            }}
+            type={s.type}
+            pace={pace}
+            onOpenActivity={onOpenActivity}
+          />
+        </PanelSection>
+      )}
+
+      <PanelSection
+        title="Sources"
+        defaultOpen={showSources}
+        hint={
+          conflicts.length > 0
+            ? 'the sources disagree'
+            : `${Math.max(1, members.length)} ${members.length > 1 ? 'records' : 'record'}`
+        }
+        extra={
+          isSet(matchConfidence) ? (
+            <Typography
+              variant="caption"
+              title="The lowest match confidence of the combined records"
+              sx={{ color: tokens.textMuted }}
+            >
+              match {formatPercent(matchConfidence)}
+            </Typography>
+          ) : undefined
+        }
+      >
+        {conflicts.length > 0 && (
+          <Alert severity="warning" sx={{ mb: 1, '& .MuiAlert-message': { minWidth: 0 } }}>
+            <Typography variant="body2" sx={{ fontWeight: 600 }}>
+              The sources disagree
+            </Typography>
+            {conflicts.map((c, i) => (
+              <Typography key={`${c.field}-${i}`} variant="caption" sx={{ display: 'block' }}>
+                {c.message}
+                {c.chosen ? ` — using ${c.chosen}` : ''}
+              </Typography>
+            ))}
+          </Alert>
+        )}
+        {showSources &&
+          members.map((m) => (
             <MemberRow
               key={m.id}
               member={m}
@@ -411,22 +474,21 @@ const ActivityPanel: React.FC<ActivityPanelProps> = ({
               }}
             />
           ))}
-          {provenance && (
-            <Typography
-              variant="caption"
-              sx={{ display: 'block', mt: 0.75, color: tokens.textMuted }}
-            >
-              Where values come from: {provenance}
-            </Typography>
-          )}
-        </Box>
-      )}
+        {showSources && provenance && (
+          <Typography
+            variant="caption"
+            sx={{ display: 'block', mt: 0.75, color: tokens.textMuted }}
+          >
+            Where values come from: {provenance}
+          </Typography>
+        )}
+        <Button size="small" startIcon={<CallMerge />} onClick={onStartMerge} sx={{ mt: 0.5 }}>
+          Merge with another activity…
+        </Button>
+      </PanelSection>
 
       {places.length > 0 && (
-        <Box sx={{ mt: 1.5 }}>
-          <Typography variant="subtitle2" sx={{ color: tokens.textSecondary }}>
-            Places
-          </Typography>
+        <PanelSection title="Places" hint={String(places.length)}>
           {places.map((p) => (
             <ButtonBase
               key={`${p.visitId}-${p.role}`}
@@ -457,54 +519,7 @@ const ActivityPanel: React.FC<ActivityPanelProps> = ({
               </Typography>
             </ButtonBase>
           ))}
-        </Box>
-      )}
-
-      <Button size="small" startIcon={<CallMerge />} onClick={onStartMerge} sx={{ mt: 1 }}>
-        Merge with another activity…
-      </Button>
-
-      {hr.length > 1 ? (
-        <Chart
-          label="Heart rate"
-          unit="bpm"
-          color={HEALTH_COLOR}
-          series={hr}
-          from={from}
-          to={to}
-          onHover={hover}
-        />
-      ) : (
-        <Typography
-          variant="caption"
-          sx={{ display: 'flex', alignItems: 'center', gap: 0.5, color: tokens.textMuted, mt: 1.5 }}
-        >
-          <Favorite sx={{ fontSize: 15 }} /> No heart rate in the track or in your health data for
-          this time.
-        </Typography>
-      )}
-      {detail.heartRateSource === 'health' && (
-        <Typography variant="caption" sx={{ color: tokens.textMuted }}>
-          From your health data (the track has none)
-        </Typography>
-      )}
-      <Chart
-        label="Elevation"
-        unit="m"
-        color="#5bd16b"
-        series={ele}
-        from={from}
-        to={to}
-        onHover={hover}
-      />
-      {detail.notes && !editing && (
-        <Typography
-          variant="body2"
-          dir="auto"
-          sx={{ mt: 1.5, color: tokens.textSecondary, whiteSpace: 'pre-wrap' }}
-        >
-          {detail.notes}
-        </Typography>
+        </PanelSection>
       )}
     </Box>
   );

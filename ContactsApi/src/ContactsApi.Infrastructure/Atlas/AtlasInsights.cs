@@ -11,7 +11,19 @@ namespace ContactsApi.Infrastructure.Atlas;
 public record Insights(
     DateTime? From, DateTime? To, InsightTotals Totals, InsightTotals? Previous, List<TypeStats> ByType,
     InsightSeries Series, int[] ByWeekday, int[] ByHour, List<PlaceStat> TopPlaces, List<RecordStat> Records,
-    InsightStreaks Streaks, InsightTravel Travel, InsightCoverage Coverage, List<Proposal> Proposals);
+    InsightStreaks Streaks, InsightTravel Travel, InsightCoverage Coverage, List<Proposal> Proposals,
+    List<WeekLoad>? Weekly = null, double[]? ZoneSeconds = null, List<TypeTrend>? Trends = null);
+
+/// <summary>One week's sport: time, distance and training load (minutes × intensity)</summary>
+/// <param name="Week">Monday 00:00 in the query's time zone, as UTC</param>
+public record WeekLoad(DateTime Week, double Hours, double DistanceKm, double Load);
+
+/// <summary>One sport over the period: every activity, and how speed and heart rate moved</summary>
+/// <param name="SpeedChangePct">Average speed of the last third of the activities against the first third</param>
+public record TypeTrend(string Type, List<TrendPoint> Points, double? SpeedChangePct, double? HrChangePct);
+
+/// <summary>One activity in a trend</summary>
+public record TrendPoint(DateTime T, double? SpeedKmh, int? AvgHr, double? DistanceKm);
 
 /// <summary>Sums over activities and visits</summary>
 public record InsightTotals(int Activities, double DistanceKm, double Hours, double ClimbM, int Visits, int Places);
@@ -239,8 +251,90 @@ public partial class AtlasService
             acts.Count(a => !Plausible(a)));
 
         var proposals = await ProposalsAsync(owner, q, records, unnamedOften, newPlaces, coverage, travel, ct);
+        var maxHr = await HistoryMaxHrAsync(owner, ct);
+        var training = sports.Where(Plausible).ToList();
         return new Insights(q.From, q.To, totals, previous, byType, series, byWeekday, byHour, topPlaces, records, streaks,
-            travel, coverage, proposals);
+            travel, coverage, proposals, Weekly(training, q, zone, maxHr), ZoneSeconds(training, maxHr), Trends(training));
+    }
+
+    /// <summary>Intensity of an activity: average over max heart rate, or a moderate 0.6 without heart rate</summary>
+    private static double Intensity(InsightRow a, int? maxHr) =>
+        a.AvgHr.HasValue && maxHr is > 0 ? Math.Clamp(a.AvgHr.Value / (double)maxHr.Value, 0.3, 1.1) : 0.6;
+
+    /// <summary>Weekly sport load over the query's range (only with both ends, at most the last 104 weeks)</summary>
+    private static List<WeekLoad> Weekly(List<InsightRow> sports, AtlasQuery q, TimeZoneInfo zone, int? maxHr)
+    {
+        var weeks = new List<WeekLoad>();
+        if (!q.From.HasValue || !q.To.HasValue || q.To <= q.From)
+        {
+            return weeks;
+        }
+
+        var byWeek = sports.GroupBy(a => BucketStart(a.Start, "week", zone)).ToDictionary(g => g.Key, g => g.ToList());
+        var end = Utc(q.To.Value);
+        // Next Monday from the middle of the week (a clock change cannot skip or repeat one)
+        for (var w = BucketStart(Utc(q.From.Value), "week", zone); w <= end; w = BucketStart(w.AddDays(10), "week", zone))
+        {
+            var acts = byWeek.GetValueOrDefault(w) ?? new List<InsightRow>();
+            weeks.Add(new WeekLoad(w,
+                Math.Round(acts.Sum(Hours), 2),
+                Math.Round(acts.Sum(a => a.DistanceM ?? 0) / 1000, 1),
+                Math.Round(acts.Sum(a => Hours(a) * 60 * Intensity(a, maxHr)))));
+        }
+
+        return weeks.Count > 104 ? weeks.Skip(weeks.Count - 104).ToList() : weeks;
+    }
+
+    /// <summary>Time in the five heart-rate zones, each activity counted in the zone of its average</summary>
+    private static double[]? ZoneSeconds(List<InsightRow> sports, int? maxHr)
+    {
+        if (maxHr is not > 0 || !sports.Any(a => a.AvgHr.HasValue))
+        {
+            return null;
+        }
+
+        var seconds = new double[5];
+        foreach (var a in sports.Where(a => a.AvgHr.HasValue))
+        {
+            var pct = a.AvgHr!.Value / (double)maxHr.Value;
+            seconds[new[] { 0.6, 0.7, 0.8, 0.9 }.Count(f => pct >= f)] += Hours(a) * 3600;
+        }
+
+        return seconds.Select(x => Math.Round(x)).ToArray();
+    }
+
+    /// <summary>Speed and heart rate over the period, per sport with at least 3 activities</summary>
+    private static List<TypeTrend> Trends(List<InsightRow> sports)
+    {
+        static double? Change(List<double> values)
+        {
+            if (values.Count < 3)
+            {
+                return null;
+            }
+
+            var k = values.Count / 3;
+            var first = values.Take(k).Average();
+            var last = values.Skip(values.Count - k).Average();
+            return first > 0 ? Math.Round((last - first) / first * 100, 1) : null;
+        }
+
+        return sports.GroupBy(a => a.Type)
+            .Where(g => g.Count() >= 3)
+            .Select(g =>
+            {
+                var points = g.OrderBy(a => a.Start).TakeLast(200)
+                    .Select(a => new TrendPoint(a.Start,
+                        a.DistanceM is > 0 && Hours(a) > 0.05 ? Math.Round(a.DistanceM.Value / 1000 / Hours(a), 1) : null,
+                        a.AvgHr,
+                        a.DistanceM.HasValue ? Math.Round(a.DistanceM.Value / 1000, 2) : null))
+                    .ToList();
+                return new TypeTrend(g.Key, points,
+                    Change(points.Where(p => p.SpeedKmh.HasValue).Select(p => p.SpeedKmh!.Value).ToList()),
+                    Change(points.Where(p => p.AvgHr.HasValue).Select(p => (double)p.AvgHr!.Value).ToList()));
+            })
+            .OrderByDescending(t => t.Points.Count)
+            .ToList();
     }
 
     private static AtlasQuery CopyQuery(AtlasQuery q, DateTime? from, DateTime? to) => new()

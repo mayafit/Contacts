@@ -1,11 +1,12 @@
 /**
  * @fileoverview Texts and chart data of the Atlas insights: changes against the
- * previous period, the period's caption, series buckets and their labels
- * (en-GB, local time, the same on every machine)
+ * previous period, the period's caption, series buckets and their labels,
+ * the training load summary and sparklines (en-GB, local time, the same on
+ * every machine)
  * @module Contacts/atlas/insights
  */
 
-import type { InsightsBucket, InsightsSeriesPoint } from './types';
+import type { InsightsBucket, InsightsSeriesPoint, WeekLoad } from './types';
 import { ACTIVITY_TYPES, isSet } from './types';
 import type { AreaBox } from './filters';
 
@@ -260,3 +261,64 @@ export const areaAround = (lat: number, lon: number, sizeM = 600): AreaBox => {
  */
 export const formatShare = (part: number, whole: number): string =>
   whole > 0 ? `${Math.round((part / whole) * 100)}%` : '';
+
+/** The latest week of the training load against the weeks before */
+export interface LoadSummary {
+  latest: WeekLoad;
+  /** Average load of up to 4 weeks before the latest; null when there are none */
+  avgBefore: number | null;
+}
+
+/**
+ * The latest week's load and the average of the (up to) 4 weeks before it.
+ * @param weekly - Weeks, oldest first
+ * @returns The summary; null without weeks
+ */
+export const loadSummary = (weekly: WeekLoad[]): LoadSummary | null => {
+  if (weekly.length === 0) {
+    return null;
+  }
+  const before = weekly.slice(Math.max(0, weekly.length - 5), weekly.length - 1);
+  return {
+    latest: weekly[weekly.length - 1],
+    avgBefore: before.length ? before.reduce((s, w) => s + w.load, 0) / before.length : null,
+  };
+};
+
+/**
+ * A sparkline: the values over time, scaled to fill the box; gaps (null) break the line.
+ * @param points - Times (ms) and values, oldest first
+ * @param width - Width of the box
+ * @param height - Height of the box
+ * @param pad - Room above and below
+ * @returns SVG path data ('' with fewer than 2 values)
+ */
+export const sparkPath = (
+  points: { t: number; v: number | null }[],
+  width: number,
+  height: number,
+  pad = 3,
+): string => {
+  const set = points.filter((p): p is { t: number; v: number } => isSet(p.v));
+  if (set.length < 2) {
+    return '';
+  }
+  const t0 = Math.min(...set.map((p) => p.t));
+  const t1 = Math.max(...set.map((p) => p.t));
+  const min = Math.min(...set.map((p) => p.v));
+  const max = Math.max(...set.map((p) => p.v));
+  const x = (t: number) => (t1 > t0 ? ((t - t0) / (t1 - t0)) * width : width / 2);
+  const y = (v: number) =>
+    max > min ? pad + (1 - (v - min) / (max - min)) * (height - 2 * pad) : height / 2;
+  let d = '';
+  let open = false;
+  points.forEach((p) => {
+    if (!isSet(p.v)) {
+      open = false;
+      return;
+    }
+    d += `${open ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`;
+    open = true;
+  });
+  return d;
+};

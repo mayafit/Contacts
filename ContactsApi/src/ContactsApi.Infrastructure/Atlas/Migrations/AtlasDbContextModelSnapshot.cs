@@ -62,6 +62,38 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                     b.ToTable("access_tokens", "atlas");
                 });
 
+            modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.ActivityEffort", b =>
+                {
+                    b.Property<Guid>("ActivityId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Efforts")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("OwnerId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("PointCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("ActivityId");
+
+                    b.HasIndex("OwnerId", "Type");
+
+                    b.ToTable("activity_efforts", "atlas");
+                });
+
             modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.ActivityFusion", b =>
                 {
                     b.Property<Guid>("ActivityId")
@@ -627,6 +659,15 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                     b.HasIndex("ActivityId", "Time");
 
                     b.ToTable("track_points", "atlas");
+                });
+
+            modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.ActivityEffort", b =>
+                {
+                    b.HasOne("ContactsApi.Infrastructure.Atlas.AtlasActivity", null)
+                        .WithMany()
+                        .HasForeignKey("ActivityId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.ActivityFusion", b =>
