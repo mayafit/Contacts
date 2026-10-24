@@ -23,8 +23,16 @@ import type { ActivitySummary, PointOutput, VisitSummary } from './types';
 import { FILTER_COLOR, HEALTH_COLOR, VISIT_COLOR, typeColor, isSet } from './types';
 import { Box } from '@mui/material';
 import AtlasLegend from './AtlasLegend';
-import { decodePolyline } from './geo';
-import { ATTRIBUTION, STYLE_URL, englishLabels } from './mapStyle';
+import { decodePolyline, describeActivity, greatCircle } from './geo';
+import {
+  ATTRIBUTION,
+  MAP_STYLES,
+  englishLabels,
+  loadMapStyle,
+  saveMapStyle,
+  type MapStyle,
+} from './mapStyle';
+import { MenuItem, TextField } from '@mui/material';
 import { logger } from '../../../shared/logger';
 
 /** A rectangle on the map */
@@ -134,15 +142,25 @@ const FitResults: React.FC<{
  * when the style cannot be loaded, falls back to OpenStreetMap raster tiles
  * (labels in the local language).
  */
-const BaseMap: React.FC = () => {
+const BaseMap: React.FC<{ style: MapStyle }> = ({ style: choice }) => {
   const map = useMap();
   const [fallback, setFallback] = useState(false);
+  const def = MAP_STYLES.find((m) => m.value === choice) ?? MAP_STYLES[0];
   useEffect(() => {
     let layer: L.Layer | null = null;
     let cancelled = false;
+    setFallback(false);
+    if (def.raster) {
+      const tiles = L.tileLayer(def.url, { attribution: def.attribution, maxZoom: 19 }).addTo(map);
+      tiles.bringToBack();
+      layer = tiles;
+      return () => {
+        layer?.remove();
+      };
+    }
     (async () => {
       const [style] = await Promise.all([
-        fetch(STYLE_URL).then((r) => {
+        fetch(def.url).then((r) => {
           if (!r.ok) {
             throw new Error(`style ${r.status}`);
           }
@@ -173,7 +191,7 @@ const BaseMap: React.FC = () => {
       cancelled = true;
       layer?.remove();
     };
-  }, [map]);
+  }, [map, def]);
   return fallback ? (
     <TileLayer
       // OpenStreetMap tiles, darkened by CSS (see leaflet.css: .atlas-dark-tiles)
@@ -272,11 +290,26 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
   cursor,
   focusArea = 0,
 }) => {
+  const [mapStyle, setMapStyle] = useState<MapStyle>(loadMapStyle);
+  const styleDef = MAP_STYLES.find((m) => m.value === mapStyle) ?? MAP_STYLES[0];
+  // On a light map the selected track is drawn dark (white would vanish)
+  const highlightColor = styleDef.light ? '#111827' : '#ffffff';
+
+  // Flights as the arc from departure to arrival: the positions a phone records
+  // in the air are rough guesses, and a straight line through them misleads
   const lines = useMemo(
     () =>
-      activities.filter((a) => a.polyline).map((a) => ({ a, path: decodePolyline(a.polyline!) })),
+      activities
+        .filter((a) => a.polyline)
+        .map((a) => {
+          const raw = decodePolyline(a.polyline!);
+          const flight = a.type === 'flight' && raw.length > 1;
+          return { a, flight, path: flight ? greatCircle(raw[0], raw[raw.length - 1]) : raw };
+        }),
     [activities],
   );
+  const selectedFlight = lines.find((l) => l.a.id === selectedId && l.flight);
+  const crowded = lines.length > 150;
   const areaBounds: LatLngBoundsExpression | null = area
     ? [
         [area.minLat, area.minLon],
@@ -298,7 +331,7 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
         style={{ height: '100%', width: '100%', background: '#0e1116' }}
         preferCanvas
       >
-        <BaseMap />
+        <BaseMap style={mapStyle} />
         <FitResults activities={activities} visits={visits} fitKey={fitKey} track={selectedTrack} />
         <AreaDraw drawing={drawing} onDone={onAreaDrawn} />
         <FocusArea area={area} focus={focusArea} />
@@ -323,25 +356,51 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
             />
           </>
         )}
-        {lines.map(({ a, path }) => (
+        {lines.map(({ a, path, flight }) => (
           <Polyline
             key={a.id}
             positions={path}
             pathOptions={{
               color: typeColor(a.type),
-              weight: a.id === selectedId ? 5 : 2.5,
-              opacity: selectedId && a.id !== selectedId ? 0.35 : 0.9,
+              // Many tracks at once: thinner and lighter, so the streets stay readable
+              weight: a.id === selectedId ? 5 : crowded ? 1.5 : flight ? 2 : 2.5,
+              opacity: selectedId && a.id !== selectedId ? 0.3 : crowded ? 0.5 : 0.9,
+              dashArray: flight ? '8 6' : undefined,
             }}
             eventHandlers={{ click: () => onSelectActivity(a.id) }}
           >
-            <Tooltip sticky>{a.name || a.type}</Tooltip>
+            <Tooltip sticky>{describeActivity(a)}</Tooltip>
           </Polyline>
         ))}
-        {selectedTrack && selectedTrack.length > 1 && (
+        {lines
+          .filter((l) => l.flight)
+          .flatMap(({ a, path }) => [
+            { key: `${a.id}-from`, at: path[0], color: typeColor(a.type) },
+            { key: `${a.id}-to`, at: path[path.length - 1], color: typeColor(a.type) },
+          ])
+          .map((m) => (
+            // Airports: where one flight ends and the next begins
+            <CircleMarker
+              key={m.key}
+              center={m.at}
+              radius={3.5}
+              interactive={false}
+              pathOptions={{ color: '#0e1116', weight: 1, fillColor: m.color, fillOpacity: 1 }}
+            />
+          ))}
+        {selectedFlight ? (
           <Polyline
-            positions={selectedTrack.map((p) => [p.lat, p.lon] as [number, number])}
-            pathOptions={{ color: '#ffffff', weight: 2, opacity: 0.9 }}
+            positions={selectedFlight.path}
+            pathOptions={{ color: highlightColor, weight: 2.5, opacity: 0.95, dashArray: '8 6' }}
           />
+        ) : (
+          selectedTrack &&
+          selectedTrack.length > 1 && (
+            <Polyline
+              positions={selectedTrack.map((p) => [p.lat, p.lon] as [number, number])}
+              pathOptions={{ color: highlightColor, weight: 2.5, opacity: 0.95 }}
+            />
+          )
         )}
         {visits.map((v) => (
           <CircleMarker
@@ -367,6 +426,33 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
           />
         )}
       </MapContainer>
+      <Box sx={{ position: 'absolute', top: 10, right: 10, zIndex: 1000 }}>
+        <TextField
+          select
+          size="small"
+          value={mapStyle}
+          onChange={(e) => {
+            const next = e.target.value as MapStyle;
+            saveMapStyle(next);
+            setMapStyle(next);
+          }}
+          aria-label="Map style"
+          SelectProps={{
+            renderValue: (v) => `Map: ${MAP_STYLES.find((m) => m.value === v)?.label}`,
+          }}
+          sx={{
+            bgcolor: 'rgba(14, 17, 22, 0.85)',
+            borderRadius: 1,
+            '& .MuiSelect-select': { fontSize: 12, py: 0.6 },
+          }}
+        >
+          {MAP_STYLES.map((m) => (
+            <MenuItem key={m.value} value={m.value} dense>
+              {m.label}
+            </MenuItem>
+          ))}
+        </TextField>
+      </Box>
       {kinds.length > 0 && (
         <Box
           sx={{

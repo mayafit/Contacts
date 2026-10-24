@@ -38,6 +38,7 @@ public class GeoTests
         Assert.Equal("transit", AtlasService.NormalizeType("IN_BUS"));
         Assert.Equal("drive", AtlasService.NormalizeType("in passenger vehicle"));
         Assert.Equal("hike", AtlasService.NormalizeType("Hiking"));
+        Assert.Equal("other", AtlasService.NormalizeType("UNKNOWN_ACTIVITY_TYPE"));
     }
 }
 
