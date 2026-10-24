@@ -175,12 +175,14 @@ public static class Geo
             return;
         }
 
-        if (a.StartTime == default)
+        // The track is the truth about when it happened: a source's own times can
+        // leave out pauses (Sports Tracker gives start + moving time)
+        if (a.StartTime == default || pts[0].Time < a.StartTime)
         {
             a.StartTime = pts[0].Time;
         }
 
-        if (a.EndTime == default)
+        if (a.EndTime == default || pts[^1].Time > a.EndTime)
         {
             a.EndTime = pts[^1].Time;
         }

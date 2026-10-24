@@ -57,6 +57,8 @@ public class AtlasMigrator : BackgroundService
             {
                 using var scope = _services.CreateScope();
                 var db = scope.ServiceProvider.GetRequiredService<AtlasDbContext>();
+                // Some migrations fix data across all track points: more than the default 30 s
+                db.Database.SetCommandTimeout(TimeSpan.FromMinutes(20));
                 await db.Database.MigrateAsync(stoppingToken);
                 _readiness.Ready = true;
                 _readiness.Error = null;
