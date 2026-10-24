@@ -25,6 +25,8 @@ public class AtlasDbContext : DbContext
     public DbSet<ActivityFusion> Fusions => Set<ActivityFusion>();
     public DbSet<FusionDecision> FusionDecisions => Set<FusionDecision>();
     public DbSet<SourceConnection> Connections => Set<SourceConnection>();
+    public DbSet<FusionQueueItem> FusionQueue => Set<FusionQueueItem>();
+    public DbSet<FusionSetting> FusionSettings => Set<FusionSetting>();
 
     /// <inheritdoc />
     protected override void OnModelCreating(ModelBuilder b)
@@ -60,6 +62,20 @@ public class AtlasDbContext : DbContext
             e.HasIndex(x => new { x.OwnerId, x.ActivityA, x.ActivityB }).IsUnique();
             e.Property(x => x.OwnerId).HasMaxLength(64);
             e.Property(x => x.Kind).HasMaxLength(16);
+        });
+
+        b.Entity<FusionQueueItem>(e =>
+        {
+            e.ToTable("fusion_queue");
+            e.HasIndex(x => new { x.OwnerId, x.Id });
+            e.Property(x => x.OwnerId).HasMaxLength(64);
+        });
+
+        b.Entity<FusionSetting>(e =>
+        {
+            e.ToTable("fusion_settings");
+            e.HasKey(x => x.OwnerId);
+            e.Property(x => x.OwnerId).HasMaxLength(64);
         });
 
         b.Entity<SourceConnection>(e =>

@@ -20,6 +20,7 @@ import {
   CropFree,
   Hub,
   Map as MapIcon,
+  MergeType,
   Place,
   Search,
   UploadFile,
@@ -32,6 +33,8 @@ import ResultsList from './ResultsList';
 import ActivityPanel from './ActivityPanel';
 import ImportDialog from './ImportDialog';
 import AiAccessDialog from './AiAccessDialog';
+import FusionSettingsDialog from './FusionSettingsDialog';
+import AtlasFilterBar from './AtlasFilterBar';
 import AssistantPanel from '../components/assistant/AssistantPanel';
 import { atlasToolset } from './atlasTools';
 import { formatDuration, formatWhen } from './geo';
@@ -76,6 +79,9 @@ const AtlasHome: React.FC = () => {
   const [cursor, setCursor] = useState<[number, number] | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
+  const [fusionOpen, setFusionOpen] = useState(false);
+  // Bumped to fit the map to the area filter
+  const [focusArea, setFocusArea] = useState(0);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [assistantEnabled, setAssistantEnabled] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
@@ -274,6 +280,27 @@ const AtlasHome: React.FC = () => {
     void loadSummary();
   };
 
+  /** Removes every filter: time, area, types and text */
+  const clearFilters = () => {
+    setSelection(null);
+    setArea(null);
+    setDrawing(false);
+    setTypes([]);
+    setText('');
+    setQuery('');
+  };
+
+  /** Zooms the timeline to the time filter */
+  const zoomToSelection = () => {
+    if (!selection) {
+      return;
+    }
+    const pad = Math.max((selection.to - selection.from) * 0.1, 3_600_000);
+    setView({ from: selection.from - pad, to: selection.to + pad });
+  };
+
+  const filtered = !!selection || !!area || types.length > 0 || query !== '';
+
   if (status && !status.ready) {
     return (
       <Box sx={{ p: 4 }}>
@@ -382,6 +409,18 @@ const AtlasHome: React.FC = () => {
             </Box>
           </Button>
         </Tooltip>
+        <Tooltip title="How sources are combined">
+          <Button
+            size="small"
+            startIcon={<MergeType />}
+            onClick={() => setFusionOpen(true)}
+            sx={{ minWidth: 0 }}
+          >
+            <Box component="span" sx={{ display: { xs: 'none', md: 'inline' } }}>
+              Fusion
+            </Box>
+          </Button>
+        </Tooltip>
         <Tooltip title="AI access (MCP)">
           <IconButton onClick={() => setAiOpen(true)} aria-label="AI access">
             <Hub />
@@ -403,6 +442,28 @@ const AtlasHome: React.FC = () => {
           </Tooltip>
         )}
       </Box>
+
+      <AtlasFilterBar
+        selection={selection}
+        area={area}
+        types={types}
+        text={query}
+        result={result}
+        loading={loading}
+        onClearTime={() => setSelection(null)}
+        onFocusTime={zoomToSelection}
+        onClearArea={() => {
+          setArea(null);
+          setDrawing(false);
+        }}
+        onFocusArea={() => setFocusArea((n) => n + 1)}
+        onClearTypes={() => setTypes([])}
+        onClearText={() => {
+          setText('');
+          setQuery('');
+        }}
+        onClearAll={clearFilters}
+      />
 
       {error && (
         <Alert severity="error" onClose={() => setError(null)} sx={{ borderRadius: 0 }}>
@@ -453,6 +514,7 @@ const AtlasHome: React.FC = () => {
                 }}
                 fitKey={String(fitTick)}
                 cursor={cursor}
+                focusArea={focusArea}
               />
               {empty && (
                 <Paper
@@ -630,6 +692,8 @@ const AtlasHome: React.FC = () => {
                     setVisit(v);
                   }
                 }}
+                filtered={filtered}
+                onClearFilters={clearFilters}
               />
             )}
           </Box>
@@ -655,6 +719,20 @@ const AtlasHome: React.FC = () => {
 
       <ImportDialog open={importOpen} onClose={() => setImportOpen(false)} onChanged={changed} />
       <AiAccessDialog open={aiOpen} onClose={() => setAiOpen(false)} />
+      <FusionSettingsDialog
+        open={fusionOpen}
+        onClose={() => setFusionOpen(false)}
+        onChanged={() => {
+          changed();
+          if (detail) {
+            // Its members and evidence may have changed; gone when re-fused into another
+            backendApiClient
+              .atlasActivity(detail.summary.id)
+              .then(setDetail)
+              .catch(() => setDetail(null));
+          }
+        }}
+      />
     </Box>
   );
 };

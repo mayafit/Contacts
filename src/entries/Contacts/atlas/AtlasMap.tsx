@@ -8,6 +8,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   CircleMarker,
   MapContainer,
+  Marker,
   Polyline,
   Rectangle,
   TileLayer,
@@ -19,7 +20,7 @@ import L from 'leaflet';
 import type { LatLngBoundsExpression, LeafletMouseEvent } from 'leaflet';
 import './leaflet.css';
 import type { ActivitySummary, PointOutput, VisitSummary } from './types';
-import { HEALTH_COLOR, VISIT_COLOR, typeColor, isSet } from './types';
+import { FILTER_COLOR, HEALTH_COLOR, VISIT_COLOR, typeColor, isSet } from './types';
 import { Box } from '@mui/material';
 import AtlasLegend from './AtlasLegend';
 import { decodePolyline } from './geo';
@@ -54,7 +55,36 @@ export interface AtlasMapProps {
   fitKey: string;
   /** Highlighted point on the selected track (from the chart) */
   cursor?: [number, number] | null;
+  /** Fit the view to the area filter when this changes (0: never) */
+  focusArea?: number;
 }
+
+/** The small permanent label at the area filter's top-left corner */
+const AREA_LABEL = L.divIcon({
+  className: 'atlas-area-label',
+  html: `<div style="display:inline-block;white-space:nowrap;padding:1px 6px;border-radius:4px;background:${FILTER_COLOR};color:#fff;font:600 11px/16px system-ui,sans-serif;box-shadow:0 1px 3px rgba(0,0,0,.4)">Area filter</div>`,
+  iconSize: [70, 18],
+  iconAnchor: [-4, -4],
+});
+
+/** Fits the map to the area filter when asked (focus changes) */
+const FocusArea: React.FC<{ area: Box | null; focus: number }> = ({ area, focus }) => {
+  const map = useMap();
+  useEffect(() => {
+    if (!focus || !area) {
+      return;
+    }
+    map.fitBounds(
+      [
+        [area.minLat, area.minLon],
+        [area.maxLat, area.maxLon],
+      ],
+      { padding: [30, 30] },
+    );
+    // Only when asked, not when the area changes
+  }, [focus]);
+  return null;
+};
 
 /** Fits the map to the results when fitKey changes, or to the selected track */
 const FitResults: React.FC<{
@@ -217,7 +247,7 @@ const AreaDraw: React.FC<{ drawing: boolean; onDone: (b: Box) => void }> = ({
         [current.minLat, current.minLon],
         [current.maxLat, current.maxLon],
       ]}
-      pathOptions={{ color: '#3987e5', weight: 1, dashArray: '4 4' }}
+      pathOptions={{ color: FILTER_COLOR, weight: 2, dashArray: '6 4', fillOpacity: 0.08 }}
     />
   ) : null;
 };
@@ -240,6 +270,7 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
   onSelectVisit,
   fitKey,
   cursor,
+  focusArea = 0,
 }) => {
   const lines = useMemo(
     () =>
@@ -270,11 +301,27 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
         <BaseMap />
         <FitResults activities={activities} visits={visits} fitKey={fitKey} track={selectedTrack} />
         <AreaDraw drawing={drawing} onDone={onAreaDrawn} />
-        {areaBounds && (
-          <Rectangle
-            bounds={areaBounds}
-            pathOptions={{ color: '#3987e5', weight: 1, fillOpacity: 0.06 }}
-          />
+        <FocusArea area={area} focus={focusArea} />
+        {areaBounds && area && (
+          <>
+            <Rectangle
+              bounds={areaBounds}
+              pathOptions={{
+                color: FILTER_COLOR,
+                weight: 3,
+                opacity: 0.95,
+                fillColor: FILTER_COLOR,
+                fillOpacity: 0.1,
+                interactive: false,
+              }}
+            />
+            <Marker
+              position={[area.maxLat, area.minLon]}
+              icon={AREA_LABEL}
+              interactive={false}
+              keyboard={false}
+            />
+          </>
         )}
         {lines.map(({ a, path }) => (
           <Polyline

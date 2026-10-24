@@ -4,7 +4,7 @@
  */
 
 import React from 'react';
-import { Box, ButtonBase, Chip, Tooltip, Typography } from '@mui/material';
+import { Box, ButtonBase, Chip, Link, Tooltip, Typography } from '@mui/material';
 import { Place, WarningAmber } from '@mui/icons-material';
 import type { SearchResult, VisitSummary } from './types';
 import { ACTIVITY_TYPES, VISIT_COLOR, sourceLabel, typeColor } from './types';
@@ -19,6 +19,10 @@ export interface ResultsListProps {
   onToggleType: (type: string) => void;
   onSelectActivity: (id: string) => void;
   onSelectVisit: (v: VisitSummary) => void;
+  /** Any filter (time, area, types, text) is active */
+  filtered?: boolean;
+  /** Removes every filter */
+  onClearFilters?: () => void;
 }
 
 /**
@@ -33,6 +37,8 @@ const ResultsList: React.FC<ResultsListProps> = ({
   onToggleType,
   onSelectActivity,
   onSelectVisit,
+  filtered = false,
+  onClearFilters,
 }) => {
   const items = [
     ...(result?.activities ?? []).map((a) => ({ kind: 'a' as const, t: a.startTime, a })),
@@ -57,18 +63,15 @@ const ResultsList: React.FC<ResultsListProps> = ({
           />
         ))}
       </Box>
-      <Typography variant="caption" sx={{ px: 1.5, color: tokens.textMuted }}>
-        {loading
-          ? 'Searching…'
-          : result
-            ? `${result.totalActivities} activities · ${result.totalVisits} visits${
-                result.totalActivities > result.activities.length ||
-                result.totalVisits > result.visits.length
-                  ? ' (newest shown)'
-                  : ''
-              }`
-            : ''}
-      </Typography>
+      {!loading &&
+        result &&
+        (result.totalActivities > result.activities.length ||
+          result.totalVisits > result.visits.length) && (
+          // The count is in the filter bar; say which part of a long result is listed
+          <Typography variant="caption" sx={{ px: 1.5, color: tokens.textMuted }}>
+            Newest shown
+          </Typography>
+        )}
       <Box sx={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
         {items.map((it) =>
           it.kind === 'a' ? (
@@ -171,7 +174,18 @@ const ResultsList: React.FC<ResultsListProps> = ({
         )}
         {!loading && result && items.length === 0 && (
           <Typography variant="body2" sx={{ p: 2, color: tokens.textMuted }}>
-            Nothing here. Widen the time range or the area, or import data.
+            {filtered ? (
+              <>
+                Nothing matches the filters.{' '}
+                {onClearFilters && (
+                  <Link component="button" variant="body2" onClick={onClearFilters}>
+                    Clear all
+                  </Link>
+                )}
+              </>
+            ) : (
+              'Nothing here yet. Import data to see it on the map.'
+            )}
           </Typography>
         )}
       </Box>

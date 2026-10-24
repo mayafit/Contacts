@@ -64,6 +64,52 @@ activity). A member row is shown only on drill-down.
 - **When fusion runs:** after every import batch, for the affected time
   window only, and also on demand ("Re-fuse everything").
 
+## The fusion service (11.3b)
+
+Fusion is a service of its own, not a step of the import:
+
+- **Queue:** every upload (files, zips, Sports Tracker syncs; activities, visits, health)
+  records the time window it touched in a persistent queue (`fusion_queue`).
+- **Background service:** the service (`AtlasFusionWorker`) wakes within seconds. It merges
+  nearby windows and fuses each one with the data already there:
+  - A new record joins an existing fused activity (enhancing it), or forms a new one with
+    records it matches.
+  - Health data adds heart rate to activities that have none; the health source then counts
+    as a contributor.
+  - It also checks the queue every five minutes, so nothing queued before a restart is lost.
+- **Status:** shown in the app (queued windows, running, last run).
+
+### Accuracy tolerances and match confidence
+
+Every source has a **time tolerance** (how far its start and end can be off) and a
+**location tolerance** (how far its positions can be off):
+
+| Source | Time ± | Location ± |
+| --- | --- | --- |
+| Sports Tracker, GPX, TCX | 30 s | 25 m |
+| Google Fit | 2 min | 100 m |
+| Fitbit | 1 min | 100 m |
+| Google Timeline | 10 min | 300 m |
+| Manual | 15 min | 500 m |
+
+Two items are compared with the **combined** tolerance of their sources:
+
+- **Time:** start and end within the combined time tolerance give full time agreement.
+  Otherwise they must overlap by at least half of the shorter and a quarter of the longer
+  item, and agreement is the overlap (plus the tolerance) as a share of the longer one.
+- **Location:** the tracks are compared **at the same moments**: about 60 samples of one,
+  each against the other track interpolated at that time. The median distance within the
+  combined tolerance gives full agreement, which falls to zero at four times the tolerance.
+  Without two tracks, only the areas (widened by the tolerance) must touch, and the
+  agreement is 0.85.
+- **Confidence** = time × location agreement. An automatic match needs the **threshold**
+  (default 50%).
+
+Every member of a fused activity keeps its **evidence** against the primary: start/end
+difference, track distance, the tolerances used, and the confidence. Differences beyond
+tolerance become **inconsistencies** (time or location conflicts). Tolerances and threshold
+are per user (Fusion settings in Atlas); saving them re-fuses everything.
+
 ## Context links
 
 - **Visits:** a visit linked to an activity is where it started, ended or

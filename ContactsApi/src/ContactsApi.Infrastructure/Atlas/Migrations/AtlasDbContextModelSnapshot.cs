@@ -86,9 +86,16 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                     b.Property<DateTime>("EndTime")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("Evidence")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<string>("FieldSources")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<double?>("MatchConfidence")
+                        .HasColumnType("double precision");
 
                     b.Property<int?>("MaxHeartRate")
                         .HasColumnType("integer");
@@ -320,6 +327,62 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                         .IsUnique();
 
                     b.ToTable("fusion_decisions", "atlas");
+                });
+
+            modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.FusionQueueItem", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("From")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("Full")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("NextAttemptAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("OwnerId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime?>("To")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OwnerId", "Id");
+
+                    b.ToTable("fusion_queue", "atlas");
+                });
+
+            modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.FusionSetting", b =>
+                {
+                    b.Property<string>("OwnerId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Json")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("OwnerId");
+
+                    b.ToTable("fusion_settings", "atlas");
                 });
 
             modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.HealthSample", b =>

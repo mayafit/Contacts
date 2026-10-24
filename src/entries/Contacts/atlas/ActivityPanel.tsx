@@ -33,6 +33,7 @@ import type {
   ActivityDetail,
   ActivityMember,
   LinkedPlace,
+  MatchEvidence,
   PointOutput,
   SeriesPoint,
 } from './types';
@@ -46,6 +47,7 @@ import {
   isSet,
 } from './types';
 import { formatDistance, formatDuration, formatWhen } from './geo';
+import { describeEvidence, formatPercent } from './fusionText';
 import { tokens } from '../theme/contactsTheme';
 
 /** Props for ActivityPanel */
@@ -77,9 +79,11 @@ const clock = (iso: string): string =>
 /** One source record of a fused activity */
 const MemberRow: React.FC<{
   member: ActivityMember;
+  /** How it matches the primary (non-primary members) */
+  evidence?: MatchEvidence;
   busy: boolean;
   onSplit: () => void;
-}> = ({ member: m, busy, onSplit }) => (
+}> = ({ member: m, evidence, busy, onSplit }) => (
   <Box
     sx={{
       display: 'flex',
@@ -125,6 +129,15 @@ const MemberRow: React.FC<{
           .filter(Boolean)
           .join(' · ')}
       </Typography>
+      {!m.primary && evidence && (
+        <Typography
+          variant="caption"
+          sx={{ display: 'block', color: tokens.textSecondary }}
+          title="How this record matches the primary one: time differences (combined tolerance), distance between the tracks (combined tolerance) and the match confidence"
+        >
+          {describeEvidence(evidence)}
+        </Typography>
+      )}
     </Box>
     {!m.primary && (
       <Tooltip title="Not the same activity — split it off">
@@ -235,6 +248,8 @@ const ActivityPanel: React.FC<ActivityPanelProps> = ({
   const members = detail.members ?? [];
   const conflicts = detail.conflicts ?? [];
   const places = detail.places ?? [];
+  const evidence = detail.evidence ?? [];
+  const matchConfidence = detail.matchConfidence ?? null;
   const provenance = describeFieldSources(detail.fieldSources);
   const [name, setName] = useState(s.name ?? '');
   const [type, setType] = useState(s.type);
@@ -368,11 +383,21 @@ const ActivityPanel: React.FC<ActivityPanelProps> = ({
         <Box sx={{ mt: 1.5 }}>
           <Typography variant="subtitle2" sx={{ color: tokens.textSecondary }}>
             Sources
+            {isSet(matchConfidence) && (
+              <Box
+                component="span"
+                title="The lowest match confidence of the combined records"
+                sx={{ ml: 1, fontWeight: 400, color: tokens.textMuted }}
+              >
+                match {formatPercent(matchConfidence)}
+              </Box>
+            )}
           </Typography>
           {members.map((m) => (
             <MemberRow
               key={m.id}
               member={m}
+              evidence={evidence.find((e) => e.memberId === m.id)}
               busy={splitting}
               onSplit={async () => {
                 setSplitting(true);

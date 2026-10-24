@@ -49,7 +49,7 @@ const DECLARATIONS = [
   {
     name: 'atlas_activity',
     description:
-      'One activity: distance, duration, climb, average/max heart rate, a heart-rate series (from the track or from health data at that time), the source records it is fused from (members), where each value comes from (fieldSources), conflicts between the sources, and the places visited at its start, end or during it.',
+      'One activity: distance, duration, climb, average/max heart rate, a heart-rate series (from the track or from health data at that time), the source records it is fused from (members), where each value comes from (fieldSources), conflicts between the sources, how each member matches the primary (evidence: start/end time differences and track distance against the combined source tolerances, confidence 0..1) with the overall matchConfidence, and the places visited at its start, end or during it.',
     parameters: { type: 'object', properties: { id: S('Activity id') }, required: ['id'] },
   },
   {
@@ -127,6 +127,7 @@ export const atlasToolset = (ui: AtlasUi): Toolset => ({
       '- After a search the user may want to see, call show_on_map with the same filters.',
       '- Refer to an activity as [name](atlas:activity/ID) so the user can open it.',
       '- When the sources disagree (conflicts), say so and which value was used.',
+      '- To explain why records were combined, use the evidence of atlas_activity (time and track differences within the tolerances, match confidence; mergedByUser means the user merged them).',
       '- Reply in the language the user writes in. Be brief.',
     ].join('\n');
   },
@@ -212,6 +213,18 @@ export const atlasToolset = (ui: AtlasUi): Toolset => ({
           fieldSources: Object.fromEntries(
             Object.entries(d.fieldSources ?? {}).map(([k, v]) => [k, sourceLabel(v)]),
           ),
+          matchConfidence: isSet(d.matchConfidence) ? round(d.matchConfidence, 2) : undefined,
+          evidence: (d.evidence ?? []).map((e) => ({
+            memberId: e.memberId,
+            source: sourceLabel(e.source),
+            startDeltaS: Math.round(e.startDeltaS),
+            endDeltaS: Math.round(e.endDeltaS),
+            timeToleranceS: Math.round(e.timeToleranceS),
+            trackDeviationM: isSet(e.trackDeviationM) ? Math.round(e.trackDeviationM) : null,
+            locationToleranceM: Math.round(e.locationToleranceM),
+            confidence: round(e.confidence, 2),
+            mergedByUser: e.userDecision || undefined,
+          })),
           conflicts: (d.conflicts ?? []).map((c) => ({
             field: c.field,
             message: c.message,
