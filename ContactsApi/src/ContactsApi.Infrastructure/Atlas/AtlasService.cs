@@ -458,15 +458,12 @@ public partial class AtlasService
             : new List<AtlasActivity> { a };
         var count = a.PointCount;
         var step = Math.Max(1, (int)Math.Ceiling(count / (double)Math.Clamp(maxPoints, 10, 20000)));
-        var points = await _db.TrackPoints.AsNoTracking()
+        // The analysis reads the full track; the app gets it thinned
+        var full = await _db.TrackPoints.AsNoTracking()
             .Where(p => p.ActivityId == id)
             .OrderBy(p => p.Time)
-            .Select(p => new PointOutput(p.Time, p.Lat, p.Lon, p.Elevation, p.HeartRate, p.Speed))
+            .Select(p => new TrackAnalysis.Sample(p.Time, p.Lat, p.Lon, p.Elevation, p.HeartRate, p.Speed, p.Cadence))
             .ToListAsync(ct);
-        if (step > 1)
-        {
-            points = points.Where((_, i) => i % step == 0 || i == points.Count - 1).ToList();
-        }
 
         var fieldSources = a.Fusion != null
             ? System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(a.Fusion.FieldSources) ?? new()
@@ -477,11 +474,13 @@ public partial class AtlasService
 
         // Heart rate: the primary's track, else another member's track, else health samples
         string? hrSource = null;
-        var hr = new List<SeriesPoint>();
-        if (points.Any(p => p.Hr.HasValue))
+        var hrFull = new List<SeriesPoint>();
+        double hrGapS = 60;
+        var ownHr = full.Any(p => p.Hr.HasValue);
+        if (ownHr)
         {
             hrSource = "track";
-            hr = points.Where(p => p.Hr.HasValue).Select(p => new SeriesPoint(p.T, p.Hr!.Value)).ToList();
+            hrFull = full.Where(p => p.Hr.HasValue).Select(p => new SeriesPoint(p.T, p.Hr!.Value)).ToList();
             fieldSources["heartRate"] = a.Source;
         }
         else
@@ -490,25 +489,26 @@ public partial class AtlasService
                 .OrderBy(m => SourceRank(m.Source)).FirstOrDefault();
             if (other != null)
             {
-                hr = await _db.TrackPoints.AsNoTracking()
+                hrFull = await _db.TrackPoints.AsNoTracking()
                     .Where(p => p.ActivityId == other.Id && p.HeartRate != null)
                     .OrderBy(p => p.Time)
                     .Select(p => new SeriesPoint(p.Time, p.HeartRate!.Value, null, null))
                     .ToListAsync(ct);
-                if (hr.Count > 0)
+                if (hrFull.Count > 0)
                 {
                     hrSource = "track";
                     fieldSources["heartRate"] = other.Source;
                 }
             }
 
-            if (hr.Count == 0)
+            if (hrFull.Count == 0)
             {
                 var samples = await HealthAsync(owner, "heart_rate", a.Fusion?.StartTime ?? a.StartTime, a.Fusion?.EndTime ?? a.EndTime, 600, ct);
                 if (samples.Count > 0)
                 {
                     hrSource = "health";
-                    hr = samples;
+                    hrFull = samples;
+                    hrGapS = 300;
                     var healthSource = await _db.HealthSamples.AsNoTracking()
                         .Where(s => s.OwnerId == owner && s.Type == "heart_rate" && s.StartTime >= a.StartTime && s.StartTime <= a.EndTime)
                         .Select(s => s.Source).FirstOrDefaultAsync(ct);
@@ -516,6 +516,17 @@ public partial class AtlasService
                 }
             }
         }
+
+        var summary = Summarize(a);
+        var analysis = await AnalyzeAsync(owner, a, summary, full, hrFull, hrGapS, ct);
+        var distance = analysis?.Distance ?? TrackAnalysis.Distances(full);
+        var points = full
+            .Select((p, i) => new PointOutput(p.T, p.Lat, p.Lon, p.Ele, p.Hr, analysis?.Speed[i] ?? p.Speed, p.Cad, Math.Round(distance[i], 1)))
+            .Where((_, i) => step == 1 || i % step == 0 || i == full.Count - 1)
+            .ToList();
+        var hr = ownHr
+            ? points.Where(p => p.Hr.HasValue).Select(p => new SeriesPoint(p.T, p.Hr!.Value)).ToList()
+            : hrFull;
 
         var memberRows = members
             .OrderByDescending(m => m.Id == a.Id).ThenBy(m => SourceRank(m.Source))
@@ -526,8 +537,8 @@ public partial class AtlasService
         var evidence = a.Fusion != null
             ? System.Text.Json.JsonSerializer.Deserialize<List<MatchEvidence>>(a.Fusion.Evidence, JsonCamel) ?? new()
             : new List<MatchEvidence>();
-        return new ActivityDetail(Summarize(a), a.Notes, points, hrSource, hr, memberRows, conflicts, fieldSources, places,
-            evidence, a.Fusion?.MatchConfidence);
+        return new ActivityDetail(summary, a.Notes, points, hrSource, hr, memberRows, conflicts, fieldSources, places,
+            evidence, a.Fusion?.MatchConfidence, analysis?.Analysis);
     }
 
     private static readonly System.Text.Json.JsonSerializerOptions JsonCamel = new(System.Text.Json.JsonSerializerDefaults.Web);

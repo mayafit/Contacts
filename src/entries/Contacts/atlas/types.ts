@@ -258,7 +258,112 @@ export interface PointOutput {
   lon: number;
   ele?: number | null;
   hr?: number | null;
+  /** Meters per second (recorded, or derived and smoothed) */
   speed?: number | null;
+  /** Cadence (rpm / steps per minute) when recorded */
+  cad?: number | null;
+  /** Distance from the start along the track, meters (may be missing from older servers) */
+  d?: number;
+}
+
+/** One split of an activity (per km, per 5 km or per 100 m) */
+export interface Split {
+  /** 1-based */
+  index: number;
+  /** Usually ActivityAnalysis.splitM; the last one may be shorter */
+  distanceM: number;
+  /** Moving time over the split */
+  timeS: number;
+  speedKmh: number;
+  /** Seconds per km */
+  paceSPerKm: number;
+  avgHr: number | null;
+  /** Elevation gain within the split */
+  climbM: number;
+}
+
+/** Time in heart-rate zones of one activity */
+export interface HrZones {
+  /** The user's own max (98th percentile of all max heart rates), or this activity's */
+  maxHr: number;
+  maxHrSource: 'history' | 'activity';
+  /** 4 lower bounds (bpm) of zones 2..5: 60/70/80/90 % of maxHr */
+  bounds: number[];
+  /** 5 values: time in zone 1 (<60%) … zone 5 (≥90%) */
+  seconds: number[];
+  avgHr: number;
+  maxHrHere: number;
+}
+
+/** Aerobic decoupling: speed/heart-rate ratio of the second half against the first */
+export interface Drift {
+  firstHalf: { speedKmh: number; avgHr: number };
+  secondHalf: { speedKmh: number; avgHr: number };
+  /** (ratio1 − ratio2) / ratio1 × 100; under 5 is steady */
+  decouplingPct: number;
+  /** Under 5, 5–10, over 10 */
+  verdict: 'steady' | 'drifting' | 'fading';
+}
+
+/** A fastest stretch of an activity */
+export interface BestEffort {
+  /** run/walk/hike: 1000, 5000, 10000, 21097; ride: 5000, 10000, 20000, 40000 */
+  distanceM: number;
+  timeS: number;
+  speedKmh: number;
+  paceSPerKm: number;
+  /** Where it started (seconds from the activity start) */
+  startOffsetS: number;
+  /** 1 = the user's fastest of this distance for this type; null when unknown */
+  allTimeRank: number | null;
+}
+
+/** Another activity on the same route */
+export interface SimilarActivity {
+  id: string;
+  startTime: string;
+  durationS: number;
+  speedKmh: number | null;
+  avgHr: number | null;
+  distanceM: number | null;
+}
+
+/** An activity against the user's other activities */
+export interface Similar {
+  /** The same route, newest first, at most 20, without this one */
+  sameRoute: SimilarActivity[];
+  /** 1 = fastest of this route (this one included) */
+  rankBySpeed: number | null;
+  /** Route activities counted (this one included) */
+  ofRoute: number;
+  /** Average of the route activities */
+  avgSpeedKmh: number | null;
+  avgHr: number | null;
+  /** Percentiles (0–100) among the user's activities of the same type in the last 365 days */
+  sameType: { count: number; speedPercentile: number | null; distancePercentile: number | null };
+}
+
+/** The analysis of an activity's track (computed on the server) */
+export interface ActivityAnalysis {
+  /** Time while moving */
+  movingS: number;
+  stoppedS: number;
+  distanceM: number;
+  avgMovingSpeedKmh: number | null;
+  /** Highest 30-second average */
+  maxSpeedKmh: number | null;
+  avgCadence: number | null;
+  /** Run, walk, hike: show pace (min/km) instead of speed */
+  pace: boolean;
+  splits: Split[];
+  /** The split length used */
+  splitM: number;
+  /** Null without heart rate */
+  zones: HrZones | null;
+  /** Null without heart rate or under 20 minutes moving */
+  drift: Drift | null;
+  bestEfforts: BestEffort[];
+  similar: Similar | null;
 }
 
 /** A value over time */
@@ -287,6 +392,8 @@ export interface ActivityDetail {
   evidence?: MatchEvidence[];
   /** Lowest member confidence (0..1); null when not fused */
   matchConfidence?: number | null;
+  /** Null without a track of at least 2 points (missing from older servers) */
+  analysis?: ActivityAnalysis | null;
 }
 
 /** Timeline histogram row */
@@ -493,6 +600,41 @@ export interface Insights {
   coverage: InsightsCoverage;
   /** Most important first */
   proposals: InsightsProposal[];
+  /** Training load per week (only with from and to), oldest first; missing from older servers */
+  weekly?: WeekLoad[];
+  /** 5 values: time in heart-rate zones over the period (null without any heart rate) */
+  zoneSeconds?: number[] | null;
+  /** Per sport type with at least 3 activities in the period */
+  trends?: TypeTrend[];
+}
+
+/** Training of one week (insights) */
+export interface WeekLoad {
+  /** Monday (local), ISO */
+  week: string;
+  hours: number;
+  /** Without flights and drives */
+  distanceKm: number;
+  /** Sum of minutes × intensity (avg HR / max HR, or 0.6 without heart rate) */
+  load: number;
+}
+
+/** One activity of a sport trend (insights) */
+export interface TypeTrendPoint {
+  t: string;
+  speedKmh: number | null;
+  avgHr: number | null;
+  distanceKm: number | null;
+}
+
+/** How one sport type developed over the period (insights) */
+export interface TypeTrend {
+  type: string;
+  /** One per activity, oldest first (at most 200) */
+  points: TypeTrendPoint[];
+  /** Average speed, last third vs first third of the period */
+  speedChangePct: number | null;
+  hrChangePct: number | null;
 }
 
 /** An MCP access token as listed */

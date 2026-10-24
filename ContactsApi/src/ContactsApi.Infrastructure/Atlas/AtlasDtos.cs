@@ -78,8 +78,11 @@ public record VisitSummary(
 /// <summary>Search results</summary>
 public record SearchResult(List<ActivitySummary> Activities, List<VisitSummary> Visits, int TotalActivities, int TotalVisits);
 
-/// <summary>A track point as returned ([time, lat, lon, elevation, heart rate, speed])</summary>
-public record PointOutput(DateTime T, double Lat, double Lon, double? Ele, int? Hr, double? Speed);
+/// <summary>A track point as returned</summary>
+/// <param name="Speed">m/s: recorded, or the average over ±10 s</param>
+/// <param name="Cad">Cadence (rpm or steps per minute) when recorded</param>
+/// <param name="D">Distance from the start along the track (m)</param>
+public record PointOutput(DateTime T, double Lat, double Lon, double? Ele, int? Hr, double? Speed, int? Cad = null, double D = 0);
 
 /// <summary>A heart rate (or other health) value at a time</summary>
 public record SeriesPoint(DateTime T, double V, double? Min = null, double? Max = null);
@@ -90,7 +93,7 @@ public record ActivityDetail(
     string? HeartRateSource, List<SeriesPoint> HeartRate,
     List<ActivityMember> Members, List<FusionConflict> Conflicts,
     Dictionary<string, string> FieldSources, List<LinkedPlace> Places,
-    List<MatchEvidence> Evidence, double? MatchConfidence);
+    List<MatchEvidence> Evidence, double? MatchConfidence, ActivityAnalysis? Analysis = null);
 
 /// <summary>How a source record matches the fused activity's primary record</summary>
 /// <param name="StartDeltaS">Its start minus the primary's (seconds)</param>

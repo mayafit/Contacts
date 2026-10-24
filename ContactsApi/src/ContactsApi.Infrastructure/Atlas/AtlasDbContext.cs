@@ -27,6 +27,7 @@ public class AtlasDbContext : DbContext
     public DbSet<SourceConnection> Connections => Set<SourceConnection>();
     public DbSet<FusionQueueItem> FusionQueue => Set<FusionQueueItem>();
     public DbSet<FusionSetting> FusionSettings => Set<FusionSetting>();
+    public DbSet<ActivityEffort> Efforts => Set<ActivityEffort>();
 
     /// <inheritdoc />
     protected override void OnModelCreating(ModelBuilder b)
@@ -76,6 +77,16 @@ public class AtlasDbContext : DbContext
             e.ToTable("fusion_settings");
             e.HasKey(x => x.OwnerId);
             e.Property(x => x.OwnerId).HasMaxLength(64);
+        });
+
+        b.Entity<ActivityEffort>(e =>
+        {
+            e.ToTable("activity_efforts");
+            e.HasKey(x => x.ActivityId);
+            e.HasIndex(x => new { x.OwnerId, x.Type });
+            e.Property(x => x.OwnerId).HasMaxLength(64);
+            e.Property(x => x.Type).HasMaxLength(32);
+            e.HasOne<AtlasActivity>().WithMany().HasForeignKey(x => x.ActivityId).OnDelete(DeleteBehavior.Cascade);
         });
 
         b.Entity<SourceConnection>(e =>

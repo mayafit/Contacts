@@ -26,6 +26,9 @@ public class FusionSignal : IFusionSignal
         }
     }
 
+    /// <summary>A wake is waiting (new data to fuse)</summary>
+    public bool Pending => _wake.CurrentCount > 0;
+
     /// <summary>Waits for a wake or the timeout</summary>
     public Task<bool> WaitAsync(TimeSpan timeout, CancellationToken ct) => _wake.WaitAsync(timeout, ct);
 }
@@ -103,6 +106,7 @@ public class AtlasFusionWorker : BackgroundService
                 // Let an import's next batches arrive, then fuse them together
                 await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
                 await DrainAsync(stoppingToken);
+                await AnalyzeAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -113,6 +117,29 @@ public class AtlasFusionWorker : BackgroundService
                 _logger.LogError(ex, "Fusion service run failed");
                 await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
             }
+        }
+    }
+
+    /// <summary>
+    /// Best efforts of activities that have none yet (after a release, an import or a
+    /// fusion change), in small batches; new data to fuse goes first
+    /// </summary>
+    private async Task AnalyzeAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (!ct.IsCancellationRequested && !_signal.Pending)
+            {
+                using var scope = _scopes.CreateScope();
+                if (await scope.ServiceProvider.GetRequiredService<AtlasService>().AnalyzePendingEffortsAsync(20, ct) == 0)
+                {
+                    return;
+                }
+            }
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            _logger.LogError(ex, "Best-effort analysis failed; it is retried on the next run");
         }
     }
 
