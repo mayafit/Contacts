@@ -124,6 +124,9 @@ public class TrackAnalysisTests
         Assert.Equal(5000, a.SplitM);
         Assert.InRange(a.Splits.Sum(s => s.ClimbM), 190, 205);
         Assert.True(a.MaxSpeedKmh <= 100);
+        // The 2 km jump adds no distance (and so no false best effort)
+        Assert.Equal(399 * 30, a.DistanceM, 0);
+        Assert.All(a.BestEfforts, e => Assert.True(e.SpeedKmh < 25));
     }
 
     [Fact]
@@ -183,9 +186,12 @@ public class ActivityAnalysisDbTests
 
         var ids = await db.Activities.Where(a => a.OwnerId == owner && a.ExternalId!.StartsWith("run-")).ToDictionaryAsync(a => a.ExternalId!, a => a.Id);
         // The background backfill: every run gets its efforts (not the ones without a track)
-        while (await svc.AnalyzePendingEffortsAsync(3) > 0)
+        Guid? after = null;
+        do
         {
+            after = await svc.AnalyzePendingEffortsAsync(3, after);
         }
+        while (after != null);
 
         Assert.Equal(6, await db.Efforts.CountAsync(e => e.OwnerId == owner));
 

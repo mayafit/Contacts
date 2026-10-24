@@ -131,36 +131,44 @@ public partial class AtlasService
     /// Computes best efforts for activities that have none yet, or stale ones (all owners).
     /// The fusion service calls it in small batches while idle.
     /// </summary>
-    /// <returns>How many activities it saved (0 when nothing is left, or nothing could be saved)</returns>
-    public async Task<int> AnalyzePendingEffortsAsync(int limit, CancellationToken ct = default)
+    /// <param name="after">Continue after this activity id (keyset paging; null from the start)</param>
+    /// <returns>The last activity id looked at, or null when nothing is left</returns>
+    public async Task<Guid?> AnalyzePendingEffortsAsync(int limit, Guid? after = null, CancellationToken ct = default)
     {
         var todo = await _db.Activities.AsNoTracking()
             .Where(a => (a.ClusterId == null || a.ClusterId == a.Id) && a.PointCount > 1)
+            .Where(a => after == null || a.Id > after)
             .Select(a => new { a.Id, a.OwnerId, a.PointCount, Type = a.Fusion != null && a.Fusion.Type != null ? a.Fusion.Type : a.Type })
             .Where(a => EffortTypes.Contains(a.Type))
             .Where(a => !_db.Efforts.Any(e => e.ActivityId == a.Id && e.Type == a.Type && e.PointCount == a.PointCount))
             .OrderBy(a => a.Id)
             .Take(limit)
             .ToListAsync(ct);
-        var saved = 0;
         foreach (var a in todo)
         {
-            var points = await _db.TrackPoints.AsNoTracking()
-                .Where(p => p.ActivityId == a.Id)
-                .OrderBy(p => p.Time)
-                .Select(p => new TrackAnalysis.Sample(p.Time, p.Lat, p.Lon, null, null, null, null))
-                .ToListAsync(ct);
-            var efforts = points.Count < 2
-                ? new List<BestEffort>()
-                : TrackAnalysis.BestEfforts(points.Select(p => (p.T - points[0].T).TotalSeconds).ToArray(), TrackAnalysis.Distances(points), a.Type);
-            if (await SaveEffortsAsync(a.OwnerId, a.Id, a.Type, a.PointCount, efforts, ct))
+            try
             {
-                saved++;
+                var points = await _db.TrackPoints.AsNoTracking()
+                    .Where(p => p.ActivityId == a.Id)
+                    .OrderBy(p => p.Time)
+                    .Select(p => new TrackAnalysis.Sample(p.Time, p.Lat, p.Lon, null, null, null, null))
+                    .ToListAsync(ct);
+                var efforts = points.Count < 2
+                    ? new List<BestEffort>()
+                    : TrackAnalysis.BestEfforts(points.Select(p => (p.T - points[0].T).TotalSeconds).ToArray(),
+                        TrackAnalysis.Distances(points, a.Type), a.Type);
+                await SaveEffortsAsync(a.OwnerId, a.Id, a.Type, a.PointCount, efforts, ct);
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                // One bad activity does not stop the rest (it is retried on the next pass)
+                _logger.LogWarning(ex, "Best efforts failed for an activity");
+                _db.ChangeTracker.Clear();
             }
         }
 
         _db.ChangeTracker.Clear();
-        return saved;
+        return todo.Count > 0 ? todo[^1].Id : null;
     }
 
     /// <summary>
@@ -198,6 +206,7 @@ public partial class AtlasService
                 x.Polyline
             })
             .Where(x => x.DistanceM >= lo && x.DistanceM <= hi)
+            .OrderByDescending(x => x.Start)
             .Take(2000)
             .ToListAsync(ct);
 
@@ -209,7 +218,7 @@ public partial class AtlasService
             if (other.Count < 2
                 || Geo.Haversine(track[0].Lat, track[0].Lon, other[0].Lat, other[0].Lon) > 300
                 || Geo.Haversine(track[^1].Lat, track[^1].Lon, other[^1].Lat, other[^1].Lon) > 300
-                || probe.Count(p => NearTrack(p, other, 200)) < probe.Count * 0.8)
+                || !MostlyNear(probe, other, 200, 0.8))
             {
                 continue;
             }
@@ -249,6 +258,22 @@ public partial class AtlasService
             route.Count > 0 && speeds.Count > 0 ? Math.Round(speeds.Average(), 1) : null,
             route.Count > 0 && hrs.Count > 0 ? (int)Math.Round(hrs.Average()) : null,
             sameType);
+    }
+
+    /// <summary>Whether at least <paramref name="share"/> of the probe points are near the track (stops once it cannot be)</summary>
+    private static bool MostlyNear(List<(double Lat, double Lon)> probe, List<(double Lat, double Lon)> track, double meters, double share)
+    {
+        var allowedMisses = probe.Count - (int)Math.Ceiling(probe.Count * share);
+        var misses = 0;
+        foreach (var p in probe)
+        {
+            if (!NearTrack(p, track, meters) && ++misses > allowedMisses)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>Whether a point is within <paramref name="meters"/> of a polyline (its segments, not only its vertices)</summary>

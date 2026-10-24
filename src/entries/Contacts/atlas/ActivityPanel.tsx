@@ -204,6 +204,7 @@ const ActivityPanel: React.FC<ActivityPanelProps> = ({
     samples.length ? samples[samples.length - 1].t : 0,
   );
   const hasDistance = samples.length > 1 && samples[samples.length - 1].d > 0;
+  const trackOffsetS = detail.points.length ? (Date.parse(detail.points[0].t) - from) / 1000 : 0;
   const pace = analysis?.pace ?? false;
 
   /** Moves the cursor (charts and map) to a moment; null hides it */
@@ -390,7 +391,13 @@ const ActivityPanel: React.FC<ActivityPanelProps> = ({
           title="Effort"
           hint={drift ? `drift ${drift.decouplingPct.toFixed(1)}%` : undefined}
         >
-          <EffortSection drift={drift} bestEfforts={bestEfforts} pace={pace} onSeek={seek} />
+          <EffortSection
+            drift={drift}
+            bestEfforts={bestEfforts}
+            pace={pace}
+            // The server counts from the first track point; the charts from the activity start
+            onSeek={(t) => seek(t + trackOffsetS)}
+          />
         </PanelSection>
       )}
 
@@ -402,7 +409,11 @@ const ActivityPanel: React.FC<ActivityPanelProps> = ({
               id: s.id,
               startTime: s.startTime,
               durationS: s.durationS ?? null,
-              speedKmh: s.distanceM && s.durationS ? (s.distanceM / s.durationS) * 3.6 : null,
+              // Like the server: elapsed time when the source gave no duration
+              speedKmh:
+                s.distanceM && (s.durationS || to > from)
+                  ? (s.distanceM / (s.durationS || (to - from) / 1000)) * 3.6
+                  : null,
             }}
             type={s.type}
             pace={pace}

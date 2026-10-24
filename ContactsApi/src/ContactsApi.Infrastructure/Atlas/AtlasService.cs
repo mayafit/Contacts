@@ -519,7 +519,7 @@ public partial class AtlasService
 
         var summary = Summarize(a);
         var analysis = await AnalyzeAsync(owner, a, summary, full, hrFull, hrGapS, ct);
-        var distance = analysis?.Distance ?? TrackAnalysis.Distances(full);
+        var distance = analysis?.Distance ?? TrackAnalysis.Distances(full, summary.Type);
         var points = full
             .Select((p, i) => new PointOutput(p.T, p.Lat, p.Lon, p.Ele, p.Hr, analysis?.Speed[i] ?? p.Speed, p.Cad, Math.Round(distance[i], 1)))
             .Where((_, i) => step == 1 || i % step == 0 || i == full.Count - 1)
@@ -527,6 +527,12 @@ public partial class AtlasService
         var hr = ownHr
             ? points.Where(p => p.Hr.HasValue).Select(p => new SeriesPoint(p.T, p.Hr!.Value)).ToList()
             : hrFull;
+        if (hr.Count == 0 && hrFull.Count > 0)
+        {
+            // Heart rate on a few points only, all thinned away: send them thinned on their own
+            var hrStep = Math.Max(1, (int)Math.Ceiling(hrFull.Count / (double)Math.Clamp(maxPoints, 10, 20000)));
+            hr = hrFull.Where((_, i) => i % hrStep == 0).ToList();
+        }
 
         var memberRows = members
             .OrderByDescending(m => m.Id == a.Id).ThenBy(m => SourceRank(m.Source))

@@ -306,7 +306,8 @@ const compactInsights = (r: Insights) => {
     },
     proposals: r.proposals.map((p) => ({ severity: p.severity, title: p.title, text: p.text })),
     weeklyLoad: (r.weekly ?? []).slice(-26).map((w) => ({
-      week: w.week.slice(0, 10),
+      // Monday in the user's zone (the value is its midnight as UTC)
+      week: new Date(w.week).toLocaleDateString('sv-SE'),
       load: round(w.load),
       hours: round(w.hours, 1),
       km: round(w.distanceKm, 1),

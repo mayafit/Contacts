@@ -121,7 +121,7 @@ public static class TrackAnalysis
             return null;
         }
 
-        var d = Distances(points);
+        var d = Distances(points, type);
         var speed = Speeds(points, t, d);
         var heart = new HeartRate(hr, t0, hrGapS);
         var cap = SpeedCapKmh(type);
@@ -161,13 +161,20 @@ public static class TrackAnalysis
         return new Result(analysis, d, speed);
     }
 
-    /// <summary>Distance from the start at every point (m)</summary>
-    public static double[] Distances(IReadOnlyList<Sample> points)
+    /// <summary>
+    /// Distance from the start at every point (m). A GPS jump (faster than the type
+    /// allows, or a leap without time) adds nothing: it would make false best efforts.
+    /// </summary>
+    public static double[] Distances(IReadOnlyList<Sample> points, string type)
     {
+        var limit = SpeedCapKmh(type) * 1.5 / 3.6;
         var d = new double[points.Count];
         for (var i = 1; i < points.Count; i++)
         {
-            d[i] = d[i - 1] + Geo.Haversine(points[i - 1].Lat, points[i - 1].Lon, points[i].Lat, points[i].Lon);
+            var step = Geo.Haversine(points[i - 1].Lat, points[i - 1].Lon, points[i].Lat, points[i].Lon);
+            var dt = (points[i].T - points[i - 1].T).TotalSeconds;
+            var jump = dt > 0 ? step / dt > limit : step > 50;
+            d[i] = d[i - 1] + (jump ? 0 : step);
         }
 
         return d;

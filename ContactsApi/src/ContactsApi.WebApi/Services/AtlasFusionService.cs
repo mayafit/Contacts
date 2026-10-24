@@ -128,13 +128,21 @@ public class AtlasFusionWorker : BackgroundService
     {
         try
         {
+            Guid? after = null;
             while (!ct.IsCancellationRequested && !_signal.Pending)
             {
-                using var scope = _scopes.CreateScope();
-                if (await scope.ServiceProvider.GetRequiredService<AtlasService>().AnalyzePendingEffortsAsync(20, ct) == 0)
+                using (var scope = _scopes.CreateScope())
+                {
+                    after = await scope.ServiceProvider.GetRequiredService<AtlasService>().AnalyzePendingEffortsAsync(20, after, ct);
+                }
+
+                if (after == null)
                 {
                     return;
                 }
+
+                // Leave the Pi room for the app between batches
+                await Task.Delay(TimeSpan.FromMilliseconds(400), ct);
             }
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)

@@ -276,11 +276,18 @@ const ActivityCharts: React.FC<ActivityChartsProps> = ({
 
   const hr = useMemo<ChartPoint[]>(
     () =>
-      detail.heartRate.map((p) => {
-        const t = (Date.parse(p.t) - start) / 1000;
-        return { t, d: distanceAtTime(samples, t), v: p.v };
-      }),
-    [detail, samples, start],
+      detail.heartRate
+        .map((p) => {
+          const t = (Date.parse(p.t) - start) / 1000;
+          return { t, d: distanceAtTime(samples, t), v: p.v };
+        })
+        // Outside the track there is no distance: they would pile up at the ends
+        .filter(
+          (p) =>
+            axis === 'time' ||
+            (samples.length > 0 && p.t >= samples[0].t && p.t <= samples[samples.length - 1].t),
+        ),
+    [detail, samples, start, axis],
   );
   const speed = useMemo(() => speedSeries(samples, pace), [samples, pace]);
   const ele = useMemo<ChartPoint[]>(
