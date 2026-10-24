@@ -430,3 +430,48 @@ public class RideWindowDbTests
     }
 }
 
+/// <summary>A Samsung Health workout joins the Sports Tracker ride and brings the heart rate</summary>
+public class SamsungFusionDbTests
+{
+    [Fact]
+    public async Task The_watch_workout_gives_the_ride_its_heart_rate()
+    {
+        var cs = Environment.GetEnvironmentVariable("ATLAS_TEST_DB");
+        if (string.IsNullOrEmpty(cs))
+        {
+            return;
+        }
+
+        await using var db = new AtlasDbContext(new DbContextOptionsBuilder<AtlasDbContext>()
+            .UseNpgsql(cs, o => o.MigrationsHistoryTable("__ef_migrations", "atlas")).Options);
+        await db.Database.MigrateAsync();
+        var owner = "samsung-" + Guid.NewGuid();
+        var svc = new AtlasService(db, NullLogger<AtlasService>.Instance);
+        var t0 = new DateTime(2025, 3, 2, 5, 0, 0, DateTimeKind.Utc);
+
+        await svc.IngestAsync(owner, new IngestRequest
+        {
+            Source = "sports-tracker",
+            Activities = { new ActivityInput("st-1", "cycling", null, t0, t0.AddMinutes(60),
+                Points: Enumerable.Range(0, 120).Select(i => new PointInput(t0.AddSeconds(i * 30), 32.0 + i * 0.0005, 34.8)).ToList()) }
+        });
+        // The watch, started 70 s later, its GPS ~200 m off, heart rate on every point
+        var w0 = t0.AddSeconds(70);
+        await svc.IngestAsync(owner, new IngestRequest
+        {
+            Source = "samsung-health",
+            Activities = { new ActivityInput("sh-1", "ride", null, w0, t0.AddMinutes(60), AvgHeartRate: 131, MaxHeartRate: 170,
+                Points: Enumerable.Range(0, 118).Select(i => new PointInput(w0.AddSeconds(i * 30), 32.0018 + i * 0.0005, 34.8, null, 120 + i % 30)).ToList()) }
+        });
+
+        var ride = Assert.Single((await svc.SearchAsync(owner, new AtlasQuery())).Activities);
+        Assert.Equal("sports-tracker", ride.Source);
+        Assert.Equal(new[] { "sports-tracker", "samsung-health" }, ride.Sources);
+        Assert.NotNull(ride.AvgHeartRate);
+        var detail = await svc.GetActivityAsync(owner, ride.Id);
+        Assert.Equal("track", detail.HeartRateSource);
+        Assert.Equal("samsung-health", detail.FieldSources["heartRate"]);
+        Assert.True(detail.HeartRate.Count > 100);
+    }
+}
+
