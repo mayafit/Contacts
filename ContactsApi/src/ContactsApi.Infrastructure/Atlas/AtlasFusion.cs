@@ -34,6 +34,8 @@ public record FusionRules(IReadOnlyDictionary<string, Tolerance> Sources, double
         ("manual", new Tolerance(900, 500)),
         // Watch GPS: often off by a few hundred meters
         ("google-fit", new Tolerance(120, 300)),
+        // A watch: its own clock is right, its GPS often a few hundred meters off
+        ("samsung-health", new Tolerance(60, 300)),
         ("fitbit", new Tolerance(60, 100)),
         ("google-timeline", new Tolerance(600, 300)),
         ("other", new Tolerance(300, 200))
@@ -75,6 +77,7 @@ public static class Fusion
         "sports-tracker" => "Sports Tracker",
         "google-timeline" => "Google Timeline",
         "google-fit" => "Google Fit",
+        "samsung-health" => "Samsung Health",
         "fitbit" => "Fitbit",
         "gpx" => "GPX file",
         "tcx" => "TCX file",
@@ -91,7 +94,7 @@ public static class Fusion
         "sports-tracker" => 0,
         "gpx" or "tcx" => 1,
         "manual" => 2,
-        "google-fit" => 3,
+        "google-fit" or "samsung-health" => 3,
         "fitbit" => 4,
         "google-timeline" => 6,
         _ => 5

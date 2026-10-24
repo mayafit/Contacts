@@ -27,6 +27,7 @@ import { DeleteOutline, FolderOpen, UploadFile } from '@mui/icons-material';
 import { backendApiClient } from '../../../services/api/BackendApiClient';
 import type { ImportRun, ParsedData } from './types';
 import { parseFile, readZip, type ImportFile } from './importers';
+import { SamsungCollector, samsungKind } from './importers/samsung';
 import { tokens } from '../theme/contactsTheme';
 import { thinTrack, trackLength } from './geo';
 import SportsTrackerTab from './SportsTrackerTab';
@@ -173,9 +174,14 @@ const ImportDialog: React.FC<ImportDialogProps> = ({ open, onClose, onChanged })
     const hint = source === 'sports-tracker' ? 'sports-tracker' : undefined;
     const label = files.length === 1 ? files[0].name : `${files.length} files`;
     let found = 0;
+    // A Samsung Health export comes in many files (workouts, their heart rate and
+    // GPS files): they are put together as they arrive
+    const samsung = new SamsungCollector();
     const handle = async (f: ImportFile) => {
       try {
-        const parsed = await parseFile(f, hint);
+        const parsed = samsungKind(f.path)
+          ? samsung.add(f.path, await f.text())
+          : await parseFile(f, hint);
         if (!parsed) {
           return;
         }
@@ -202,6 +208,13 @@ const ImportDialog: React.FC<ImportDialogProps> = ({ open, onClose, onChanged })
         } else {
           await handle({ path, text: () => file.text() });
         }
+      }
+      // Samsung workouts whose heart-rate or GPS file never came
+      const rest = samsung.finish();
+      if (rest.activities.length + rest.health.length > 0) {
+        found += 1;
+        note(`Samsung Health: ${rest.activities.length} more workouts`);
+        await send(rest, importIds, label, (k) => setSent((s) => s + k));
       }
       note(found ? 'Done.' : 'No importable data found in these files.');
       onChanged();
@@ -258,6 +271,10 @@ const ImportDialog: React.FC<ImportDialogProps> = ({ open, onClose, onChanged })
               <li>
                 <strong>Sports Tracker</strong>: workouts exported as GPX (Workout → ⋯ → Export
                 GPX), several at once.
+              </li>
+              <li>
+                <strong>Samsung Health</strong>: the whole export folder or its zip (Settings →
+                Download personal data): workouts with heart rate and GPS, and all-day heart rate.
               </li>
               <li>Any GPX or TCX file.</li>
             </Box>

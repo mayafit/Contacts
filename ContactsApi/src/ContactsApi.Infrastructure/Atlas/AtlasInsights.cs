@@ -57,7 +57,7 @@ public partial class AtlasService
 {
     private static readonly HashSet<string> Sports = new() { "ride", "run", "hike", "walk", "swim", "ski" };
     private static readonly HashSet<string> RhythmSports = new() { "ride", "run", "hike", "swim" };
-    private static readonly HashSet<string> RecordedSources = new() { "sports-tracker", "gpx", "tcx", "google-fit" };
+    private static readonly HashSet<string> RecordedSources = new() { "sports-tracker", "gpx", "tcx", "google-fit", "samsung-health" };
     private static readonly HashSet<string> UnnamedPlaces = new(StringComparer.OrdinalIgnoreCase) { "", "Place", "Saved place", "Searched place" };
 
     private static readonly Dictionary<string, string> TypeNames = new()

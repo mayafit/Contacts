@@ -26,6 +26,9 @@ export interface ActivityInput {
   elevationGainM?: number | null;
   notes?: string | null;
   points?: PointInput[];
+  /** The source's own summary, used when the track has no heart rate */
+  avgHeartRate?: number | null;
+  maxHeartRate?: number | null;
 }
 
 /** A place to import */
@@ -543,6 +546,7 @@ export const SOURCE_LABELS: Record<string, string> = {
   'sports-tracker': 'Sports Tracker',
   'google-timeline': 'Google Timeline',
   'google-fit': 'Google Fit',
+  'samsung-health': 'Samsung Health',
   fitbit: 'Fitbit',
   gpx: 'GPX file',
   tcx: 'TCX file',
