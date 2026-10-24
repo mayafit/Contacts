@@ -115,7 +115,8 @@ export interface ActivityMember {
 
 /** A field the sources of a fused activity disagree on */
 export interface FusionConflict {
-  field: 'type' | 'distanceM' | 'startTime' | 'endTime' | 'track';
+  /** 'location': the tracks deviate beyond the combined location tolerance */
+  field: 'type' | 'distanceM' | 'startTime' | 'endTime' | 'track' | 'location';
   /** Human text, e.g. "Sports Tracker says Ride, Google Timeline says Drive" */
   message: string;
   values: { source: string; value: string }[];
@@ -151,11 +152,62 @@ export interface SourceConnection {
   itemsImported: number;
 }
 
-/** Result of re-running fusion over everything */
+/** Result of a fusion run */
 export interface FuseResult {
   activities: number;
   fused: number;
   conflicts: number;
+}
+
+/** How a non-primary member of a fused activity matches the primary */
+export interface MatchEvidence {
+  memberId: string;
+  source: string;
+  /** Member start − primary start (seconds, signed) */
+  startDeltaS: number;
+  /** Member end − primary end (seconds, signed) */
+  endDeltaS: number;
+  /** Combined time tolerance used (seconds) */
+  timeToleranceS: number;
+  /** Median distance between the tracks at the same moments; null when either has no track */
+  trackDeviationM: number | null;
+  /** Combined location tolerance used (meters) */
+  locationToleranceM: number;
+  /** 0..1 */
+  confidence: number;
+  /** The user merged it (no automatic evidence needed) */
+  userDecision: boolean;
+}
+
+/** How accurate one source's times and positions are */
+export interface SourceTolerance {
+  /** 'sports-tracker' | 'gpx' | 'tcx' | 'manual' | 'google-fit' | 'fitbit' | 'google-timeline' | 'other' */
+  source: string;
+  /** 1 .. 21600 */
+  timeToleranceS: number;
+  /** 1 .. 20000 */
+  locationToleranceM: number;
+  /** Equals the built-in default */
+  isDefault: boolean;
+}
+
+/** The owner's fusion settings */
+export interface FusionSettings {
+  /** 0..1: lowest confidence for an automatic match */
+  matchThreshold: number;
+  /** Every known source, in trust order */
+  sources: SourceTolerance[];
+}
+
+/** State of the background fusion service for this owner */
+export interface FusionStatus {
+  /** Queued time windows */
+  pending: number;
+  running: boolean;
+  lastRunAt: string | null;
+  lastResult: FuseResult | null;
+  /** Set when the last run failed (the service retries it later) */
+  lastError?: string | null;
 }
 
 /** A visit with its place */
@@ -226,6 +278,10 @@ export interface ActivityDetail {
   fieldSources: Record<string, string>;
   /** Visits linked to the activity */
   places: LinkedPlace[];
+  /** One per non-primary member: how it matches the primary (may be missing from older servers) */
+  evidence?: MatchEvidence[];
+  /** Lowest member confidence (0..1); null when not fused */
+  matchConfidence?: number | null;
 }
 
 /** Timeline histogram row */
@@ -294,6 +350,8 @@ export const typeColor = (type: string): string =>
 
 /** Place visits: a colour no activity type uses */
 export const VISIT_COLOR = '#e879f9';
+/** The active filters: time selection, area rectangle and the filter bar's chips */
+export const FILTER_COLOR = '#3987e5';
 /** Health data (heart rate) */
 export const HEALTH_COLOR = '#ff4d6d';
 

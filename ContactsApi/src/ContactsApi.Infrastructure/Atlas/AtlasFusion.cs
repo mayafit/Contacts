@@ -1,6 +1,7 @@
 /**
  * @fileoverview Fusion: records from several sources that describe the same
- * real-world activity become one activity, with provenance and conflicts
+ * real-world activity become one activity, with provenance, match evidence and
+ * conflicts. Matching uses each source's time and location accuracy.
  * @module ContactsApi.Infrastructure.Atlas
  */
 using System.Text.Json;
@@ -15,19 +16,59 @@ public record FusionCandidate(
     double? DistanceM, double? ElevationGainM, int? AvgHeartRate, int? MaxHeartRate,
     double? MinLat, double? MinLon, double? MaxLat, double? MaxLon, int PointCount, bool TypeByUser = false);
 
-/// <summary>One fused activity: its primary record, members and fused values</summary>
+/// <summary>A position at a time, from a record's track (a sample of it)</summary>
+public record TrackSample(DateTime T, double Lat, double Lon);
+
+/// <summary>How far a source's times and positions can be off</summary>
+public record Tolerance(double TimeS, double LocationM);
+
+/// <summary>Accuracy per source and the confidence an automatic match needs</summary>
+public record FusionRules(IReadOnlyDictionary<string, Tolerance> Sources, double Threshold)
+{
+    /// <summary>Sources in trust order, with their default accuracy</summary>
+    public static readonly IReadOnlyList<(string Source, Tolerance Tolerance)> DefaultList = new List<(string, Tolerance)>
+    {
+        ("sports-tracker", new Tolerance(30, 25)),
+        ("gpx", new Tolerance(30, 25)),
+        ("tcx", new Tolerance(30, 25)),
+        ("manual", new Tolerance(900, 500)),
+        ("google-fit", new Tolerance(120, 100)),
+        ("fitbit", new Tolerance(60, 100)),
+        ("google-timeline", new Tolerance(600, 300)),
+        ("other", new Tolerance(300, 200))
+    };
+
+    /// <summary>Lowest confidence for an automatic match, by default</summary>
+    public const double DefaultThreshold = 0.5;
+
+    /// <summary>The built-in rules</summary>
+    public static FusionRules Default { get; } = new(DefaultList.ToDictionary(d => d.Source, d => d.Tolerance), DefaultThreshold);
+
+    /// <summary>The accuracy of a source (unknown sources use "other")</summary>
+    public Tolerance For(string source) =>
+        Sources.TryGetValue(source, out var t) ? t : Sources.TryGetValue("other", out var o) ? o : new Tolerance(300, 200);
+}
+
+/// <summary>One fused activity: its primary record, members, fused values and how they matched</summary>
 public record FusedGroup(
     Guid PrimaryId, List<FusionCandidate> Members, string Type, string? Name, DateTime Start, DateTime End,
     double? DistanceM, double? ElevationGainM, int? AvgHeartRate, int? MaxHeartRate,
-    Dictionary<string, string> FieldSources, List<FusionConflict> Conflicts);
+    Dictionary<string, string> FieldSources, List<FusionConflict> Conflicts, List<MatchEvidence> Evidence)
+{
+    /// <summary>The weakest member match (null when the user decided every one)</summary>
+    public double? MatchConfidence => Evidence.Where(e => !e.UserDecision).Select(e => (double?)e.Confidence).Min();
+}
 
 /// <summary>
-/// Fusion rules, without the database: which records are the same activity
-/// (<see cref="Group"/>) and what the fused activity looks like (<see cref="Fuse"/>).
+/// Fusion rules, without the database: how well two records match
+/// (<see cref="Evaluate"/>), which records are one activity (<see cref="Group"/>)
+/// and what the fused activity looks like (<see cref="Fuse"/>).
 /// </summary>
 public static class Fusion
 {
-    /// <summary>Label of a source in conflict messages</summary>
+    private const double MetersPerDegree = 111_320;
+
+    /// <summary>Label of a source in messages</summary>
     public static string Label(string source) => source switch
     {
         "sports-tracker" => "Sports Tracker",
@@ -56,66 +97,178 @@ public static class Fusion
     };
 
     /// <summary>
-    /// Whether two records describe the same activity: their times overlap by at
-    /// least half of the shorter one and a quarter of the longer one (a short walk
-    /// inside a long drive is not the drive), and their tracks (when both have
-    /// one) are in the same area. Two records of one source are only the same when their
-    /// times match (the same recording imported twice, e.g. a file and a sync).
+    /// How well record <paramref name="b"/> matches record <paramref name="a"/>.
+    /// Times must agree within the two sources' combined time tolerance, or overlap
+    /// by at least half of the shorter and a quarter of the longer record; the
+    /// areas must touch (widened by the combined location tolerance); and when both
+    /// have tracks, they are compared at the same moments. Two records of one source
+    /// only match when their times agree within tolerance (the same recording twice).
     /// </summary>
-    public static bool Same(FusionCandidate a, FusionCandidate b)
+    /// <param name="optimistic">Treat a missing track comparison as perfect (to find candidates before tracks are loaded)</param>
+    /// <returns>The evidence, or null when the two cannot be the same activity</returns>
+    public static MatchEvidence? Evaluate(FusionCandidate a, FusionCandidate b, FusionRules rules,
+        IReadOnlyDictionary<Guid, List<TrackSample>>? samples = null, bool optimistic = false)
     {
         if (a.Id == b.Id)
         {
-            return false;
+            return null;
         }
 
+        var (ta, tb) = (rules.For(a.Source), rules.For(b.Source));
+        var tt = ta.TimeS + tb.TimeS;
+        var lt = ta.LocationM + tb.LocationM;
+        var dStart = (b.Start - a.Start).TotalSeconds;
+        var dEnd = (b.End - a.End).TotalSeconds;
+        var withinTime = Math.Abs(dStart) <= tt && Math.Abs(dEnd) <= tt;
+        var durA = (a.End - a.Start).TotalSeconds;
+        var durB = (b.End - b.Start).TotalSeconds;
+        var longer = Math.Max(durA, durB);
+        var shorter = Math.Min(durA, durB);
+        var overlap = (Min(a.End, b.End) - Max(a.Start, b.Start)).TotalSeconds;
+
+        double timeScore;
         if (a.Source == b.Source)
         {
-            return Math.Abs((a.Start - b.Start).TotalSeconds) <= 120 && Math.Abs((a.End - b.End).TotalSeconds) <= 300;
-        }
+            if (!withinTime)
+            {
+                return null;
+            }
 
-        var overlap = (Min(a.End, b.End) - Max(a.Start, b.Start)).TotalSeconds;
-        var shortest = Math.Min((a.End - a.Start).TotalSeconds, (b.End - b.Start).TotalSeconds);
-        if (shortest < 60)
+            timeScore = 1;
+        }
+        else if (shorter < 60)
         {
             // A moment (a session without a duration) belongs to what it falls within
-            var (point, span) = (a.End - a.Start).TotalSeconds < 60 ? (a, b) : (b, a);
-            if (point.Start < span.Start.AddMinutes(-1) || point.Start > span.End.AddMinutes(1))
+            var (point, span) = durA < 60 ? (a, b) : (b, a);
+            if (point.Start < span.Start.AddSeconds(-tt) || point.Start > span.End.AddSeconds(tt))
             {
-                return false;
+                return null;
+            }
+
+            timeScore = 1;
+        }
+        else if (withinTime)
+        {
+            timeScore = 1;
+        }
+        else if (overlap < shorter * 0.5 || overlap < longer * 0.25)
+        {
+            // A short walk inside a long drive is not the drive
+            return null;
+        }
+        else
+        {
+            // Covered: most of the shorter record, and a good part of the longer one
+            timeScore = Math.Min(1, (overlap + tt) / shorter) * Math.Min(1, (overlap + tt) / (longer * 0.5));
+        }
+
+        var boxes = a.MinLat.HasValue && b.MinLat.HasValue;
+        if (boxes)
+        {
+            var padLat = lt / MetersPerDegree;
+            var padLon = lt / (MetersPerDegree * Math.Max(0.1, Math.Cos(a.MinLat!.Value * Math.PI / 180)));
+            if (!(a.MinLat - padLat <= b.MaxLat && b.MinLat - padLat <= a.MaxLat
+                  && a.MinLon - padLon <= b.MaxLon && b.MinLon - padLon <= a.MaxLon))
+            {
+                return null;
             }
         }
-        else if (overlap < shortest * 0.5
-                 || overlap < Math.Max((a.End - a.Start).TotalSeconds, (b.End - b.Start).TotalSeconds) * 0.25)
+
+        double? deviation = null;
+        if (samples != null && samples.TryGetValue(a.Id, out var sa) && samples.TryGetValue(b.Id, out var sb))
         {
-            return false;
+            deviation = Deviation(sa, sb);
         }
 
-        if (a.MinLat.HasValue && b.MinLat.HasValue)
+        var locationScore = deviation switch
         {
-            // Bounding boxes, widened by ~1 km, must touch
-            const double pad = 0.01;
-            return a.MinLat - pad <= b.MaxLat && b.MinLat - pad <= a.MaxLat
-                   && a.MinLon - pad <= b.MaxLon && b.MinLon - pad <= a.MaxLon;
-        }
-
-        return true;
+            null when optimistic => 1,
+            null => boxes ? 0.85 : 0.75,
+            var d when d <= lt => 1,
+            var d when d >= lt * 4 => 0,
+            var d => 1 - (d.Value - lt) / (lt * 3)
+        };
+        return new MatchEvidence(b.Id, b.Source, Math.Round(dStart), Math.Round(dEnd), tt,
+            deviation.HasValue ? Math.Round(deviation.Value) : null, lt, Math.Round(timeScore * locationScore, 3), false);
     }
 
     /// <summary>
-    /// Groups records into real-world activities. User decisions win: pairs
-    /// marked "together" are always joined, pairs marked "apart" never end up
-    /// in one group (directly or through others).
+    /// Median distance between two tracks at the same moments (the second track's
+    /// position interpolated at each sample time of the first); null when they
+    /// share fewer than three moments
     /// </summary>
-    /// <param name="items">Records (any order)</param>
-    /// <param name="together">Pairs the user merged</param>
-    /// <param name="apart">Pairs the user split</param>
+    public static double? Deviation(IReadOnlyList<TrackSample> a, IReadOnlyList<TrackSample> b)
+    {
+        if (a.Count == 0 || b.Count < 2)
+        {
+            return null;
+        }
+
+        var distances = new List<double>();
+        var j = 0;
+        foreach (var s in a)
+        {
+            if (s.T < b[0].T || s.T > b[^1].T)
+            {
+                continue;
+            }
+
+            while (j < b.Count - 2 && b[j + 1].T < s.T)
+            {
+                j++;
+            }
+
+            var (p, q) = (b[j], b[j + 1]);
+            var span = (q.T - p.T).TotalSeconds;
+            var f = span > 0 ? Math.Clamp((s.T - p.T).TotalSeconds / span, 0, 1) : 0;
+            distances.Add(Geo.Haversine(s.Lat, s.Lon, p.Lat + (q.Lat - p.Lat) * f, p.Lon + (q.Lon - p.Lon) * f));
+        }
+
+        if (distances.Count < 3)
+        {
+            return null;
+        }
+
+        distances.Sort();
+        return distances[distances.Count / 2];
+    }
+
+    /// <summary>
+    /// Pairs worth comparing in detail: the records whose tracks should be loaded.
+    /// Optimistic about the tracks, so no pair that could match is missed.
+    /// </summary>
+    public static HashSet<Guid> Candidates(IReadOnlyList<FusionCandidate> items, FusionRules rules)
+    {
+        var ids = new HashSet<Guid>();
+        foreach (var (a, b) in Sweep(items, rules))
+        {
+            if (a.PointCount > 1 && b.PointCount > 1 && Evaluate(a, b, rules, optimistic: true) is { } e && e.Confidence >= rules.Threshold)
+            {
+                ids.Add(a.Id);
+                ids.Add(b.Id);
+            }
+        }
+
+        return ids;
+    }
+
+    /// <summary>
+    /// Groups records into real-world activities, best matches first. User
+    /// decisions win: pairs marked "together" are always joined, pairs marked
+    /// "apart" never end up in one group (directly or through others), and two
+    /// records of one source that do not match never share a group.
+    /// </summary>
     /// <returns>Groups, each a list of record ids (singletons included)</returns>
     public static List<List<Guid>> Group(
         IReadOnlyList<FusionCandidate> items,
         IEnumerable<(Guid A, Guid B)> together,
-        IEnumerable<(Guid A, Guid B)> apart)
+        IEnumerable<(Guid A, Guid B)> apart,
+        FusionRules? rules = null,
+        IReadOnlyDictionary<Guid, List<TrackSample>>? samples = null)
     {
+        rules ??= FusionRules.Default;
+        var togetherList = together.ToList();
+        var userJoined = togetherList.SelectMany(p => new[] { p.A, p.B }).ToHashSet();
         var byId = items.ToDictionary(i => i.Id);
         var parent = items.ToDictionary(i => i.Id, i => i.Id);
         var members = items.ToDictionary(i => i.Id, i => new HashSet<Guid> { i.Id });
@@ -132,21 +285,33 @@ public static class Fusion
             return x;
         }
 
-        bool Union(Guid x, Guid y, bool force)
+        void Union(Guid x, Guid y, bool force)
         {
             var rx = Find(x);
             var ry = Find(y);
             if (rx == ry)
             {
-                return true;
+                return;
             }
 
-            // Never join what the user split, nor two different recordings of one
-            // source (a long Timeline segment overlapping two separate rides)
-            if (!force && members[rx].Any(m => members[ry].Any(n =>
-                    apartSet.Contains(Key(m, n)) || (byId[m].Source == byId[n].Source && !Same(byId[m], byId[n])))))
+            if (!force)
             {
-                return false;
+                if (members[rx].Any(m => members[ry].Any(n =>
+                        apartSet.Contains(Key(m, n))
+                        || (byId[m].Source == byId[n].Source && Evaluate(byId[m], byId[n], rules) == null))))
+                {
+                    return;
+                }
+
+                // Not through a chain: every member must match the joined group's
+                // best record itself (except what the user merged)
+                var joined = members[rx].Concat(members[ry]).Select(id => byId[id]).ToList();
+                var best = Best(joined);
+                if (joined.Any(m => m.Id != best.Id && !userJoined.Contains(m.Id)
+                                    && !(Evaluate(best, m, rules, samples)?.Confidence >= rules.Threshold)))
+                {
+                    return;
+                }
             }
 
             if (members[rx].Count < members[ry].Count)
@@ -157,10 +322,9 @@ public static class Fusion
             parent[ry] = rx;
             members[rx].UnionWith(members[ry]);
             members.Remove(ry);
-            return true;
         }
 
-        foreach (var (a, b) in together)
+        foreach (var (a, b) in togetherList)
         {
             if (parent.ContainsKey(a) && parent.ContainsKey(b))
             {
@@ -168,22 +332,13 @@ public static class Fusion
             }
         }
 
-        // Candidate pairs by time (sorted sweep), strongest overlap first
-        var sorted = items.OrderBy(i => i.Start).ToList();
-        var pairs = new List<(FusionCandidate A, FusionCandidate B, double Score)>();
-        for (var i = 0; i < sorted.Count; i++)
-        {
-            for (var j = i + 1; j < sorted.Count && sorted[j].Start < sorted[i].End.AddMinutes(5); j++)
-            {
-                if (!apartSet.Contains(Key(sorted[i].Id, sorted[j].Id)) && Same(sorted[i], sorted[j]))
-                {
-                    var overlap = (Min(sorted[i].End, sorted[j].End) - Max(sorted[i].Start, sorted[j].Start)).TotalSeconds;
-                    pairs.Add((sorted[i], sorted[j], overlap));
-                }
-            }
-        }
-
-        foreach (var (a, b, _) in pairs.OrderByDescending(p => p.Score))
+        var pairs = Sweep(items, rules)
+            .Where(p => !apartSet.Contains(Key(p.A.Id, p.B.Id)))
+            .Select(p => (p.A, p.B, Evidence: Evaluate(p.A, p.B, rules, samples)))
+            .Where(p => p.Evidence != null && p.Evidence.Confidence >= rules.Threshold)
+            .OrderByDescending(p => p.Evidence!.Confidence)
+            .ToList();
+        foreach (var (a, b, _) in pairs)
         {
             Union(a.Id, b.Id, force: false);
         }
@@ -194,11 +349,15 @@ public static class Fusion
     /// <summary>
     /// The fused activity of a group: the best record is the primary (a real
     /// track from the most trusted source); every other value comes from the most
-    /// trusted source that has it; disagreements become conflicts.
+    /// trusted source that has it; each member's match is measured against the
+    /// primary; what disagrees beyond the sources' tolerance becomes a conflict.
     /// </summary>
-    public static FusedGroup Fuse(IReadOnlyList<FusionCandidate> group)
+    /// <param name="userJoined">Records the user merged in</param>
+    public static FusedGroup Fuse(IReadOnlyList<FusionCandidate> group, FusionRules? rules = null,
+        IReadOnlyDictionary<Guid, List<TrackSample>>? samples = null, IReadOnlySet<Guid>? userJoined = null)
     {
-        var ordered = group.OrderBy(m => m.PointCount > 1 ? 0 : 1).ThenBy(m => Rank(m.Source)).ThenByDescending(m => m.PointCount).ToList();
+        rules ??= FusionRules.Default;
+        var ordered = Order(group);
         var primary = ordered[0];
         var byRank = group.OrderBy(m => Rank(m.Source)).ThenByDescending(m => m.PointCount).ToList();
         var fields = new Dictionary<string, string> { ["track"] = primary.Source };
@@ -238,12 +397,38 @@ public static class Fusion
             fields["heartRate"] = hr.Source;
         }
 
+        // How each member matches the primary (measured, even when joined through another member)
+        var evidence = ordered.Skip(1)
+            .Select(m => Evaluate(primary, m, rules, samples) is { } e
+                ? e with { UserDecision = userJoined?.Contains(m.Id) == true }
+                : Measure(primary, m, rules, samples, userJoined?.Contains(m.Id) == true))
+            .ToList();
+
         return new FusedGroup(primary.Id, ordered, typed.Type, named?.Name, start, end,
             distance?.DistanceM, climb?.ElevationGainM, hr?.AvgHeartRate, hr?.MaxHeartRate,
-            fields, Conflicts(group, typed.Type, distance?.DistanceM, start));
+            fields, Conflicts(group, primary, typed.Type, distance?.DistanceM, evidence), evidence);
     }
 
-    private static List<FusionConflict> Conflicts(IReadOnlyList<FusionCandidate> group, string type, double? distance, DateTime start)
+    /// <summary>Records best first: a real track, then the most trusted source, then the most points</summary>
+    private static List<FusionCandidate> Order(IEnumerable<FusionCandidate> group) =>
+        group.OrderBy(m => m.PointCount > 1 ? 0 : 1).ThenBy(m => Rank(m.Source)).ThenByDescending(m => m.PointCount).ToList();
+
+    private static FusionCandidate Best(IEnumerable<FusionCandidate> group) => Order(group)[0];
+
+    /// <summary>Deltas without the matching rules (a member joined through another, or by the user)</summary>
+    private static MatchEvidence Measure(FusionCandidate a, FusionCandidate b, FusionRules rules,
+        IReadOnlyDictionary<Guid, List<TrackSample>>? samples, bool user)
+    {
+        var (ta, tb) = (rules.For(a.Source), rules.For(b.Source));
+        double? deviation = samples != null && samples.TryGetValue(a.Id, out var sa) && samples.TryGetValue(b.Id, out var sb)
+            ? Deviation(sa, sb)
+            : null;
+        return new MatchEvidence(b.Id, b.Source, Math.Round((b.Start - a.Start).TotalSeconds), Math.Round((b.End - a.End).TotalSeconds),
+            ta.TimeS + tb.TimeS, deviation.HasValue ? Math.Round(deviation.Value) : null, ta.LocationM + tb.LocationM, 0, user);
+    }
+
+    private static List<FusionConflict> Conflicts(IReadOnlyList<FusionCandidate> group, FusionCandidate primary, string type,
+        double? distance, List<MatchEvidence> evidence)
     {
         var conflicts = new List<FusionConflict>();
         var types = group.Where(m => m.Type != "other").GroupBy(m => m.Type).ToList();
@@ -269,16 +454,56 @@ public static class Fusion
             }
         }
 
-        var late = group.Where(m => Math.Abs((m.Start - start).TotalMinutes) > 10).ToList();
-        if (late.Count > 0)
+        // Times and tracks beyond the combined tolerance of the two sources
+        foreach (var e in evidence)
         {
-            var values = group.Select(m => new SourceValue(m.Source, m.Start.ToString("u"))).ToList();
-            conflicts.Add(new FusionConflict("startTime",
-                $"Start times differ by up to {late.Max(m => Math.Abs((m.Start - start).TotalMinutes)):0} min",
-                values, start.ToString("u")));
+            var member = group.First(m => m.Id == e.MemberId);
+            if (Math.Abs(e.StartDeltaS) > e.TimeToleranceS)
+            {
+                conflicts.Add(new FusionConflict("startTime",
+                    $"{Label(e.Source)} starts {Span(e.StartDeltaS)} {(e.StartDeltaS < 0 ? "earlier" : "later")} than {Label(primary.Source)} (tolerance ±{Span(e.TimeToleranceS)})",
+                    new List<SourceValue> { new(primary.Source, primary.Start.ToString("u")), new(e.Source, member.Start.ToString("u")) },
+                    primary.Start.ToString("u")));
+            }
+
+            if (Math.Abs(e.EndDeltaS) > e.TimeToleranceS)
+            {
+                conflicts.Add(new FusionConflict("endTime",
+                    $"{Label(e.Source)} ends {Span(e.EndDeltaS)} {(e.EndDeltaS < 0 ? "earlier" : "later")} than {Label(primary.Source)} (tolerance ±{Span(e.TimeToleranceS)})",
+                    new List<SourceValue> { new(primary.Source, primary.End.ToString("u")), new(e.Source, member.End.ToString("u")) },
+                    primary.End.ToString("u")));
+            }
+
+            if (e.TrackDeviationM > e.LocationToleranceM)
+            {
+                conflicts.Add(new FusionConflict("location",
+                    $"{Label(e.Source)}'s track runs {e.TrackDeviationM:0} m from {Label(primary.Source)}'s (tolerance ±{e.LocationToleranceM:0} m)",
+                    new List<SourceValue> { new(e.Source, $"{e.TrackDeviationM:0} m") },
+                    primary.Source));
+            }
         }
 
         return conflicts;
+    }
+
+    /// <summary>Pairs close enough in time to compare (sorted sweep)</summary>
+    private static IEnumerable<(FusionCandidate A, FusionCandidate B)> Sweep(IReadOnlyList<FusionCandidate> items, FusionRules rules)
+    {
+        var slack = rules.Sources.Values.Select(t => t.TimeS).DefaultIfEmpty(600).Max() * 2 + 60;
+        var sorted = items.OrderBy(i => i.Start).ToList();
+        for (var i = 0; i < sorted.Count; i++)
+        {
+            for (var j = i + 1; j < sorted.Count && sorted[j].Start <= sorted[i].End.AddSeconds(slack); j++)
+            {
+                yield return (sorted[i], sorted[j]);
+            }
+        }
+    }
+
+    private static string Span(double seconds)
+    {
+        var s = Math.Abs(seconds);
+        return s < 90 ? $"{s:0} s" : s < 5400 ? $"{s / 60:0.#} min" : $"{s / 3600:0.#} h";
     }
 
     private static (Guid, Guid) Key(Guid a, Guid b) => a.CompareTo(b) < 0 ? (a, b) : (b, a);
@@ -288,18 +513,119 @@ public static class Fusion
     private static DateTime Max(DateTime a, DateTime b) => a > b ? a : b;
 }
 
+/// <summary>Tells the fusion service that new work is queued</summary>
+public interface IFusionSignal
+{
+    /// <summary>Wakes the service</summary>
+    void Notify();
+}
+
 public partial class AtlasService
 {
     private static int SourceRank(string source) => Fusion.Rank(source);
 
-    /// <summary>Re-fuses all of the owner's activities</summary>
-    public async Task<FuseResult> FuseAsync(string owner, CancellationToken ct = default)
+    private static readonly HashSet<string> Vehicles = new() { "drive", "flight", "transit" };
+
+    // ---------------------------------------------------------------- queue
+
+    /// <summary>
+    /// Records that a time window changed (new or updated data) so the fusion
+    /// service fuses it. Without a running service (tests, tools) it is fused now.
+    /// </summary>
+    public async Task QueueFusionAsync(string owner, DateTime? from, DateTime? to, CancellationToken ct = default)
+    {
+        if (_signal == null)
+        {
+            await RefuseAsync(owner, from, to, ct);
+            return;
+        }
+
+        _db.FusionQueue.Add(new FusionQueueItem { OwnerId = owner, From = from, To = to, Full = !from.HasValue || !to.HasValue });
+        await _db.SaveChangesAsync(ct);
+        _db.ChangeTracker.Clear();
+        _signal.Notify();
+    }
+
+    /// <summary>Windows waiting for the fusion service</summary>
+    public Task<int> PendingFusionAsync(string owner, CancellationToken ct = default) =>
+        _db.FusionQueue.CountAsync(q => q.OwnerId == owner, ct);
+
+    /// <summary>Owners with queued work</summary>
+    public Task<List<string>> OwnersWithQueuedFusionAsync(CancellationToken ct = default) =>
+        _db.FusionQueue.Select(q => q.OwnerId).Distinct().ToListAsync(ct);
+
+    /// <summary>
+    /// Works off the owner's queue: overlapping or nearby windows are merged, a
+    /// full request covers everything; processed entries are removed
+    /// </summary>
+    public async Task<FuseResult> ProcessFusionQueueAsync(string owner, CancellationToken ct = default)
+    {
+        var now = DateTime.UtcNow;
+        var queued = await _db.FusionQueue.AsNoTracking()
+            .Where(q => q.OwnerId == owner && (q.NextAttemptAt == null || q.NextAttemptAt <= now))
+            .OrderBy(q => q.Id).ToListAsync(ct);
+        if (queued.Count == 0)
+        {
+            return new FuseResult(0, 0, 0);
+        }
+
+        var readIds = queued.Select(q => q.Id).ToList();
+
+        var windows = new List<(DateTime? From, DateTime? To)>();
+        if (queued.Any(q => q.Full))
+        {
+            windows.Add((null, null));
+        }
+        else
+        {
+            foreach (var q in queued.OrderBy(q => q.From))
+            {
+                if (windows.Count > 0 && q.From <= windows[^1].To!.Value.AddHours(12))
+                {
+                    var last = windows[^1];
+                    windows[^1] = (last.From, q.To > last.To ? q.To : last.To);
+                }
+                else
+                {
+                    windows.Add((q.From, q.To));
+                }
+            }
+        }
+
+        var total = new FuseResult(0, 0, 0);
+        try
+        {
+            foreach (var (from, to) in windows)
+            {
+                var r = await RefuseAsync(owner, from, to, ct);
+                total = new FuseResult(total.Activities + r.Activities, total.Fused + r.Fused, total.Conflicts + r.Conflicts);
+            }
+        }
+        catch (Exception) when (!ct.IsCancellationRequested)
+        {
+            // Try again later: 2, 4, 8… minutes (at most an hour)
+            var attempts = queued.Max(q => q.Attempts) + 1;
+            var next = DateTime.UtcNow.AddMinutes(Math.Min(60, Math.Pow(2, attempts)));
+            await _db.FusionQueue.Where(q => readIds.Contains(q.Id))
+                .ExecuteUpdateAsync(s => s.SetProperty(q => q.Attempts, attempts).SetProperty(q => q.NextAttemptAt, next), CancellationToken.None);
+            throw;
+        }
+
+        await _db.FusionQueue.Where(q => readIds.Contains(q.Id)).ExecuteDeleteAsync(ct);
+        return total;
+    }
+
+    /// <summary>Re-fuses all of the owner's activities now</summary>
+    public Task<FuseResult> FuseAsync(string owner, CancellationToken ct = default) => RefuseAsync(owner, null, null, ct);
+
+    /// <summary>Re-fuses a time window (or everything) now, under the owner's gate</summary>
+    public async Task<FuseResult> RefuseAsync(string owner, DateTime? from, DateTime? to, CancellationToken ct = default)
     {
         var gate = Gates.GetOrAdd(owner, _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(ct);
         try
         {
-            return await FuseCoreAsync(owner, null, null, ct);
+            return await FuseCoreAsync(owner, from, to, ct);
         }
         finally
         {
@@ -307,13 +633,90 @@ public partial class AtlasService
         }
     }
 
+    // ---------------------------------------------------------------- settings
+
+    /// <summary>The owner's fusion rules (or the defaults)</summary>
+    public async Task<FusionRules> RulesAsync(string owner, CancellationToken ct = default)
+    {
+        var row = await _db.FusionSettings.AsNoTracking().FirstOrDefaultAsync(s => s.OwnerId == owner, ct);
+        if (row == null)
+        {
+            return FusionRules.Default;
+        }
+
+        var saved = JsonSerializer.Deserialize<FusionSettingsDto>(row.Json, JsonCamel);
+        var sources = FusionRules.Default.Sources.ToDictionary(kv => kv.Key, kv => kv.Value);
+        foreach (var s in saved?.Sources ?? new List<SourceToleranceDto>())
+        {
+            if (sources.ContainsKey(s.Source))
+            {
+                sources[s.Source] = new Tolerance(s.TimeToleranceS, s.LocationToleranceM);
+            }
+        }
+
+        return new FusionRules(sources, saved?.MatchThreshold ?? FusionRules.DefaultThreshold);
+    }
+
+    /// <summary>The owner's settings as the app shows them</summary>
+    public async Task<FusionSettingsDto> GetFusionSettingsAsync(string owner, CancellationToken ct = default) =>
+        ToDto(await RulesAsync(owner, ct));
+
+    /// <summary>Saves the owner's tolerances and threshold (clamped) and queues a full re-fusion</summary>
+    public async Task<FusionSettingsDto> SaveFusionSettingsAsync(string owner, FusionSettingsDto input, CancellationToken ct = default)
+    {
+        var sources = FusionRules.Default.Sources.ToDictionary(kv => kv.Key, kv => kv.Value);
+        foreach (var s in input.Sources ?? new List<SourceToleranceDto>())
+        {
+            if (sources.ContainsKey(s.Source) && double.IsFinite(s.TimeToleranceS) && double.IsFinite(s.LocationToleranceM))
+            {
+                sources[s.Source] = new Tolerance(Math.Clamp(s.TimeToleranceS, 1, 21_600), Math.Clamp(s.LocationToleranceM, 1, 20_000));
+            }
+        }
+
+        var threshold = double.IsFinite(input.MatchThreshold) && input.MatchThreshold > 0 ? input.MatchThreshold : FusionRules.DefaultThreshold;
+        var dto = ToDto(new FusionRules(sources, Math.Clamp(threshold, 0.05, 0.99)));
+        var row = await _db.FusionSettings.FirstOrDefaultAsync(s => s.OwnerId == owner, ct);
+        if (row == null)
+        {
+            row = new FusionSetting { OwnerId = owner };
+            _db.FusionSettings.Add(row);
+        }
+
+        row.Json = JsonSerializer.Serialize(dto, JsonCamel);
+        row.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+        _db.ChangeTracker.Clear();
+        await QueueFusionAsync(owner, null, null, ct);
+        return dto;
+    }
+
+    /// <summary>Back to the built-in rules; queues a full re-fusion</summary>
+    public async Task<FusionSettingsDto> ResetFusionSettingsAsync(string owner, CancellationToken ct = default)
+    {
+        await _db.FusionSettings.Where(s => s.OwnerId == owner).ExecuteDeleteAsync(ct);
+        await QueueFusionAsync(owner, null, null, ct);
+        return ToDto(FusionRules.Default);
+    }
+
+    private static FusionSettingsDto ToDto(FusionRules rules) =>
+        new(rules.Threshold, FusionRules.DefaultList.Select(d =>
+        {
+            var t = rules.For(d.Source);
+            return new SourceToleranceDto(d.Source, t.TimeS, t.LocationM, t == d.Tolerance);
+        }).ToList());
+
+    // ---------------------------------------------------------------- the run
+
     /// <summary>
     /// Re-fuses the activities around a time window (and every fused activity
     /// that reaches into it). The caller holds the owner's gate.
     /// </summary>
     private async Task<FuseResult> FuseCoreAsync(string owner, DateTime? from, DateTime? to, CancellationToken ct)
     {
-        // All or nothing (inside an ingest's transaction when there is one)
+        // All or nothing (inside an ingest's transaction when there is one); a full
+        // re-fuse on a small server needs more than the default 30 s per command
+        var timeout = _db.Database.GetCommandTimeout();
+        _db.Database.SetCommandTimeout(TimeSpan.FromMinutes(10));
         var own = _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync(ct) : null;
         try
         {
@@ -328,6 +731,7 @@ public partial class AtlasService
         finally
         {
             _db.ChangeTracker.Clear();
+            _db.Database.SetCommandTimeout(timeout);
             if (own != null)
             {
                 await own.DisposeAsync();
@@ -336,7 +740,9 @@ public partial class AtlasService
     }
 
     private async Task<FuseResult> FuseWindowAsync(string owner, DateTime? from, DateTime? to, CancellationToken ct)
-    {var q = _db.Activities.AsNoTracking().Where(a => a.OwnerId == owner);
+    {
+        var rules = await RulesAsync(owner, ct);
+        var q = _db.Activities.AsNoTracking().Where(a => a.OwnerId == owner);
         if (from.HasValue && to.HasValue)
         {
             var f = from.Value.AddHours(-12);
@@ -359,22 +765,56 @@ public partial class AtlasService
         var decisions = await _db.FusionDecisions.AsNoTracking()
             .Where(d => d.OwnerId == owner && (ids.Contains(d.ActivityA) || ids.Contains(d.ActivityB)))
             .ToListAsync(ct);
-        var groups = Fusion.Group(items,
-            decisions.Where(d => d.Kind == "together").Select(d => (d.ActivityA, d.ActivityB)),
-            decisions.Where(d => d.Kind == "apart").Select(d => (d.ActivityA, d.ActivityB)));
+        var together = decisions.Where(d => d.Kind == "together").Select(d => (d.ActivityA, d.ActivityB)).ToList();
+
+        // Tracks only of the records that could match: compared at the same moments
+        var samples = await SamplesAsync(Fusion.Candidates(items, rules).Concat(together.SelectMany(p => new[] { p.ActivityA, p.ActivityB })).Distinct().ToArray(), ct);
+        var groups = Fusion.Group(items, together, decisions.Where(d => d.Kind == "apart").Select(d => (d.ActivityA, d.ActivityB)), rules, samples);
 
         var byId = items.ToDictionary(i => i.Id);
-        var fused = groups.Where(g => g.Count > 1).Select(g => Fusion.Fuse(g.Select(id => byId[id]).ToList())).ToList();
+        var userJoined = together.SelectMany(p => new[] { p.ActivityA, p.ActivityB }).ToHashSet();
+        var fused = groups.Select(g => Fusion.Fuse(g.Select(id => byId[id]).ToList(), rules, samples, userJoined)).ToList();
 
-        // Replace the window's fusion: reset, then write the groups
+        // Health enhances activities without heart rate (not vehicles): average and max in their window
+        var needHr = fused.Where(g => !g.AvgHeartRate.HasValue && !Vehicles.Contains(g.Type)).ToList();
+        var hrById = await HeartRateAsync(owner, needHr, ct);
+
+        // Replace the window's fusion: reset, then write fused and enhanced activities
         await _db.Activities.Where(a => a.OwnerId == owner && ids.Contains(a.Id) && a.ClusterId != null)
             .ExecuteUpdateAsync(s => s.SetProperty(a => a.ClusterId, (Guid?)null), ct);
         await _db.Fusions.Where(f => f.OwnerId == owner && ids.Contains(f.ActivityId)).ExecuteDeleteAsync(ct);
+        int multi = 0, enhanced = 0, conflicts = 0;
+        var memberIdList = new List<Guid>();
+        var clusterIdList = new List<Guid>();
         foreach (var g in fused)
         {
-            var memberIds = g.Members.Select(m => m.Id).ToList();
-            await _db.Activities.Where(a => memberIds.Contains(a.Id))
-                .ExecuteUpdateAsync(s => s.SetProperty(a => a.ClusterId, g.PrimaryId), ct);
+            var health = hrById.GetValueOrDefault(g.PrimaryId);
+            if (g.Members.Count == 1 && health == null)
+            {
+                continue;
+            }
+
+            var sources = g.Members.Select(m => m.Source).Distinct().OrderBy(Fusion.Rank).ToList();
+            var fields = new Dictionary<string, string>(g.FieldSources);
+            if (health != null)
+            {
+                fields["heartRate"] = health.Source;
+                if (!sources.Contains(health.Source))
+                {
+                    sources.Add(health.Source);
+                }
+
+                enhanced++;
+            }
+
+            multi += g.Members.Count > 1 ? 1 : 0;
+            conflicts += g.Conflicts.Count;
+            foreach (var m in g.Members)
+            {
+                memberIdList.Add(m.Id);
+                clusterIdList.Add(g.PrimaryId);
+            }
+
             _db.Fusions.Add(new ActivityFusion
             {
                 ActivityId = g.PrimaryId,
@@ -385,22 +825,93 @@ public partial class AtlasService
                 EndTime = g.End,
                 DistanceM = g.DistanceM,
                 ElevationGainM = g.ElevationGainM,
-                AvgHeartRate = g.AvgHeartRate,
-                MaxHeartRate = g.MaxHeartRate,
-                Sources = string.Join(",", g.Members.Select(m => m.Source).Distinct().OrderBy(Fusion.Rank)),
+                AvgHeartRate = g.AvgHeartRate ?? health?.Avg,
+                MaxHeartRate = g.MaxHeartRate ?? health?.Max,
+                Sources = string.Join(",", sources),
                 MemberCount = g.Members.Count,
                 ConflictCount = g.Conflicts.Count,
-                FieldSources = JsonSerializer.Serialize(g.FieldSources),
-                Conflicts = JsonSerializer.Serialize(g.Conflicts, JsonCamel)
+                FieldSources = JsonSerializer.Serialize(fields),
+                Conflicts = JsonSerializer.Serialize(g.Conflicts, JsonCamel),
+                Evidence = JsonSerializer.Serialize(g.Evidence, JsonCamel),
+                MatchConfidence = g.MatchConfidence
             });
         }
 
+        if (memberIdList.Count > 0)
+        {
+            var memberArray = memberIdList.ToArray();
+            var clusterArray = clusterIdList.ToArray();
+            await _db.Database.ExecuteSqlAsync($@"
+                UPDATE atlas.activities a SET ""ClusterId"" = v.c
+                  FROM unnest({memberArray}, {clusterArray}) AS v(m, c)
+                 WHERE a.""Id"" = v.m", ct);
+        }
+
         await _db.SaveChangesAsync(ct);
-        var result = new FuseResult(items.Count, fused.Count, fused.Sum(g => g.Conflicts.Count));
-        _logger.LogInformation("Fusion: {Activities} records, {Fused} fused activities, {Conflicts} conflicts",
-            result.Activities, result.Fused, result.Conflicts);
+        var result = new FuseResult(items.Count, multi, conflicts);
+        _logger.LogInformation("Fusion: {Activities} records, {Fused} fused activities, {Enhanced} enhanced by health data, {Conflicts} conflicts",
+            result.Activities, result.Fused, enhanced, result.Conflicts);
         return result;
     }
+
+    private sealed class SampleRow
+    {
+        public Guid ActivityId { get; set; }
+        public DateTime Time { get; set; }
+        public double Lat { get; set; }
+        public double Lon { get; set; }
+    }
+
+    private sealed class HeartRateRow
+    {
+        public Guid ActivityId { get; set; }
+        public double Avg { get; set; }
+        public double Max { get; set; }
+        public string Source { get; set; } = string.Empty;
+    }
+
+    private sealed record HeartRateStats(int Avg, int Max, string Source);
+
+    /// <summary>About 60 evenly spaced points of each record's track</summary>
+    private async Task<Dictionary<Guid, List<TrackSample>>> SamplesAsync(Guid[] ids, CancellationToken ct)
+    {
+        if (ids.Length == 0)
+        {
+            return new Dictionary<Guid, List<TrackSample>>();
+        }
+
+        var rows = await _db.Database.SqlQuery<SampleRow>($@"
+            SELECT x.""ActivityId"", x.""Time"", x.""Lat"", x.""Lon""
+              FROM (SELECT p.""ActivityId"", p.""Time"", p.""Lat"", p.""Lon"",
+                           row_number() OVER (PARTITION BY p.""ActivityId"" ORDER BY p.""Time"") AS rn
+                      FROM atlas.track_points p WHERE p.""ActivityId"" = ANY({ids})) x
+              JOIN atlas.activities a ON a.""Id"" = x.""ActivityId""
+             WHERE (x.rn - 1) % GREATEST(1, a.""PointCount"" / 60) = 0").ToListAsync(ct);
+        return rows.GroupBy(r => r.ActivityId)
+            .ToDictionary(g => g.Key, g => g.OrderBy(r => r.Time).Select(r => new TrackSample(r.Time, r.Lat, r.Lon)).ToList());
+    }
+
+    /// <summary>Average and maximum heart rate from health samples in each fused activity's time window</summary>
+    private async Task<Dictionary<Guid, HeartRateStats>> HeartRateAsync(string owner, List<FusedGroup> groups, CancellationToken ct)
+    {
+        if (groups.Count == 0)
+        {
+            return new Dictionary<Guid, HeartRateStats>();
+        }
+
+        var ids = groups.Select(g => g.PrimaryId).ToArray();
+        var starts = groups.Select(g => DateTime.SpecifyKind(g.Start, DateTimeKind.Utc)).ToArray();
+        var ends = groups.Select(g => DateTime.SpecifyKind(g.End, DateTimeKind.Utc)).ToArray();
+        var rows = await _db.Database.SqlQuery<HeartRateRow>($@"
+            SELECT g.id AS ""ActivityId"", avg(h.""Value"") AS ""Avg"", max(h.""Value"") AS ""Max"", min(h.""Source"") AS ""Source""
+              FROM unnest({ids}, {starts}, {ends}) AS g(id, s, e)
+              JOIN atlas.health_samples h ON h.""OwnerId"" = {owner} AND h.""Type"" = 'heart_rate'
+                   AND h.""StartTime"" >= g.s AND h.""StartTime"" <= g.e
+             GROUP BY g.id").ToListAsync(ct);
+        return rows.ToDictionary(r => r.ActivityId, r => new HeartRateStats((int)Math.Round(r.Avg), (int)Math.Round(r.Max), r.Source));
+    }
+
+    // ---------------------------------------------------------------- user decisions
 
     /// <summary>Joins two activities into one (remembered: re-fusion keeps them together)</summary>
     public async Task<ActivityDetail> MergeActivitiesAsync(string owner, Guid id, Guid otherId, CancellationToken ct = default)

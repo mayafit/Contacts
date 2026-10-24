@@ -86,9 +86,34 @@ public class AtlasController : ControllerBase
     public Task<IActionResult> Merge(Guid id, [FromBody] ActivityMergeRequest request) =>
         Run((svc, owner) => svc.MergeActivitiesAsync(owner, id, request.OtherId, HttpContext.RequestAborted));
 
-    /// <summary>Re-fuses all activities</summary>
+    /// <summary>Queues a re-fusion of all activities (the fusion service does it)</summary>
     [HttpPost("fuse")]
-    public Task<IActionResult> Fuse() => Run((svc, owner) => svc.FuseAsync(owner, HttpContext.RequestAborted));
+    public Task<IActionResult> Fuse() => Run(async (svc, owner) =>
+    {
+        await svc.QueueFusionAsync(owner, null, null, HttpContext.RequestAborted);
+        return await StatusOf(svc, owner);
+    });
+
+    /// <summary>What the fusion service is doing</summary>
+    [HttpGet("fusion/status")]
+    public Task<IActionResult> FusionStatus() => Run((svc, owner) => StatusOf(svc, owner));
+
+    /// <summary>Tolerances per source and the match threshold</summary>
+    [HttpGet("fusion/settings")]
+    public Task<IActionResult> FusionSettings() => Run((svc, owner) => svc.GetFusionSettingsAsync(owner, HttpContext.RequestAborted));
+
+    /// <summary>Saves the tolerances and threshold; everything is re-fused</summary>
+    [HttpPut("fusion/settings")]
+    public Task<IActionResult> SaveFusionSettings([FromBody] FusionSettingsDto settings) =>
+        Run((svc, owner) => svc.SaveFusionSettingsAsync(owner, settings, HttpContext.RequestAborted));
+
+    /// <summary>Back to the built-in tolerances; everything is re-fused</summary>
+    [HttpDelete("fusion/settings")]
+    public Task<IActionResult> ResetFusionSettings() => Run((svc, owner) => svc.ResetFusionSettingsAsync(owner, HttpContext.RequestAborted));
+
+    private async Task<FusionStatus> StatusOf(AtlasService svc, string owner) =>
+        HttpContext.RequestServices.GetRequiredService<FusionStatusBoard>()
+            .For(owner, await svc.PendingFusionAsync(owner, HttpContext.RequestAborted));
 
     /// <summary>Connected sources</summary>
     [HttpGet("connections")]

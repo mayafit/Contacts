@@ -24,12 +24,15 @@ public class AtlasNotFoundException : Exception
 public partial class AtlasService
 {private readonly AtlasDbContext _db;
     private readonly ILogger<AtlasService> _logger;
+    private readonly IFusionSignal? _signal;
 
     /// <summary>Creates the service</summary>
-    public AtlasService(AtlasDbContext db, ILogger<AtlasService> logger)
+    /// <param name="signal">The fusion service; without it (tests, tools) changes are fused right away</param>
+    public AtlasService(AtlasDbContext db, ILogger<AtlasService> logger, IFusionSignal? signal = null)
     {
         _db = db;
         _logger = logger;
+        _signal = signal;
     }
 
     // ---------------------------------------------------------------- ingest
@@ -54,19 +57,36 @@ public partial class AtlasService
             var result = await IngestCoreAsync(owner, req, ct);
             await tx.CommitAsync(ct);
 
-            // Fuse what this batch touched with what was already there. A failure
-            // here never fails the import; the next run (or "re-fuse") catches up.
-            var times = req.Activities.Where(a => a.StartTime.HasValue).Select(a => Utc(a.StartTime!.Value)).ToList();
+            // Hand the window this batch touched (activities, visits and health all
+            // can join or enhance activities) to the fusion service. A failure here
+            // never fails the import; the service's periodic check catches up.
+            var times = req.Activities.Where(a => a.StartTime.HasValue).Select(a => Utc(a.StartTime!.Value))
+                .Concat(req.Activities.Where(a => a.EndTime.HasValue).Select(a => Utc(a.EndTime!.Value)))
+                .Concat(req.Activities.Where(a => a.Points is { Count: > 0 }).SelectMany(a => new[] { Utc(a.Points![0].T), Utc(a.Points[^1].T) }))
+                .Concat(req.Visits.SelectMany(v => new[] { Utc(v.StartTime), Utc(v.EndTime) }))
+                .Concat(req.Health.Select(h => Utc(h.StartTime)))
+                .ToList();
             if (times.Count > 0)
             {
                 try
                 {
-                    var ends = req.Activities.Select(a => a.EndTime ?? a.StartTime).Where(t => t.HasValue).Select(t => Utc(t!.Value));
-                    await FuseCoreAsync(owner, times.Min(), ends.Append(times.Max()).Max(), ct);
+                    if (_signal == null)
+                    {
+                        await FuseCoreAsync(owner, times.Min(), times.Max(), ct);
+                    }
+                    else
+                    {
+                        _db.ChangeTracker.Clear();
+                        _db.FusionQueue.Add(new FusionQueueItem { OwnerId = owner, From = times.Min(), To = times.Max() });
+                        await _db.SaveChangesAsync(ct);
+                        _db.ChangeTracker.Clear();
+                        _signal.Notify();
+                    }
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    _logger.LogWarning(ex, "Fusion after ingest failed");
+                    _logger.LogWarning(ex, "Queueing fusion after ingest failed");
+                    _db.ChangeTracker.Clear();
                 }
             }
 
@@ -498,7 +518,11 @@ public partial class AtlasService
                 m.AvgHeartRate, m.MaxHeartRate, m.PointCount, m.Id == a.Id, m.ImportId))
             .ToList();
         var places = await LinkedPlacesAsync(owner, a, points, ct);
-        return new ActivityDetail(Summarize(a), a.Notes, points, hrSource, hr, memberRows, conflicts, fieldSources, places);
+        var evidence = a.Fusion != null
+            ? System.Text.Json.JsonSerializer.Deserialize<List<MatchEvidence>>(a.Fusion.Evidence, JsonCamel) ?? new()
+            : new List<MatchEvidence>();
+        return new ActivityDetail(Summarize(a), a.Notes, points, hrSource, hr, memberRows, conflicts, fieldSources, places,
+            evidence, a.Fusion?.MatchConfidence);
     }
 
     private static readonly System.Text.Json.JsonSerializerOptions JsonCamel = new(System.Text.Json.JsonSerializerDefaults.Web);
@@ -815,7 +839,7 @@ public partial class AtlasService
         await _db.Activities.Where(x => x.OwnerId == owner && x.ClusterId != null && !_db.Activities.Any(p => p.Id == x.ClusterId))
             .ExecuteUpdateAsync(s => s.SetProperty(x => x.ClusterId, (Guid?)null), ct);
         _logger.LogInformation("Deleted import with {Count} items", removed);
-        await FuseAsync(owner, CancellationToken.None);
+        await QueueFusionAsync(owner, null, null, CancellationToken.None);
         return removed;
     }
 

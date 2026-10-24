@@ -43,8 +43,11 @@ public class AtlasMcpTools
         [Description("Id of the source record (from members) to take out")] Guid memberId) =>
         _atlas.SplitActivityAsync(Owner, id, memberId);
 
-    [McpServerTool(Name = "atlas_fuse"), Description("Re-run fusion over all activities (normally automatic after every import).")]
+    [McpServerTool(Name = "atlas_fuse"), Description("Re-run fusion over all activities now (normally the fusion service does it automatically after every import). Returns what it did.")]
     public Task<FuseResult> Fuse() => _atlas.FuseAsync(Owner);
+
+    [McpServerTool(Name = "atlas_fusion_settings"), Description("How sources are combined: each source's time and location tolerance (how far its times and positions can be off) and the confidence an automatic match needs.")]
+    public Task<FusionSettingsDto> FusionSettings() => _atlas.GetFusionSettingsAsync(Owner);
 
     [McpServerTool(Name = "atlas_summary"), Description("Totals of the user's activities, places, visits and health samples, the date range they cover, distance per activity type, and the imports.")]
     public Task<AtlasSummary> Summary() => _atlas.SummaryAsync(Owner);

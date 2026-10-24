@@ -12,7 +12,8 @@ import type {
   ActivitySummary,
   AtlasQuery,
   AtlasSummary,
-  FuseResult,
+  FusionSettings,
+  FusionStatus,
   HistogramRow,
   NearResult,
   ParsedData,
@@ -743,11 +744,56 @@ export class BackendApiClient {
     );
   }
 
-  /** Re-runs fusion over all activities */
-  async atlasFuse(): Promise<FuseResult> {
+  /**
+   * Queues a full re-fusion (the background fusion service runs it).
+   * @returns The fusion service's status; poll atlasFusionStatus until it is idle
+   */
+  async atlasFuse(): Promise<FusionStatus> {
     return unwrap(
-      await this.request<FuseResult>('/atlas/fuse', { method: 'POST' }),
+      await this.request<FusionStatus>('/atlas/fuse', { method: 'POST' }),
       'Re-fusing failed',
+    );
+  }
+
+  /** The owner's fusion settings (or the defaults) */
+  async atlasFusionSettings(): Promise<FusionSettings> {
+    return unwrap(
+      await this.request<FusionSettings>('/atlas/fusion/settings'),
+      'Loading the fusion settings failed',
+    );
+  }
+
+  /**
+   * Saves the fusion settings and queues a full re-fusion.
+   * @param settings - Match threshold and each source's tolerances (the server clamps them)
+   * @returns The saved settings
+   */
+  async atlasSaveFusionSettings(settings: FusionSettings): Promise<FusionSettings> {
+    return unwrap(
+      await this.request<FusionSettings>('/atlas/fusion/settings', {
+        method: 'PUT',
+        body: JSON.stringify(settings),
+      }),
+      'Saving the fusion settings failed',
+    );
+  }
+
+  /**
+   * Restores the default fusion settings and queues a full re-fusion.
+   * @returns The default settings
+   */
+  async atlasResetFusionSettings(): Promise<FusionSettings> {
+    return unwrap(
+      await this.request<FusionSettings>('/atlas/fusion/settings', { method: 'DELETE' }),
+      'Resetting the fusion settings failed',
+    );
+  }
+
+  /** State of the background fusion service (queued windows, running, last result) */
+  async atlasFusionStatus(): Promise<FusionStatus> {
+    return unwrap(
+      await this.request<FusionStatus>('/atlas/fusion/status'),
+      'Loading the fusion status failed',
     );
   }
 
