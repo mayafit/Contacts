@@ -8,6 +8,7 @@ import { isSet } from '../types';
 import { Unzip, UnzipInflate } from 'fflate';
 import type { ParsedData } from '../types';
 import { parseGpx, parseTcx } from './tracks';
+import { samsungKind } from './samsung';
 import {
   parseFitbitHeartRate,
   parseGoogleFit,
@@ -22,7 +23,7 @@ export interface ImportFile {
 }
 
 /** What a path is, from its name and folder */
-export type FileKind = 'gpx' | 'tcx' | 'json' | null;
+export type FileKind = 'gpx' | 'tcx' | 'json' | 'samsung' | null;
 
 /**
  * Whether a file can hold importable data.
@@ -31,6 +32,9 @@ export type FileKind = 'gpx' | 'tcx' | 'json' | null;
  */
 export const kindOf = (path: string): FileKind => {
   const p = path.toLowerCase();
+  if (samsungKind(path)) {
+    return 'samsung';
+  }
   if (p.endsWith('.gpx')) {
     return 'gpx';
   }
