@@ -37,6 +37,8 @@ export interface ActivityState {
   connect: () => void;
   /** Bring the data up to date */
   refresh: (full?: boolean) => Promise<void>;
+  /** Read the stored data again (no new scan) */
+  reload: () => Promise<void>;
   /** Delete the stored activity */
   forget: () => Promise<void>;
 }
@@ -172,6 +174,7 @@ export const useActivity = (): ActivityState => {
     error,
     connect: () => backendApiClient.connectActivity(),
     refresh,
+    reload: loadData,
     forget,
   };
 };
