@@ -172,9 +172,9 @@ const DuplicatesView: React.FC<DuplicatesViewProps> = ({
           target="_blank"
           rel="noopener noreferrer"
           underline="hover"
-          sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, fontSize: 14, mt: 0.5 }}
+          sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, fontSize: 15, mt: 0.5 }}
         >
-          Merge in Google Contacts <OpenInNew sx={{ fontSize: 15 }} />
+          Merge in Google Contacts <OpenInNew sx={{ fontSize: 16 }} />
         </Link>
       </Box>
 

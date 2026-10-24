@@ -391,7 +391,7 @@ const ActivitySection: React.FC<ActivitySectionProps> = ({
               mt: 1.5,
             }}
           >
-            <Event sx={{ fontSize: 14 }} /> A meeting counts as three emails. Events with more than
+            <Event sx={{ fontSize: 15 }} /> A meeting counts as three emails. Events with more than
             20 guests are not counted.
           </Typography>
         </>

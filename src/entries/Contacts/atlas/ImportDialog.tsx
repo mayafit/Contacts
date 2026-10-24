@@ -246,7 +246,7 @@ const ImportDialog: React.FC<ImportDialogProps> = ({ open, onClose, onChanged })
             </Typography>
             <Box
               component="ul"
-              sx={{ m: 0, pl: 2.5, color: tokens.textSecondary, fontSize: 13, mb: 1.5 }}
+              sx={{ m: 0, pl: 2.5, color: tokens.textSecondary, fontSize: 14, mb: 1.5 }}
             >
               <li>
                 <strong>Google Timeline</strong>: <code>Timeline.json</code> exported from the phone
@@ -342,7 +342,7 @@ const ImportDialog: React.FC<ImportDialogProps> = ({ open, onClose, onChanged })
                 sx={{
                   maxHeight: 160,
                   overflowY: 'auto',
-                  fontSize: 12,
+                  fontSize: 13,
                   fontFamily: 'monospace',
                   color: tokens.textSecondary,
                   bgcolor: tokens.page,

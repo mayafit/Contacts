@@ -348,7 +348,7 @@ const FusionSettingsDialog: React.FC<FusionSettingsDialogProps> = ({
                         size="small"
                         label="default"
                         variant="outlined"
-                        sx={{ height: 18, fontSize: 11, color: tokens.textMuted }}
+                        sx={{ height: 18, fontSize: 12, color: tokens.textMuted }}
                       />
                     )}
                   </Box>

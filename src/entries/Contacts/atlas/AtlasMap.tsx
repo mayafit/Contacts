@@ -488,7 +488,7 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
           sx={{
             bgcolor: 'rgba(14, 17, 22, 0.85)',
             borderRadius: 1,
-            '& .MuiSelect-select': { fontSize: 12, py: 0.6 },
+            '& .MuiSelect-select': { fontSize: 13, py: 0.6 },
           }}
         >
           {MAP_STYLES.map((m) => (

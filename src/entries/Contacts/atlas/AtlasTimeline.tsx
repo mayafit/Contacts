@@ -322,7 +322,7 @@ const AtlasTimeline: React.FC<AtlasTimelineProps> = ({
               }}
               sx={{
                 mr: 1,
-                '& .MuiSelect-select': { fontSize: 12, color: tokens.textSecondary, py: 0.25 },
+                '& .MuiSelect-select': { fontSize: 13, color: tokens.textSecondary, py: 0.25 },
               }}
             >
               {START_RANGES.map((r) => (
@@ -484,7 +484,7 @@ const AtlasTimeline: React.FC<AtlasTimelineProps> = ({
               <text
                 x={yr.x + 3}
                 y={HEIGHT + YEAR_ROW - 3}
-                fontSize={11}
+                fontSize={12}
                 fontWeight={600}
                 fill={tokens.textSecondary}
               >
@@ -501,7 +501,7 @@ const AtlasTimeline: React.FC<AtlasTimelineProps> = ({
                 y2={HEIGHT - AXIS + 4}
                 stroke={tokens.textMuted}
               />
-              <text x={x(t.t) + 3} y={HEIGHT - 4} fontSize={10} fill={tokens.textMuted}>
+              <text x={x(t.t) + 3} y={HEIGHT - 4} fontSize={11} fill={tokens.textMuted}>
                 {t.label}
               </text>
             </g>

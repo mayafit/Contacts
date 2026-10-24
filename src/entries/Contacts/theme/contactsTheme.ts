@@ -56,29 +56,29 @@ export const createContactsTheme = () =>
     shape: { borderRadius: 10 },
     typography: {
       fontFamily,
-      fontSize: 14,
+      fontSize: 15,
       // The host page sets html { font-size: 62.5% } (10px). MUI must know, or
       // every rem it computes comes out at 60% of the intended size.
       htmlFontSize: 10,
-      h1: { fontSize: '24px', fontWeight: 600, letterSpacing: '-0.01em' },
-      h2: { fontSize: '20px', fontWeight: 600 },
-      h3: { fontSize: '17px', fontWeight: 600 },
-      subtitle1: { fontSize: '15px', fontWeight: 600 },
+      h1: { fontSize: '25px', fontWeight: 600, letterSpacing: '-0.01em' },
+      h2: { fontSize: '21px', fontWeight: 600 },
+      h3: { fontSize: '18px', fontWeight: 600 },
+      subtitle1: { fontSize: '16px', fontWeight: 600 },
       subtitle2: {
-        fontSize: '12px',
+        fontSize: '13px',
         fontWeight: 600,
         letterSpacing: '0.04em',
         textTransform: 'uppercase',
       },
-      body1: { fontSize: '14px' },
-      body2: { fontSize: '13.5px' },
-      caption: { fontSize: '12px' },
-      button: { textTransform: 'none', fontWeight: 600, fontSize: '14px' },
+      body1: { fontSize: '15px' },
+      body2: { fontSize: '14.5px' },
+      caption: { fontSize: '13px' },
+      button: { textTransform: 'none', fontWeight: 600, fontSize: '15px' },
     },
     components: {
       MuiCssBaseline: {
         styleOverrides: {
-          body: { backgroundColor: tokens.page, colorScheme: 'dark', fontSize: '14px' },
+          body: { backgroundColor: tokens.page, colorScheme: 'dark', fontSize: '15px' },
           '*::-webkit-scrollbar': { width: 10, height: 10 },
           '*::-webkit-scrollbar-thumb': {
             backgroundColor: 'rgba(255,255,255,0.14)',
@@ -104,7 +104,7 @@ export const createContactsTheme = () =>
         styleOverrides: {
           tooltip: {
             backgroundColor: '#2a313c',
-            fontSize: '12px',
+            fontSize: '13px',
             border: `1px solid ${tokens.border}`,
           },
           arrow: { color: '#2a313c' },
