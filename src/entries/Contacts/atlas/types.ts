@@ -434,6 +434,8 @@ export interface InsightsCoverage {
   fused: number;
   withConflicts: number;
   sources: InsightsSourceCount[];
+  /** With an impossible speed for their type (probably misclassified; left out of records) */
+  implausible?: number;
 }
 
 /** What a proposal's button does */
@@ -455,7 +457,8 @@ export interface InsightsProposal {
     | 'unnamed-place'
     | 'new-places'
     | 'record'
-    | 'away';
+    | 'away'
+    | 'implausible';
   severity: 'info' | 'tip' | 'warning';
   /** Short, e.g. "18 days since your last ride" */
   title: string;
