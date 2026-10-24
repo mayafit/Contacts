@@ -5,7 +5,7 @@
 
 import { backendApiClient } from '../../../services/api/BackendApiClient';
 import type { Toolset } from '../assistant/agent';
-import type { AtlasQuery, AtlasSummary } from './types';
+import type { AtlasQuery, AtlasSummary, Insights } from './types';
 import { isSet, sourceLabel } from './types';
 
 /** What the tools can do on screen */
@@ -16,6 +16,8 @@ export interface AtlasUi {
   openActivity: (id: string) => void;
   /** Data summary for the prompt */
   summary: AtlasSummary | null;
+  /** The filters the user sees now (for the prompt) */
+  filters?: () => AtlasQuery;
 }
 
 const S = (description: string) => ({ type: 'string', description });
@@ -79,6 +81,28 @@ const DECLARATIONS = [
     },
   },
   {
+    name: 'atlas_insights',
+    description:
+      'Insights for a period and filters (time range, bounding box, types, text): totals with the period of the same length before, per type (count, km, hours, climb, avg speed, avg heart rate, longest), a series per day/week/month, activities per weekday and start hour, top places, records, streaks, travel (flights, days away), data quality (heart-rate coverage, recorded vs inferred, fused, conflicts, sources) and proposals.',
+    parameters: {
+      type: 'object',
+      properties: {
+        from: QUERY.from,
+        to: QUERY.to,
+        minLat: QUERY.minLat,
+        minLon: QUERY.minLon,
+        maxLat: QUERY.maxLat,
+        maxLon: QUERY.maxLon,
+        types: QUERY.types,
+        text: QUERY.text,
+        conflictsOnly: {
+          type: 'boolean',
+          description: 'Only activities whose sources disagree (the "Sources disagree" filter)',
+        },
+      },
+    },
+  },
+  {
     name: 'atlas_summary',
     description: 'Totals per activity type, date range of the data, imports.',
     parameters: { type: 'object', properties: {} },
@@ -98,6 +122,97 @@ const DECLARATIONS = [
 
 const round = (n: number | null | undefined, d = 0) =>
   !isSet(n) ? undefined : Number(n.toFixed(d));
+
+/**
+ * The filters the user sees, as one line for the prompt.
+ * @param f - The filters
+ * @returns e.g. "from 2026-07-24T00:00:00.000Z, to …, types ride"; "none" when there are none
+ */
+const describeFilters = (f: AtlasQuery | undefined): string => {
+  if (!f) {
+    return 'none';
+  }
+  const parts = [
+    f.from ? `from ${f.from}` : '',
+    f.to ? `to ${f.to}` : '',
+    isSet(f.minLat) && isSet(f.minLon) && isSet(f.maxLat) && isSet(f.maxLon)
+      ? `area minLat ${round(f.minLat, 4)}, minLon ${round(f.minLon, 4)}, maxLat ${round(f.maxLat, 4)}, maxLon ${round(f.maxLon, 4)}`
+      : '',
+    f.types?.length ? `types ${f.types.join(', ')}` : '',
+    f.text ? `text "${f.text}"` : '',
+    f.conflictsOnly ? 'only activities whose sources disagree' : '',
+  ].filter(Boolean);
+  return parts.length ? parts.join('; ') : 'none';
+};
+
+/**
+ * The insights in a compact form for the assistant.
+ * @param r - Insights
+ * @returns The same, rounded, with the series as totals per bucket
+ */
+const compactInsights = (r: Insights) => {
+  const buckets = new Map<string, { km: number; hours: number; count: number }>();
+  r.series.points.forEach((p) => {
+    const b = buckets.get(p.t) ?? { km: 0, hours: 0, count: 0 };
+    b.km += p.distanceKm;
+    b.hours += p.hours;
+    b.count += p.count;
+    buckets.set(p.t, b);
+  });
+  return {
+    from: r.from,
+    to: r.to,
+    totals: r.totals,
+    previousPeriod: r.previous ?? undefined,
+    byType: r.byType.map((t) => ({
+      type: t.type,
+      count: t.count,
+      km: round(t.distanceKm, 1),
+      hours: round(t.hours, 1),
+      climbM: round(t.climbM),
+      avgKmh: round(t.avgSpeedKmh, 1),
+      avgHr: round(t.avgHeartRate),
+      longestKm: round(t.longestKm, 1),
+    })),
+    series: {
+      bucket: r.series.bucket,
+      points: [...buckets.entries()].slice(-60).map(([t, b]) => ({
+        t,
+        km: round(b.km, 1),
+        hours: round(b.hours, 1),
+        count: b.count,
+      })),
+    },
+    byWeekdayMonFirst: r.byWeekday,
+    byHour: r.byHour,
+    topPlaces: r.topPlaces.map((p) => ({
+      name: p.name,
+      visits: p.visits,
+      hours: round(p.hours, 1),
+      firstVisit: p.firstVisit.slice(0, 10),
+      new: p.isNew || undefined,
+      unnamed: p.unnamed || undefined,
+      lat: round(p.lat, 4),
+      lon: round(p.lon, 4),
+    })),
+    records: r.records.map((x) => ({
+      label: x.label,
+      value: x.value,
+      date: x.date.slice(0, 10),
+      activityId: x.activityId,
+    })),
+    streaks: r.streaks,
+    travel: { ...r.travel, flightKm: round(r.travel.flightKm) },
+    coverage: {
+      ...r.coverage,
+      sources: r.coverage.sources.map((s) => ({
+        source: sourceLabel(s.source),
+        activities: s.activities,
+      })),
+    },
+    proposals: r.proposals.map((p) => ({ severity: p.severity, title: p.title, text: p.text })),
+  };
+};
 
 /**
  * The Atlas toolset for the assistant panel.
@@ -120,11 +235,13 @@ export const atlasToolset = (ui: AtlasUi): Toolset => ({
               .join(', ') || 'none'
           }), ${s.visits} visits to ${s.places} places, ${s.healthSamples} health values, from ${s.first?.slice(0, 10) ?? '?'} to ${s.last?.slice(0, 10) ?? '?'}.`
         : 'The data summary is not loaded yet; call atlas_summary.',
+      `Filters on screen: ${describeFilters(ui.filters?.())}.`,
       '',
       'Rules:',
       '- Answer from tool results. To find a place by name use atlas_search with text; for coordinates you know (a city, a mountain) use atlas_near with a suitable radius.',
       '- Heart rate during an activity: atlas_activity gives it (from the track or from health data at the same minutes).',
       '- After a search the user may want to see, call show_on_map with the same filters.',
+      '- For overviews, trends, comparisons with the period before, records, habits (weekdays, hours), places, streaks, travel or data quality, call atlas_insights; when the user asks about "my insights" or "this period" without saying which, use the filters on screen.',
       '- Refer to an activity as [name](atlas:activity/ID) so the user can open it.',
       '- When the sources disagree (conflicts), say so and which value was used.',
       '- To explain why records were combined, use the evidence of atlas_activity (time and track differences within the tolerances, match confidence; mergedByUser means the user merged them).',
@@ -141,6 +258,7 @@ export const atlasToolset = (ui: AtlasUi): Toolset => ({
       maxLon: args.maxLon as number | undefined,
       types: args.types as string[] | undefined,
       text: args.text as string | undefined,
+      conflictsOnly: args.conflictsOnly === true || undefined,
     };
     switch (name) {
       case 'atlas_search': {
@@ -280,6 +398,13 @@ export const atlasToolset = (ui: AtlasUi): Toolset => ({
             memberCount: a.memberCount,
           })),
         };
+      }
+      case 'atlas_insights': {
+        const r = await backendApiClient.atlasInsights(
+          q,
+          Intl.DateTimeFormat().resolvedOptions().timeZone,
+        );
+        return compactInsights(r);
       }
       case 'atlas_summary': {
         const s = await backendApiClient.atlasSummary();

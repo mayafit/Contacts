@@ -12,6 +12,9 @@ namespace ContactsApi.WebApi.Controllers;
 /// <summary>Request to create an access token</summary>
 public record CreateTokenRequest(string Name);
 
+/// <summary>Insights for a query, in a time zone</summary>
+public record InsightsRequest(AtlasQuery? Query, string? Tz);
+
 /// <summary>Timeline counts for a range, with the map's filters</summary>
 public record HistogramRequest(DateTime From, DateTime To, string? Bucket, string? Tz, AtlasQuery? Filter);
 
@@ -61,6 +64,11 @@ public class AtlasController : ControllerBase
     public Task<IActionResult> FilteredHistogram([FromBody] HistogramRequest request) =>
         Run((svc, owner) => svc.HistogramAsync(owner, request.From, request.To, request.Bucket ?? "day", HttpContext.RequestAborted,
             request.Tz, request.Filter));
+
+    /// <summary>Statistics, records, places, data quality and proposals for a query</summary>
+    [HttpPost("insights")]
+    public Task<IActionResult> Insights([FromBody] InsightsRequest request) =>
+        Run((svc, owner) => svc.InsightsAsync(owner, request.Query ?? new AtlasQuery(), request.Tz, HttpContext.RequestAborted));
 
     /// <summary>Totals and imports</summary>
     [HttpGet("summary")]
