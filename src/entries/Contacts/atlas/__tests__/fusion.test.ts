@@ -9,7 +9,8 @@ describe('atlas fusion helpers', () => {
     expect(sourceLabel('gpx')).toBe('GPX file');
     expect(sourceLabel('tcx')).toBe('TCX file');
     expect(sourceLabel('manual')).toBe('Manual');
-    expect(Object.keys(SOURCE_LABELS)).toHaveLength(7);
+    expect(sourceLabel('user')).toBe('You');
+    expect(Object.keys(SOURCE_LABELS)).toHaveLength(8);
   });
 
   it('shows unknown sources as they are', () => {

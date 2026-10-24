@@ -191,6 +191,34 @@ public class ActivityFusion
     public string FieldSources { get; set; } = "{}";
     /// <summary>JSON: list of conflicts</summary>
     public string Conflicts { get; set; } = "[]";
+    /// <summary>JSON: how each member matches the primary (time and track agreement, confidence)</summary>
+    public string Evidence { get; set; } = "[]";
+    /// <summary>The weakest automatic member match (0-1); null when the user decided every one</summary>
+    public double? MatchConfidence { get; set; }
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>A time window with new or changed data, waiting for the fusion service</summary>
+public class FusionQueueItem
+{
+    public long Id { get; set; }
+    public string OwnerId { get; set; } = string.Empty;
+    public DateTime? From { get; set; }
+    public DateTime? To { get; set; }
+    /// <summary>Everything (after a settings change, or on request)</summary>
+    public bool Full { get; set; }
+    /// <summary>Failed runs so far (each doubles the wait before the next try)</summary>
+    public int Attempts { get; set; }
+    /// <summary>Not before this time (after a failure)</summary>
+    public DateTime? NextAttemptAt { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>An owner's fusion settings (tolerances per source, match threshold), as JSON</summary>
+public class FusionSetting
+{
+    public string OwnerId { get; set; } = string.Empty;
+    public string Json { get; set; } = "{}";
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
 

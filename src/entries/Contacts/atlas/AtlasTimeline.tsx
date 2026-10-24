@@ -9,9 +9,10 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Button, IconButton, Tooltip, Typography } from '@mui/material';
 import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut } from '@mui/icons-material';
 import type { AtlasQuery, HistogramRow } from './types';
-import { kindColor } from './types';
+import { FILTER_COLOR, kindColor } from './types';
 import AtlasLegend from './AtlasLegend';
 import { MAX_SPAN_MS, MIN_SPAN_MS, bucketFor, bucketMs, panRange, zoomRange } from './geo';
+import { formatTimeFilter } from './filters';
 import { backendApiClient } from '../../../services/api/BackendApiClient';
 import { tokens } from '../theme/contactsTheme';
 
@@ -244,6 +245,13 @@ const AtlasTimeline: React.FC<AtlasTimelineProps> = ({
   const center = (view.from + view.to) / 2;
 
   const sel = draft ?? selection;
+  // The selection's edges on screen, kept inside the strip
+  const selX = sel
+    ? {
+        from: Math.min(width, Math.max(0, x(sel.from))),
+        to: Math.min(width, Math.max(0, x(sel.to))),
+      }
+    : { from: 0, to: 0 };
   const barW = Math.max(1, (bucketMs(bucket) / (view.to - view.from)) * width - 1);
 
   return (
@@ -251,10 +259,20 @@ const AtlasTimeline: React.FC<AtlasTimelineProps> = ({
       sx={{ borderTop: `1px solid ${tokens.border}`, bgcolor: tokens.surface, px: 1.5, pt: 0.5 }}
     >
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, height: 26 }}>
-        <Typography variant="caption" sx={{ color: tokens.textMuted }}>
-          {sel
-            ? `${new Date(sel.from).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })} – ${new Date(sel.to).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}`
-            : 'Drag to choose a time range · wheel or pinch to zoom · scroll sideways or shift-drag to move'}
+        <Typography
+          variant="caption"
+          noWrap
+          sx={{
+            color: sel ? FILTER_COLOR : tokens.textMuted,
+            fontWeight: sel ? 600 : 400,
+            minWidth: 0,
+          }}
+        >
+          {draft
+            ? `Selecting: ${formatTimeFilter(draft)}`
+            : selection
+              ? `Time filter: ${formatTimeFilter(selection)}`
+              : 'Drag to choose a time range · wheel or pinch to zoom · scroll sideways or shift-drag to move'}
         </Typography>
         <Box sx={{ flex: 1 }} />
         <Tooltip title="Earlier">
@@ -422,15 +440,55 @@ const AtlasTimeline: React.FC<AtlasTimelineProps> = ({
             </rect>
           )}
           {sel && (
-            <rect
-              x={x(sel.from)}
-              y={0}
-              width={Math.max(1, x(sel.to) - x(sel.from))}
-              height={HEIGHT - AXIS}
-              fill="#3987e5"
-              opacity={0.18}
-              stroke="#3987e5"
-            />
+            // The time filter: everything outside it dimmed, the range outlined with handles
+            <g pointerEvents="none">
+              {selX.from > 0 && (
+                <rect
+                  x={0}
+                  y={0}
+                  width={selX.from}
+                  height={HEIGHT - AXIS}
+                  fill={tokens.page}
+                  opacity={0.6}
+                />
+              )}
+              {selX.to < width && (
+                <rect
+                  x={selX.to}
+                  y={0}
+                  width={width - selX.to}
+                  height={HEIGHT - AXIS}
+                  fill={tokens.page}
+                  opacity={0.6}
+                />
+              )}
+              <rect
+                x={selX.from}
+                y={1}
+                width={Math.max(1, selX.to - selX.from)}
+                height={HEIGHT - AXIS - 2}
+                fill={FILTER_COLOR}
+                fillOpacity={0.14}
+                stroke={FILTER_COLOR}
+                strokeWidth={2}
+                strokeDasharray={draft ? '5 3' : undefined}
+              />
+              {[x(sel.from), x(sel.to)]
+                .filter((hx) => hx >= 0 && hx <= width)
+                .map((hx, i) => (
+                  <rect
+                    key={i}
+                    x={hx - 3}
+                    y={(HEIGHT - AXIS) / 2 - 10}
+                    width={6}
+                    height={20}
+                    rx={2}
+                    fill={FILTER_COLOR}
+                    stroke={tokens.surface}
+                    strokeWidth={1}
+                  />
+                ))}
+            </g>
           )}
         </svg>
       </Box>

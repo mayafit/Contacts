@@ -87,7 +87,26 @@ public record ActivityDetail(
     ActivitySummary Summary, string? Notes, List<PointOutput> Points,
     string? HeartRateSource, List<SeriesPoint> HeartRate,
     List<ActivityMember> Members, List<FusionConflict> Conflicts,
-    Dictionary<string, string> FieldSources, List<LinkedPlace> Places);
+    Dictionary<string, string> FieldSources, List<LinkedPlace> Places,
+    List<MatchEvidence> Evidence, double? MatchConfidence);
+
+/// <summary>How a source record matches the fused activity's primary record</summary>
+/// <param name="StartDeltaS">Its start minus the primary's (seconds)</param>
+/// <param name="EndDeltaS">Its end minus the primary's (seconds)</param>
+/// <param name="TimeToleranceS">The two sources' combined time tolerance</param>
+/// <param name="TrackDeviationM">Median distance between the tracks at the same moments (null without two tracks)</param>
+/// <param name="LocationToleranceM">The two sources' combined location tolerance</param>
+/// <param name="Confidence">0-1</param>
+/// <param name="UserDecision">The user merged it</param>
+public record MatchEvidence(
+    Guid MemberId, string Source, double StartDeltaS, double EndDeltaS, double TimeToleranceS,
+    double? TrackDeviationM, double LocationToleranceM, double Confidence, bool UserDecision);
+
+/// <summary>A source's accuracy as the app shows and edits it</summary>
+public record SourceToleranceDto(string Source, double TimeToleranceS, double LocationToleranceM, bool IsDefault = false);
+
+/// <summary>Fusion settings: the match threshold and every source's accuracy</summary>
+public record FusionSettingsDto(double MatchThreshold, List<SourceToleranceDto> Sources);
 
 /// <summary>One source record of a fused activity</summary>
 public record ActivityMember(

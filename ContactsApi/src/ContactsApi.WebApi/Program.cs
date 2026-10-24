@@ -64,6 +64,11 @@ builder.Services.AddDbContext<ContactsApi.Infrastructure.Atlas.AtlasDbContext>(o
     o.UseNpgsql(string.IsNullOrWhiteSpace(atlasConnection) ? "Host=unset" : atlasConnection,
         npgsql => npgsql.MigrationsHistoryTable("__ef_migrations", "atlas")));
 builder.Services.AddScoped<ContactsApi.Infrastructure.Atlas.AtlasService>();
+// The fusion service: imports queue their time windows, it fuses them in the background
+builder.Services.AddSingleton<FusionSignal>();
+builder.Services.AddSingleton<ContactsApi.Infrastructure.Atlas.IFusionSignal>(sp => sp.GetRequiredService<FusionSignal>());
+builder.Services.AddSingleton<FusionStatusBoard>();
+builder.Services.AddHostedService<AtlasFusionWorker>();
 builder.Services.AddScoped<AccessTokenService>();
 builder.Services.AddHostedService<AtlasMigrator>();
 // Connected sources (Sports Tracker): connect, background sync
