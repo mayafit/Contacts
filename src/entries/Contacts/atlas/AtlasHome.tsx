@@ -712,6 +712,10 @@ const AtlasHome: React.FC = () => {
                   setVisit(null);
                   setMergeFrom(detail.summary.id);
                 }}
+                onOpenActivity={(id) => {
+                  setCursor(null);
+                  void openActivity(id);
+                }}
                 onShowPlace={(lat, lon, visitId) => {
                   const v = result?.visits.find((x) => x.id === visitId);
                   if (v) {

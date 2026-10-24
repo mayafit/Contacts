@@ -1,7 +1,8 @@
 /**
  * @fileoverview Insights beside the map for the current filters: proposals,
- * totals against the period before, types, trend, when, records, places,
- * streaks and travel, data quality, and "Explain with AI"
+ * totals against the period before, types, trend, training load, time in
+ * heart-rate zones, trends per sport, when, records, places, streaks and
+ * travel, data quality, and "Explain with AI"
  * @module Contacts/atlas/InsightsPanel
  */
 
@@ -35,8 +36,10 @@ import type {
   InsightsProposalAction,
   InsightsSeries,
   InsightsTotals,
+  TypeTrend,
+  WeekLoad,
 } from './types';
-import { ACTIVITY_TYPES, VISIT_COLOR, isSet, sourceLabel, typeColor } from './types';
+import { ACTIVITY_TYPES, HEALTH_COLOR, VISIT_COLOR, isSet, sourceLabel, typeColor } from './types';
 import { formatTypesFilter } from './filters';
 import {
   WEEKDAYS,
@@ -48,10 +51,14 @@ import {
   formatPeriod,
   formatShare,
   labelStep,
+  loadSummary,
+  sparkPath,
   trendBars,
   type TrendBar,
   type TrendMetric,
 } from './insights';
+import { formatSignedPct } from './analysis';
+import HrZonesBar from './HrZonesBar';
 import { tokens } from '../theme/contactsTheme';
 
 /** A filter a proposal or a link applies */
@@ -422,6 +429,190 @@ const CountBars: React.FC<{
   );
 };
 
+const LOAD_H = 70;
+
+/** Weekly training load as bars, hours as a line; the latest week highlighted */
+const LoadChart: React.FC<{ weekly: WeekLoad[] }> = ({ weekly }) => {
+  const times = useMemo(() => weekly.map((w) => Date.parse(w.week)), [weekly]);
+  const labels = useMemo(() => bucketLabels(times, 'week'), [times]);
+  if (weekly.length === 0) {
+    return null;
+  }
+  const maxLoad = Math.max(1e-9, ...weekly.map((w) => w.load));
+  const maxHours = Math.max(1e-9, ...weekly.map((w) => w.hours));
+  const slot = TREND_W / weekly.length;
+  const barW = Math.max(1, slot * 0.7);
+  const step = labelStep(weekly.length, 5);
+  const hy = (h: number) => LOAD_H - 3 - (h / maxHours) * (LOAD_H - 8);
+  const hoursLine = weekly
+    .map((w, i) => `${i ? 'L' : 'M'}${(i * slot + slot / 2).toFixed(1)},${hy(w.hours).toFixed(1)}`)
+    .join('');
+  return (
+    <svg
+      width="100%"
+      viewBox={`0 0 ${TREND_W} ${LOAD_H + LABEL_ROW}`}
+      style={{ display: 'block' }}
+      role="img"
+      aria-label="Training load per week"
+    >
+      {weekly.map((w, i) => {
+        const h = (w.load / maxLoad) * (LOAD_H - 4);
+        const latest = i === weekly.length - 1;
+        return (
+          <g key={w.week}>
+            <title>
+              {`Week of ${labels[i].label} ${new Date(times[i]).getFullYear()}: load ${Math.round(w.load)} · ${formatHours(w.hours)} · ${formatKm(w.distanceKm)}`}
+            </title>
+            <rect x={i * slot} y={0} width={slot} height={LOAD_H} fill="transparent" />
+            <rect
+              x={i * slot + (slot - barW) / 2}
+              y={LOAD_H - h}
+              width={barW}
+              height={h}
+              rx={1}
+              fill={latest ? UP_COLOR : tokens.accent}
+              opacity={latest ? 1 : 0.6}
+            />
+          </g>
+        );
+      })}
+      {weekly.length > 1 && (
+        <path
+          d={hoursLine}
+          fill="none"
+          stroke={tokens.textSecondary}
+          strokeWidth={1.25}
+          opacity={0.8}
+          pointerEvents="none"
+        />
+      )}
+      <line x1={0} x2={TREND_W} y1={LOAD_H} y2={LOAD_H} stroke={tokens.border} />
+      {labels.map((l, i) =>
+        i % step === 0 ? (
+          <text
+            key={weekly[i].week}
+            // Labels near the right edge end at it instead of running off
+            x={i * slot > TREND_W * 0.85 ? TREND_W - 1 : i * slot + 1}
+            textAnchor={i * slot > TREND_W * 0.85 ? 'end' : 'start'}
+            y={LOAD_H + LABEL_ROW - 3}
+            fontSize={11}
+            fill={tokens.textMuted}
+          >
+            {l.label}
+          </text>
+        ) : null,
+      )}
+    </svg>
+  );
+};
+
+const SPARK_W = 1000;
+const SPARK_H = 34;
+
+/** One sport's trend: speed as a sparkline with average heart rate faintly behind */
+const TypeTrendRow: React.FC<{ trend: TypeTrend }> = ({ trend }) => {
+  const speed = useMemo(
+    () =>
+      sparkPath(
+        trend.points.map((p) => ({ t: Date.parse(p.t), v: p.speedKmh })),
+        SPARK_W,
+        SPARK_H,
+      ),
+    [trend],
+  );
+  const hr = useMemo(
+    () =>
+      sparkPath(
+        trend.points.map((p) => ({ t: Date.parse(p.t), v: p.avgHr })),
+        SPARK_W,
+        SPARK_H,
+      ),
+    [trend],
+  );
+  const speedChange = formatSignedPct(trend.speedChangePct);
+  const hrChange = formatSignedPct(trend.hrChangePct);
+  return (
+    <Box sx={{ py: 0.75, borderBottom: `1px solid ${tokens.border}` }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        <Box
+          sx={{
+            width: 10,
+            height: 10,
+            borderRadius: '50%',
+            bgcolor: typeColor(trend.type),
+            flexShrink: 0,
+          }}
+        />
+        <Typography variant="body2" sx={{ fontWeight: 600 }}>
+          {ACTIVITY_TYPES[trend.type]?.label ?? trend.type}
+        </Typography>
+        <Typography variant="caption" sx={{ color: tokens.textMuted }}>
+          {trend.points.length}×
+        </Typography>
+        <Box sx={{ flex: 1 }} />
+        <Typography
+          variant="caption"
+          noWrap
+          title="Average of the last third of the period against the first third"
+          sx={{ color: tokens.textSecondary, minWidth: 0 }}
+        >
+          {speedChange && (
+            <Box
+              component="span"
+              sx={{
+                color: (trend.speedChangePct ?? 0) >= 0.5 ? UP_COLOR : tokens.textSecondary,
+                fontWeight: 600,
+              }}
+            >
+              speed {speedChange}
+            </Box>
+          )}
+          {speedChange && hrChange ? ' · ' : ''}
+          {hrChange && `HR ${hrChange}`}
+          {(speedChange || hrChange) && (
+            <Box component="span" sx={{ color: tokens.textMuted }}>
+              {' '}
+              (last third vs first)
+            </Box>
+          )}
+        </Typography>
+      </Box>
+      {(speed || hr) && (
+        <svg
+          width="100%"
+          height={SPARK_H}
+          viewBox={`0 0 ${SPARK_W} ${SPARK_H}`}
+          preserveAspectRatio="none"
+          style={{ display: 'block', marginTop: 2 }}
+          role="img"
+          aria-label={`${ACTIVITY_TYPES[trend.type]?.label ?? trend.type}: speed${hr ? ' and average heart rate' : ''} per activity`}
+        >
+          {hr && (
+            <path
+              d={hr}
+              fill="none"
+              stroke={HEALTH_COLOR}
+              strokeWidth={1}
+              opacity={0.35}
+              vectorEffect="non-scaling-stroke"
+            />
+          )}
+          {speed && (
+            <path
+              d={speed}
+              fill="none"
+              stroke={typeColor(trend.type)}
+              strokeWidth={1.5}
+              strokeLinejoin="round"
+              vectorEffect="non-scaling-stroke"
+            />
+          )}
+        </svg>
+      )}
+    </Box>
+  );
+};
+
 /** A label and its value on one line */
 const Fact: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => (
   <Box sx={{ display: 'flex', gap: 1, alignItems: 'baseline', py: 0.25 }}>
@@ -538,6 +729,10 @@ const InsightsPanel: React.FC<InsightsPanelProps> = ({
   };
 
   const period = data ? formatPeriod(data.from, data.to) : '';
+  const weekly = data?.weekly ?? [];
+  const load = loadSummary(weekly);
+  const zoneSeconds = data?.zoneSeconds ?? null;
+  const trends = data?.trends ?? [];
   const hasActivities = !!data && data.totals.activities > 0;
 
   return (
@@ -652,6 +847,49 @@ const InsightsPanel: React.FC<InsightsPanelProps> = ({
               }
             >
               <TrendChart series={data.series} metric={metric} />
+            </Section>
+          )}
+
+          {load && weekly.some((w) => w.load > 0 || w.hours > 0) && (
+            <Section
+              title="Training load"
+              extra={
+                <Typography variant="caption" sx={{ color: tokens.textMuted }}>
+                  latest week{' '}
+                  <Box component="span" sx={{ color: UP_COLOR, fontWeight: 600 }}>
+                    {Math.round(load.latest.load)}
+                  </Box>
+                  {isSet(load.avgBefore) ? ` · before ${Math.round(load.avgBefore)}` : ''}
+                </Typography>
+              }
+            >
+              <LoadChart weekly={weekly} />
+              <Typography variant="caption" component="p" sx={{ color: tokens.textMuted, mt: 0.5 }}>
+                Bars: load per week = minutes × intensity (average heart rate ÷ your max, or 0.6
+                without heart rate). Line: hours. The latest week is green
+                {isSet(load.avgBefore) ? '; "before" is the average of the 4 weeks before it' : ''}.
+              </Typography>
+            </Section>
+          )}
+
+          {zoneSeconds && zoneSeconds.some((x) => x > 0) && (
+            <Section title="Time in heart-rate zones">
+              <HrZonesBar seconds={zoneSeconds} />
+              <Typography variant="caption" component="p" sx={{ color: tokens.textMuted, mt: 0.5 }}>
+                Estimated from each activity&apos;s average heart rate against your max.
+              </Typography>
+            </Section>
+          )}
+
+          {trends.length > 0 && (
+            <Section title="Trends per sport">
+              {trends.map((t) => (
+                <TypeTrendRow key={t.type} trend={t} />
+              ))}
+              <Typography variant="caption" component="p" sx={{ color: tokens.textMuted, mt: 0.5 }}>
+                Speed per activity; the faint red line is the average heart rate. Faster at a lower
+                heart rate means better fitness.
+              </Typography>
             </Section>
           )}
 

@@ -177,6 +177,33 @@ An **Insights** tab next to Results, computed for the current query (time, area,
   - **Days away.**
 - **"Explain with AI"** hands the insights to the assistant for a written account.
 
+## Activity analysis and deeper insights (11.4b, built)
+
+Computed on the server from the **full** track (the app receives a thinned one), returned as
+`analysis` on the activity and by `atlas_get_activity`:
+
+- **Points** carry the distance from the start (`d`), speed (recorded, or the ±10 s average) and cadence.
+- **Effort:**
+  - moving vs stopped time (moving: faster than 1 km/h on foot, 0.5 km/h swimming, 3 km/h otherwise)
+  - average moving speed, max speed (best 30–90 s average, impossible speeds ignored), cadence
+- **Splits:** per km (run, walk, hike), 5 km (ride, ski), 100 m (swim), 10 km (drive, transit), with moving time, pace, heart rate and climb (3 m dead band).
+- **Heart-rate zones:** from the user's own max (98th percentile of their activities' max heart rates, at least 5; else this activity's). Zones start at 60/70/80/90 % of it. Heart rate from the track, another source's track, or health samples, each value counting up to its series' spacing.
+- **Drift (aerobic decoupling):** speed per heartbeat, second half of the moving time against the first. Needs 20 minutes of moving time. Under 5 % is steady, 5–10 % drifting, over 10 % fading.
+- **Best efforts:**
+  - distances: 1, 5, 10 km and the half marathon on foot; 5, 10, 20 and 40 km on a ride
+  - ranked against all the user's other efforts of the type
+  - efforts are kept in `activity_efforts`, computed when an activity is opened and by the fusion service in the background
+- **Compared with you:**
+  - **same route:** start and end within 300 m, distance ±10 %, and 80 % of the track within 200 m of the other one
+  - rank by speed on the route
+  - percentiles of speed and distance among the same type over the last 365 days
+
+Insights add:
+
+- **weekly load:** hours, km, and minutes × intensity, where intensity is average HR ÷ max HR, or 0.6 without heart rate
+- **time in zones:** each activity counted in the zone of its average
+- **per-sport trends of speed and heart rate:** the last third of the period against the first
+
 ## Insights, next (later phases)
 
 - **Places:** most visited, new places, routines (weekday and hour), time at home, work and elsewhere.

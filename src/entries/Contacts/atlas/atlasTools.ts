@@ -5,7 +5,7 @@
 
 import { backendApiClient } from '../../../services/api/BackendApiClient';
 import type { Toolset } from '../assistant/agent';
-import type { AtlasQuery, AtlasSummary, Insights } from './types';
+import type { ActivityAnalysis, AtlasQuery, AtlasSummary, Insights } from './types';
 import { isSet, sourceLabel } from './types';
 
 /** What the tools can do on screen */
@@ -51,7 +51,7 @@ const DECLARATIONS = [
   {
     name: 'atlas_activity',
     description:
-      'One activity: distance, duration, climb, average/max heart rate, a heart-rate series (from the track or from health data at that time), the source records it is fused from (members), where each value comes from (fieldSources), conflicts between the sources, how each member matches the primary (evidence: start/end time differences and track distance against the combined source tolerances, confidence 0..1) with the overall matchConfidence, and the places visited at its start, end or during it.',
+      'One activity: distance, duration, climb, average/max heart rate, a heart-rate series (from the track or from health data at that time), the source records it is fused from (members), where each value comes from (fieldSources), conflicts between the sources, how each member matches the primary (evidence: start/end time differences and track distance against the combined source tolerances, confidence 0..1) with the overall matchConfidence, the places visited at its start, end or during it, and the analysis of its track: moving/stopped time, moving average and top speed (pace in min/km for runs, walks and hikes), cadence, splits, minutes in heart-rate zones Z1–Z5 (shares of the max heart rate of the user), heart-rate drift (aerobic decoupling, second half against the first), best efforts with their all-time rank, and how it compares with earlier activities on the same route and with all activities of the same type over the past year.',
     parameters: { type: 'object', properties: { id: S('Activity id') }, required: ['id'] },
   },
   {
@@ -83,7 +83,7 @@ const DECLARATIONS = [
   {
     name: 'atlas_insights',
     description:
-      'Insights for a period and filters (time range, bounding box, types, text): totals with the period of the same length before, per type (count, km, hours, climb, avg speed, avg heart rate, longest), a series per day/week/month, activities per weekday and start hour, top places, records, streaks, travel (flights, days away), data quality (heart-rate coverage, recorded vs inferred, fused, conflicts, sources) and proposals.',
+      'Insights for a period and filters (time range, bounding box, types, text): totals with the period of the same length before, per type (count, km, hours, climb, avg speed, avg heart rate, longest), a series per day/week/month, activities per weekday and start hour, top places, records, streaks, travel (flights, days away), data quality (heart-rate coverage, recorded vs inferred, fused, conflicts, sources), proposals, the weekly training load (minutes × intensity, with hours and km), minutes in heart-rate zones over the period and per-sport trends (speed and heart-rate change, last third against the first third).',
     parameters: {
       type: 'object',
       properties: {
@@ -143,6 +143,100 @@ const describeFilters = (f: AtlasQuery | undefined): string => {
     f.conflictsOnly ? 'only activities whose sources disagree' : '',
   ].filter(Boolean);
   return parts.length ? parts.join('; ') : 'none';
+};
+
+/** Splits listed in full up to this many; longer activities get a summary */
+const MAX_SPLITS = 20;
+
+/**
+ * An activity's analysis in a compact form for the assistant.
+ * @param a - The analysis
+ * @returns The same, rounded; the splits summarised for long activities
+ */
+const compactAnalysis = (a: ActivityAnalysis) => {
+  const split = (s: ActivityAnalysis['splits'][number]) => ({
+    n: s.index,
+    km: round(s.distanceM / 1000, 2),
+    time: Math.round(s.timeS),
+    kmh: round(s.speedKmh, 1),
+    paceMinKm: a.pace ? round(s.paceSPerKm / 60, 2) : undefined,
+    hr: round(s.avgHr),
+    climbM: round(s.climbM),
+  });
+  const full = a.splits.filter((s) => s.distanceM >= a.splitM * 0.5);
+  const byKmh = [...full].sort((x, y) => y.speedKmh - x.speedKmh);
+  const similar = a.similar;
+  return {
+    movingMin: round(a.movingS / 60, 1),
+    stoppedMin: round(a.stoppedS / 60, 1),
+    distanceKm: round(a.distanceM / 1000, 2),
+    avgMovingKmh: round(a.avgMovingSpeedKmh, 1),
+    maxKmh30s: round(a.maxSpeedKmh, 1),
+    avgCadence: round(a.avgCadence),
+    showPace: a.pace,
+    splitKm: round(a.splitM / 1000, 2),
+    splits: a.splits.length <= MAX_SPLITS ? a.splits.map(split) : undefined,
+    splitsSummary:
+      a.splits.length > MAX_SPLITS
+        ? {
+            count: a.splits.length,
+            fastest: byKmh[0] ? split(byKmh[0]) : undefined,
+            slowest: byKmh.length ? split(byKmh[byKmh.length - 1]) : undefined,
+            first: split(a.splits[0]),
+            last: split(a.splits[a.splits.length - 1]),
+          }
+        : undefined,
+    hrZones: a.zones
+      ? {
+          maxHr: Math.round(a.zones.maxHr),
+          maxHrFrom: a.zones.maxHrSource,
+          lowerBoundsZ2toZ5: a.zones.bounds.map((b) => Math.round(b)),
+          minutesZ1toZ5: a.zones.seconds.map((x) => round(x / 60, 1)),
+        }
+      : undefined,
+    drift: a.drift
+      ? {
+          pct: round(a.drift.decouplingPct, 1),
+          verdict: a.drift.verdict,
+          firstHalf: {
+            kmh: round(a.drift.firstHalf.speedKmh, 1),
+            hr: round(a.drift.firstHalf.avgHr),
+          },
+          secondHalf: {
+            kmh: round(a.drift.secondHalf.speedKmh, 1),
+            hr: round(a.drift.secondHalf.avgHr),
+          },
+        }
+      : undefined,
+    bestEfforts: a.bestEfforts.map((e) => ({
+      km: round(e.distanceM / 1000, 3),
+      time: Math.round(e.timeS),
+      kmh: round(e.speedKmh, 1),
+      paceMinKm: a.pace ? round(e.paceSPerKm / 60, 2) : undefined,
+      startOffsetS: Math.round(e.startOffsetS),
+      allTimeRank: e.allTimeRank ?? undefined,
+    })),
+    similar: similar
+      ? {
+          routeRankBySpeed: similar.rankBySpeed ?? undefined,
+          routeActivities: similar.ofRoute,
+          routeAvgKmh: round(similar.avgSpeedKmh, 1),
+          routeAvgHr: round(similar.avgHr),
+          sameRoute: similar.sameRoute.slice(0, 10).map((r) => ({
+            id: r.id,
+            start: r.startTime,
+            minutes: round(r.durationS / 60, 1),
+            kmh: round(r.speedKmh, 1),
+            hr: round(r.avgHr),
+          })),
+          sameTypePastYear: {
+            count: similar.sameType.count,
+            fasterThanPct: round(similar.sameType.speedPercentile),
+            longerThanPct: round(similar.sameType.distancePercentile),
+          },
+        }
+      : undefined,
+  };
 };
 
 /**
@@ -211,6 +305,20 @@ const compactInsights = (r: Insights) => {
       })),
     },
     proposals: r.proposals.map((p) => ({ severity: p.severity, title: p.title, text: p.text })),
+    weeklyLoad: (r.weekly ?? []).slice(-26).map((w) => ({
+      // Monday in the user's zone (the value is its midnight as UTC)
+      week: new Date(w.week).toLocaleDateString('sv-SE'),
+      load: round(w.load),
+      hours: round(w.hours, 1),
+      km: round(w.distanceKm, 1),
+    })),
+    hrZoneMinutesZ1toZ5: r.zoneSeconds ? r.zoneSeconds.map((x) => round(x / 60)) : undefined,
+    trends: (r.trends ?? []).map((t) => ({
+      type: t.type,
+      activities: t.points.length,
+      speedChangePct: round(t.speedChangePct, 1),
+      hrChangePct: round(t.hrChangePct, 1),
+    })),
   };
 };
 
@@ -244,6 +352,7 @@ export const atlasToolset = (ui: AtlasUi): Toolset => ({
       '- For overviews, trends, comparisons with the period before, records, habits (weekdays, hours), places, streaks, travel or data quality, call atlas_insights; when the user asks about "my insights" or "this period" without saying which, use the filters on screen.',
       '- Refer to an activity as [name](atlas:activity/ID) so the user can open it.',
       '- When the sources disagree (conflicts), say so and which value was used.',
+      "- You can explain an activity's pacing (splits, moving vs stopped time, best efforts), heart-rate zones (Z1 under 60% of the user's max … Z5 from 90%), heart-rate drift (under 5% steady: the effort held up; more means fatigue, heat or too fast a start) and progress on a route (its rank and earlier times), from atlas_activity's analysis. For training load over weeks, time in zones over a period and per-sport speed/heart-rate trends, use atlas_insights.",
       '- To explain why records were combined, use the evidence of atlas_activity (time and track differences within the tolerances, match confidence; mergedByUser means the user merged them).',
       '- Reply in the language the user writes in. Be brief.',
     ].join('\n');
@@ -358,6 +467,7 @@ export const atlasToolset = (ui: AtlasUi): Toolset => ({
             lat: round(p.lat, 4),
             lon: round(p.lon, 4),
           })),
+          analysis: d.analysis ? compactAnalysis(d.analysis) : undefined,
         };
       }
       case 'atlas_health': {
