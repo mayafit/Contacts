@@ -32,7 +32,8 @@ import {
   saveMapStyle,
   type MapStyle,
 } from './mapStyle';
-import { MenuItem, TextField } from '@mui/material';
+import { IconButton, MenuItem, TextField, Tooltip as MuiTooltip } from '@mui/material';
+import { CenterFocusStrong } from '@mui/icons-material';
 import { logger } from '../../../shared/logger';
 
 /** A rectangle on the map */
@@ -94,45 +95,59 @@ const FocusArea: React.FC<{ area: Box | null; focus: number }> = ({ area, focus 
   return null;
 };
 
-/** Fits the map to the results when fitKey changes, or to the selected track */
+/**
+ * Moves the map to what matters, without taking the view away from the user:
+ * - the first results: fit to them;
+ * - new results (a filter changed): only when none of them is in view;
+ * - a selected activity: only when its track is not fully in view;
+ * - "Show all results" (force): fit to the results.
+ */
 const FitResults: React.FC<{
   activities: ActivitySummary[];
   visits: VisitSummary[];
   fitKey: string;
   track?: PointOutput[];
-}> = ({ activities, visits, fitKey, track }) => {
+  /** Bumped by "Show all results" */
+  force: number;
+}> = ({ activities, visits, fitKey, track, force }) => {
   const map = useMap();
+  const fitted = useRef(false);
+  const lastForce = useRef(force);
   useEffect(() => {
-    const lats: number[] = [];
-    const lons: number[] = [];
-    if (track?.length) {
-      track.forEach((p) => {
-        lats.push(p.lat);
-        lons.push(p.lon);
-      });
-    } else {
-      activities.forEach((a) => {
-        if (isSet(a.minLat) && isSet(a.maxLat) && isSet(a.minLon) && isSet(a.maxLon)) {
-          lats.push(a.minLat, a.maxLat);
-          lons.push(a.minLon, a.maxLon);
-        }
-      });
-      visits.forEach((v) => {
-        lats.push(v.lat);
-        lons.push(v.lon);
-      });
+    const forced = force !== lastForce.current;
+    lastForce.current = force;
+    const view = map.getBounds();
+    const boxes: L.LatLngBounds[] = [];
+    activities.forEach((a) => {
+      if (isSet(a.minLat) && isSet(a.maxLat) && isSet(a.minLon) && isSet(a.maxLon)) {
+        boxes.push(L.latLngBounds([a.minLat, a.minLon], [a.maxLat, a.maxLon]));
+      }
+    });
+    visits.forEach((v) => boxes.push(L.latLngBounds([v.lat, v.lon], [v.lat, v.lon])));
+    const fit = (b: L.LatLngBounds) => {
+      fitted.current = true;
+      map.fitBounds(b, { padding: [30, 30], maxZoom: 15 });
+    };
+
+    if (!forced && track?.length) {
+      const t = L.latLngBounds(track.map((p) => [p.lat, p.lon] as [number, number]));
+      if (!view.contains(t)) {
+        fit(t);
+      }
+      return;
     }
-    if (lats.length) {
-      map.fitBounds(
-        [
-          [Math.min(...lats), Math.min(...lons)],
-          [Math.max(...lats), Math.max(...lons)],
-        ],
-        { padding: [30, 30], maxZoom: 15 },
-      );
+    if (boxes.length === 0) {
+      return;
     }
-    // Only when new results arrive or the selection changes, not on every render
-  }, [fitKey, track]);
+    const all = boxes.reduce(
+      (acc, b) => acc.extend(b),
+      L.latLngBounds(boxes[0].getSouthWest(), boxes[0].getNorthEast()),
+    );
+    if (forced || !fitted.current || !boxes.some((b) => view.intersects(b))) {
+      fit(all);
+    }
+    // Only when new results arrive, the selection changes or the user asks
+  }, [fitKey, track, force]);
   return null;
 };
 
@@ -291,6 +306,8 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
   focusArea = 0,
 }) => {
   const [mapStyle, setMapStyle] = useState<MapStyle>(loadMapStyle);
+  // Bumped by the "Show all results" button
+  const [fitAll, setFitAll] = useState(0);
   const styleDef = MAP_STYLES.find((m) => m.value === mapStyle) ?? MAP_STYLES[0];
   // On a light map the selected track is drawn dark (white would vanish)
   const highlightColor = styleDef.light ? '#111827' : '#ffffff';
@@ -332,7 +349,13 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
         preferCanvas
       >
         <BaseMap style={mapStyle} />
-        <FitResults activities={activities} visits={visits} fitKey={fitKey} track={selectedTrack} />
+        <FitResults
+          activities={activities}
+          visits={visits}
+          fitKey={fitKey}
+          track={selectedTrack}
+          force={fitAll}
+        />
         <AreaDraw drawing={drawing} onDone={onAreaDrawn} />
         <FocusArea area={area} focus={focusArea} />
         {areaBounds && area && (
@@ -426,6 +449,28 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
           />
         )}
       </MapContainer>
+      <MuiTooltip title="Show all results">
+        <IconButton
+          size="small"
+          aria-label="Show all results"
+          onClick={() => setFitAll((n) => n + 1)}
+          sx={{
+            position: 'absolute',
+            top: 84,
+            left: 10,
+            zIndex: 1000,
+            width: 34,
+            height: 34,
+            borderRadius: '4px',
+            bgcolor: '#ffffff',
+            color: '#111827',
+            border: '2px solid rgba(0,0,0,0.2)',
+            '&:hover': { bgcolor: '#f3f4f6' },
+          }}
+        >
+          <CenterFocusStrong fontSize="small" />
+        </IconButton>
+      </MuiTooltip>
       <Box sx={{ position: 'absolute', top: 10, right: 10, zIndex: 1000 }}>
         <TextField
           select

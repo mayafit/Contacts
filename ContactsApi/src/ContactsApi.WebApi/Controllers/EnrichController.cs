@@ -144,6 +144,13 @@ public class EnrichController : ControllerBase
                 results[t.Id] = new JsonObject { ["found"] = false, ["emails"] = 0, ["error"] = ex.Message };
                 continue;
             }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Nor does an unexpected answer from Gmail for one of them
+                _logger.LogWarning(ex, "Reading signatures failed for one contact");
+                results[t.Id] = new JsonObject { ["found"] = false, ["emails"] = 0, ["error"] = "Could not read this contact's emails." };
+                continue;
+            }
 
             if (samples.Count == 0)
             {
@@ -188,6 +195,22 @@ public class EnrichController : ControllerBase
             {
                 _logger.LogWarning("Signature extraction returned no JSON");
                 details = null;
+            }
+
+            // Links without newsletter tracking, each once
+            if (details is JsonObject found)
+            {
+                if (found["websites"] is JsonArray sites)
+                {
+                    var clean = sites.Select(n => n?.GetValue<string>()).OfType<string>()
+                        .Select(SignatureText.CleanUrl).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                    found["websites"] = new JsonArray(clean.Select(u => (JsonNode?)JsonValue.Create(u)).ToArray());
+                }
+
+                if (found["linkedin"] is JsonValue li && li.TryGetValue<string>(out var linkedin))
+                {
+                    found["linkedin"] = SignatureText.CleanUrl(linkedin);
+                }
             }
 
             results[t.Id] = new JsonObject
