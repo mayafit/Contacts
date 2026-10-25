@@ -81,6 +81,20 @@ const DECLARATIONS = [
     },
   },
   {
+    name: 'atlas_identify_location',
+    description:
+      'What is at a point, from OpenStreetMap: the street address and the named places around it (shops, cafes, parks, sights…), nearest first, with their category, distance, address and website. Use it to tell what a visit or an unnamed place was. Can take a few seconds.',
+    parameters: {
+      type: 'object',
+      properties: {
+        lat: N('Latitude'),
+        lon: N('Longitude'),
+        radius: N('Search radius in metres, 20–300 (default 80)'),
+      },
+      required: ['lat', 'lon'],
+    },
+  },
+  {
     name: 'atlas_insights',
     description:
       'Insights for a period and filters (time range, bounding box, types, text): totals with the period of the same length before, per type (count, km, hours, climb, avg speed, avg heart rate, longest), a series per day/week/month, activities per weekday and start hour, top places, records, streaks, travel (flights, days away), data quality (heart-rate coverage, recorded vs inferred, fused, conflicts, sources), proposals, the weekly training load (minutes × intensity, with hours and km), minutes in heart-rate zones over the period and per-sport trends (speed and heart-rate change, last third against the first third).',
@@ -352,6 +366,7 @@ export const atlasToolset = (ui: AtlasUi): Toolset => ({
       '- For overviews, trends, comparisons with the period before, records, habits (weekdays, hours), places, streaks, travel or data quality, call atlas_insights; when the user asks about "my insights" or "this period" without saying which, use the filters on screen.',
       '- Refer to an activity as [name](atlas:activity/ID) so the user can open it.',
       '- When the sources disagree (conflicts), say so and which value was used.',
+      '- You can identify what is at a place (a visit, an unnamed place, any coordinates): atlas_identify_location gives the street address and the named places nearby (OpenStreetMap), nearest first. Say how far the likely match is; when several are close, list the top few.',
       "- You can explain an activity's pacing (splits, moving vs stopped time, best efforts), heart-rate zones (Z1 under 60% of the user's max … Z5 from 90%), heart-rate drift (under 5% steady: the effort held up; more means fatigue, heat or too fast a start) and progress on a route (its rank and earlier times), from atlas_activity's analysis. For training load over weeks, time in zones over a period and per-sport speed/heart-rate trends, use atlas_insights.",
       '- To explain why records were combined, use the evidence of atlas_activity (time and track differences within the tolerances, match confidence; mergedByUser means the user merged them).',
       '- Reply in the language the user writes in. Be brief.',
@@ -507,6 +522,26 @@ export const atlasToolset = (ui: AtlasUi): Toolset => ({
             sources: (a.sources ?? [a.source]).map((x) => sourceLabel(x)),
             memberCount: a.memberCount,
           })),
+        };
+      }
+      case 'atlas_identify_location': {
+        const radius = Number(args.radius);
+        const r = await backendApiClient.atlasLookup(
+          Number(args.lat),
+          Number(args.lon),
+          Number.isFinite(radius) && radius > 0 ? Math.min(Math.max(radius, 20), 300) : undefined,
+        );
+        return {
+          address: r.address?.display ?? null,
+          candidates: r.candidates.slice(0, 10).map((c) => ({
+            name: c.localName && c.localName !== c.name ? `${c.name} (${c.localName})` : c.name,
+            label: c.label,
+            distanceM: Math.round(c.distanceM),
+            address: c.address ?? undefined,
+            website: c.website ?? undefined,
+          })),
+          errors: r.errors.length ? r.errors : undefined,
+          attribution: r.attribution,
         };
       }
       case 'atlas_insights': {

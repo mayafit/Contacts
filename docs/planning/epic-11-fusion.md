@@ -204,6 +204,19 @@ Insights add:
 - **time in zones:** each activity counted in the zone of its average
 - **per-sport trends of speed and heart rate:** the last third of the period against the first
 
+## Place details and location lookup (11.4c, built)
+
+- **Coordinates:** a selected visit shows them, with a copy button and links to Google Maps and OpenStreetMap.
+- **Identify this location:** `GET /api/atlas/lookup?lat&lon&radius` (MCP `atlas_identify_location`). It asks OpenStreetMap, with no API key needed:
+  - **Nominatim:** the street address and the object at the point
+  - **Overpass:** named places within 50–250 m (shops, restaurants, sites, offices, parks, bus stops, buildings), with category, distance, address, website, phone, opening hours, brand, cuisine, operator and Wikipedia
+  - **Usage policy:** one Nominatim request per second with an identifying User-Agent, answers cached for a day, and partial results when one service fails. The results show "© OpenStreetMap contributors".
+- **Associate:** `POST /api/atlas/visits/{id}/place` gives the visit's place the chosen name, address, category, website, phone, opening hours and other details. It also stores a link to the OSM entry (`LinkedRef`, e.g. `osm:node/123`).
+  - Every visit to that place shows the new name.
+  - A visit without a place gets a new place at the visit's position.
+  - The place keeps its own coordinates (where the user was).
+- **Place details:** `GET /api/atlas/places/{id}` (MCP `atlas_get_place`) returns the place's fields plus its visit count, first and last visit, and hours spent there.
+
 ## Insights, next (later phases)
 
 - **Places:** most visited, new places, routines (weekday and hour), time at home, work and elsewhere.

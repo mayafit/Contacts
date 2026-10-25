@@ -16,11 +16,16 @@ import type {
   FusionStatus,
   HistogramRow,
   Insights,
+  LocationLookup,
   NearResult,
   ParsedData,
+  PlaceAssociation,
+  PlaceDetail,
+  PlacePatch,
   SearchResult,
   SeriesPoint,
   SourceConnection,
+  VisitSummary,
 } from '../../entries/Contacts/atlas/types';
 
 /** One ingest batch */
@@ -896,6 +901,70 @@ export class BackendApiClient {
         `/atlas/near?lat=${lat}&lon=${lon}&radiusM=${radiusM}${range}`,
       ),
       'Search failed',
+    );
+  }
+
+  /**
+   * A place with what is known about it and its visit statistics.
+   * @param id - Place id
+   * @returns The place
+   */
+  async atlasPlace(id: string): Promise<PlaceDetail> {
+    return unwrap(
+      await this.request<PlaceDetail>(`/atlas/places/${encodeURIComponent(id)}`),
+      'Loading the place failed',
+    );
+  }
+
+  /**
+   * Changes a place (every visit to it shows the change).
+   * @param id - Place id
+   * @param patch - Fields to change; "" clears linkedRef, website, phone, openingHours
+   */
+  async atlasUpdatePlace(id: string, patch: PlacePatch): Promise<void> {
+    unwrap(
+      await this.request<unknown>(`/atlas/places/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      }),
+      'Saving the place failed',
+    );
+  }
+
+  /**
+   * What is at a point: the street address and named places around it (OpenStreetMap).
+   * Can take a few seconds; a failing source gives partial results with errors.
+   * @param lat - Latitude
+   * @param lon - Longitude
+   * @param radius - Search radius in meters (20–300, server default 80)
+   * @returns The address and the candidates, nearest first
+   */
+  async atlasLookup(lat: number, lon: number, radius?: number): Promise<LocationLookup> {
+    const r =
+      typeof radius === 'number' && Number.isFinite(radius) ? `&radius=${Math.round(radius)}` : '';
+    return unwrap(
+      await this.request<LocationLookup>(`/atlas/lookup?lat=${lat}&lon=${lon}${r}`),
+      'Looking up the location failed',
+    );
+  }
+
+  /**
+   * Names a visit's place or associates it with a real-world location. A visit without a
+   * place gets a new place at its position; the place keeps its own coordinates.
+   * @param visitId - Visit id
+   * @param body - Name (required), address, category and the candidate's ref and details
+   * @returns The visit and its place after the change
+   */
+  async atlasAssociateVisitPlace(
+    visitId: string,
+    body: PlaceAssociation,
+  ): Promise<{ visit: VisitSummary; place: PlaceDetail }> {
+    return unwrap(
+      await this.request<{ visit: VisitSummary; place: PlaceDetail }>(
+        `/atlas/visits/${encodeURIComponent(visitId)}/place`,
+        { method: 'POST', body: JSON.stringify(body) },
+      ),
+      'Saving the place failed',
     );
   }
 

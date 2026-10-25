@@ -23,7 +23,6 @@ import {
   Hub,
   Map as MapIcon,
   MergeType,
-  Place,
   Search,
   UploadFile,
 } from '@mui/icons-material';
@@ -36,15 +35,15 @@ import ResultsList from './ResultsList';
 import InsightsPanel, { type InsightsFilter } from './InsightsPanel';
 import { areaAround } from './insights';
 import ActivityPanel from './ActivityPanel';
+import PlacePanel from './PlacePanel';
 import ImportDialog from './ImportDialog';
 import AiAccessDialog from './AiAccessDialog';
 import FusionSettingsDialog from './FusionSettingsDialog';
 import AtlasFilterBar from './AtlasFilterBar';
 import AssistantPanel from '../components/assistant/AssistantPanel';
 import { atlasToolset } from './atlasTools';
-import { formatDuration, formatWhen } from './geo';
 import { tokens } from '../theme/contactsTheme';
-import { VISIT_COLOR, isSet } from './types';
+import { isSet } from './types';
 
 const YEAR = 365 * 86_400_000;
 
@@ -729,51 +728,35 @@ const AtlasHome: React.FC = () => {
                 }}
               />
             ) : visit ? (
-              <Box sx={{ p: 2 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <IconButton
-                    size="small"
-                    onClick={() => setVisit(null)}
-                    aria-label="Back to results"
-                  >
-                    <Close fontSize="small" />
-                  </IconButton>
-                  <Place sx={{ color: VISIT_COLOR }} />
-                  <Typography variant="subtitle1" dir="auto">
-                    {visit.placeName || 'Visit'}
-                  </Typography>
-                </Box>
-                <Typography variant="body2" sx={{ color: tokens.textSecondary, mt: 1 }}>
-                  {formatWhen(visit.startTime)} ·{' '}
-                  {formatDuration((Date.parse(visit.endTime) - Date.parse(visit.startTime)) / 1000)}
-                </Typography>
-                {visit.address && (
-                  <Typography variant="caption" sx={{ color: tokens.textMuted }}>
-                    {visit.address}
-                  </Typography>
-                )}
-                <Button
-                  size="small"
-                  sx={{ mt: 1.5 }}
-                  onClick={async () => {
-                    try {
-                      const near = await backendApiClient.atlasNear(visit.lat, visit.lon, 300);
-                      setVisit(null);
-                      setResult({
-                        activities: near.activities,
-                        visits: near.visits,
-                        totalActivities: near.activities.length,
-                        totalVisits: near.visits.length,
-                      });
-                      setFitTick((n) => n + 1);
-                    } catch (e) {
-                      setError((e as Error).message || 'Search failed');
-                    }
-                  }}
-                >
-                  Everything at this place
-                </Button>
-              </Box>
+              <PlacePanel
+                key={visit.id}
+                visit={visit}
+                onClose={() => {
+                  setVisit(null);
+                  setCursor(null);
+                }}
+                onPreview={setCursor}
+                onChanged={(v) => {
+                  setVisit(v);
+                  // The list and the map show the new name (every visit to the place)
+                  setReloadKey((k) => k + 1);
+                }}
+                onShowEverything={async () => {
+                  try {
+                    const near = await backendApiClient.atlasNear(visit.lat, visit.lon, 300);
+                    setVisit(null);
+                    setResult({
+                      activities: near.activities,
+                      visits: near.visits,
+                      totalActivities: near.activities.length,
+                      totalVisits: near.visits.length,
+                    });
+                    setFitTick((n) => n + 1);
+                  } catch (e) {
+                    setError((e as Error).message || 'Search failed');
+                  }
+                }}
+              />
             ) : (
               <>
                 {!mergeFrom && (

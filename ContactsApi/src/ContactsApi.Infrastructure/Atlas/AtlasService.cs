@@ -840,9 +840,75 @@ public partial class AtlasService
         p.Notes = patch.Notes != null ? Trim(patch.Notes, 4000) : p.Notes;
         p.Lat = patch.Lat ?? p.Lat;
         p.Lon = patch.Lon ?? p.Lon;
+        // "" clears
+        p.LinkedRef = patch.LinkedRef != null ? Trim(patch.LinkedRef, 100) : p.LinkedRef;
+        p.Website = patch.Website != null ? Trim(patch.Website, 500) : p.Website;
+        p.Phone = patch.Phone != null ? Trim(patch.Phone, 100) : p.Phone;
+        p.OpeningHours = patch.OpeningHours != null ? Trim(patch.OpeningHours, 500) : p.OpeningHours;
         p.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
         return p;
+    }
+
+    /// <summary>A place with everything known about it and its visits</summary>
+    public async Task<PlaceDetail> GetPlaceAsync(string owner, Guid id, CancellationToken ct = default)
+    {
+        var p = await _db.Places.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id && x.OwnerId == owner, ct)
+                ?? throw new AtlasNotFoundException("Place");
+        var visits = await _db.Visits.AsNoTracking().Where(v => v.OwnerId == owner && v.PlaceId == id)
+            .Select(v => new { v.StartTime, v.EndTime }).ToListAsync(ct);
+        Dictionary<string, string> details;
+        try
+        {
+            details = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(p.Details) ?? new();
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            details = new();
+        }
+
+        return new PlaceDetail(p.Id, p.Name, p.Address, p.Category, p.Lat, p.Lon, p.Notes, p.Source, p.LinkedRef, p.Website, p.Phone,
+            p.OpeningHours, details, visits.Count,
+            visits.Count > 0 ? visits.Min(v => v.StartTime) : null,
+            visits.Count > 0 ? visits.Max(v => v.EndTime) : null,
+            Math.Round(visits.Sum(v => Math.Max(0, (v.EndTime - v.StartTime).TotalHours)), 1));
+    }
+
+    /// <summary>
+    /// Says what a visit's place is (a location found by a lookup, or typed): its place
+    /// gets the name, address and details, so every visit there shows them; a visit
+    /// without a place gets a new one where the visit was. The place keeps its own
+    /// coordinates (where the user was).
+    /// </summary>
+    public async Task<VisitPlaceResult> AssociateVisitPlaceAsync(string owner, Guid visitId, PlaceAssociation input, CancellationToken ct = default)
+    {
+        var name = Trim(input.Name, 300) ?? throw new ArgumentException("A name is required");
+        var visit = await _db.Visits.Include(v => v.Place).FirstOrDefaultAsync(v => v.Id == visitId && v.OwnerId == owner, ct)
+                    ?? throw new AtlasNotFoundException("Visit");
+        var place = visit.Place;
+        if (place == null)
+        {
+            place = new AtlasPlace { OwnerId = owner, Source = "manual", Lat = visit.Lat, Lon = visit.Lon };
+            _db.Places.Add(place);
+            visit.Place = place;
+        }
+
+        place.Name = name;
+        place.Address = Trim(input.Address, 500);
+        place.Category = Trim(input.Category, 100);
+        place.LinkedRef = Trim(input.LinkedRef, 100);
+        place.Website = Trim(input.Website, 500);
+        place.Phone = Trim(input.Phone, 100);
+        place.OpeningHours = Trim(input.OpeningHours, 500);
+        place.Details = System.Text.Json.JsonSerializer.Serialize((input.Details ?? new())
+            .Where(d => !string.IsNullOrWhiteSpace(d.Key) && d.Value != null)
+            .Take(40)
+            .ToDictionary(d => d.Key.Length > 60 ? d.Key[..60] : d.Key, d => d.Value.Length > 500 ? d.Value[..500] : d.Value));
+        place.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+
+        var summary = new VisitSummary(visit.Id, place.Id, place.Name, place.Address, visit.StartTime, visit.EndTime, visit.Lat, visit.Lon, visit.Source);
+        return new VisitPlaceResult(summary, await GetPlaceAsync(owner, place.Id, ct));
     }
 
     /// <summary>Deletes a place (its visits stay, without the place)</summary>

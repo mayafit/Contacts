@@ -299,6 +299,10 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("Details")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<string>("ExternalId")
                         .HasColumnType("text");
 
@@ -311,6 +315,9 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                     b.Property<double>("Lat")
                         .HasColumnType("double precision");
 
+                    b.Property<string>("LinkedRef")
+                        .HasColumnType("text");
+
                     b.Property<double>("Lon")
                         .HasColumnType("double precision");
 
@@ -321,10 +328,16 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                     b.Property<string>("Notes")
                         .HasColumnType("text");
 
+                    b.Property<string>("OpeningHours")
+                        .HasColumnType("text");
+
                     b.Property<string>("OwnerId")
                         .IsRequired()
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Phone")
+                        .HasColumnType("text");
 
                     b.Property<string>("Source")
                         .IsRequired()
@@ -333,6 +346,9 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
 
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Website")
+                        .HasColumnType("text");
 
                     b.HasKey("Id");
 

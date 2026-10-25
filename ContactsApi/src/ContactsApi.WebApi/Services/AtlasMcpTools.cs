@@ -20,16 +20,31 @@ public class AtlasMcpTools
 
     private readonly AtlasService _atlas;
     private readonly IHttpContextAccessor _http;
+    private readonly GeoLookupClient _geo;
 
     /// <summary>Creates the tools</summary>
-    public AtlasMcpTools(AtlasService atlas, IHttpContextAccessor http)
+    public AtlasMcpTools(AtlasService atlas, IHttpContextAccessor http, GeoLookupClient geo)
     {
         _atlas = atlas;
         _http = http;
+        _geo = geo;
     }
 
     private string Owner => _http.HttpContext?.Items[OwnerItem] as string
                             ?? throw new UnauthorizedAccessException("No access token");
+
+    [McpServerTool(Name = "atlas_identify_location"), Description("What is at a point, from OpenStreetMap: the street address, and named places around it (shops, restaurants, sites, offices, parks, buildings…) nearest first, with category, distance, address, website, phone and opening hours when known. Use it to find out what a visited place is.")]
+    public Task<LocationLookup> IdentifyLocation(
+        [Description("Latitude")] double lat,
+        [Description("Longitude")] double lon,
+        [Description("Search radius in metres, 20-300 (default 80)")] double radius = 80)
+    {
+        _ = Owner;
+        return _geo.LookupAsync(lat, lon, radius);
+    }
+
+    [McpServerTool(Name = "atlas_get_place"), Description("A place with everything known about it (address, category, linked real-world location, website, phone, opening hours, other details) and its visits (count, first, last, hours spent).")]
+    public Task<PlaceDetail> GetPlace([Description("Place id")] Guid id) => _atlas.GetPlaceAsync(Owner, id);
 
     [McpServerTool(Name = "atlas_insights"), Description("Insights over the user's fused data for a query (all filters optional): totals with the change against the period before, per activity type (distance, time, climb, speed, heart rate), trend, weekdays and hours, personal records, active streaks, top places and new places, travel (flights, days away from home), data quality (heart-rate coverage, recorded vs inferred, conflicts), proposals (rhythm, training load, places to name, data to add), weekly training load (hours, km, minutes × intensity), time in heart-rate zones and per-sport trends of speed and heart rate (last third vs first third of the period).")]
     public Task<Insights> Insights(
