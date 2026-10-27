@@ -160,7 +160,8 @@ public class AtlasController : ControllerBase
     /// Atlas with ?onedrive=connected, or ?onedrive=error&amp;reason=…
     /// </summary>
     [HttpGet("connections/onedrive/callback")]
-    public async Task<IActionResult> OneDriveCallback([FromQuery] string? code, [FromQuery] string? state, [FromQuery] string? error)
+    public async Task<IActionResult> OneDriveCallback([FromQuery] string? code, [FromQuery] string? state, [FromQuery] string? error,
+        [FromQuery(Name = "error_description")] string? errorDescription)
     {
         IActionResult Back(string result, string? reason = null) =>
             Redirect((_config["Frontend:BaseUrl"] ?? "http://localhost:3002").TrimEnd('/') + "/atlas?onedrive=" + result
@@ -171,10 +172,20 @@ public class AtlasController : ControllerBase
             return Back("error", "session");
         }
 
+        var owner = HttpContext.Session.GetString(GoogleTokenService.UserIdKey)!;
         var expected = HttpContext.Session.GetString(OneDrivePhotoService.StateKey);
         HttpContext.Session.Remove(OneDrivePhotoService.StateKey);
         if (error != null)
         {
+            HttpContext.RequestServices.GetRequiredService<ILogger<AtlasController>>()
+                .LogWarning("OneDrive sign-in came back with {Error}: {Description}", error, errorDescription);
+            // "Accept" pressed twice: Microsoft sends the code, then an error for the second press.
+            // The first return is still connecting; when it succeeds, that is the answer
+            if (error != "access_denied" && await ConnectSucceededAsync(owner))
+            {
+                return Back("connected");
+            }
+
             return Back("error", error == "access_denied" ? "denied" : "microsoft");
         }
 
@@ -185,13 +196,52 @@ public class AtlasController : ControllerBase
 
         try
         {
-            var owner = HttpContext.Session.GetString(GoogleTokenService.UserIdKey)!;
-            await HttpContext.RequestServices.GetRequiredService<OneDrivePhotoService>().CompleteAsync(owner, code, HttpContext.RequestAborted);
+            // Finished even when the browser has moved on (a second return from Microsoft):
+            // the code is used up by then, and the connection would be lost
+            using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            var connect = HttpContext.RequestServices.GetRequiredService<OneDrivePhotoService>().CompleteAsync(owner, code, limit.Token);
+            OneDrivePhotoService.Connecting[owner] = connect;
+            try
+            {
+                await connect;
+            }
+            finally
+            {
+                // Kept a little while for an error return that comes right after
+                _ = Task.Delay(TimeSpan.FromSeconds(30)).ContinueWith(_ => OneDrivePhotoService.Connecting.TryRemove(
+                    new KeyValuePair<string, Task>(owner, connect)), TaskScheduler.Default);
+            }
+
             return Back("connected");
         }
-        catch (OneDriveException)
+        catch (OneDriveException ex)
         {
+            HttpContext.RequestServices.GetRequiredService<ILogger<AtlasController>>()
+                .LogWarning("OneDrive sign-in could not be completed: {Code} {Message}", ex.Code, ex.Message);
             return Back("error", "microsoft");
+        }
+    }
+
+    /// <summary>
+    /// A connect of this owner's (from the code return just before) is running or has
+    /// just ended: waits up to 15 s for it; true when it succeeded
+    /// </summary>
+    private async Task<bool> ConnectSucceededAsync(string owner)
+    {
+        if (!OneDrivePhotoService.Connecting.TryGetValue(owner, out var connect))
+        {
+            return false;
+        }
+
+        try
+        {
+            await connect.WaitAsync(TimeSpan.FromSeconds(15), HttpContext.RequestAborted);
+            return true;
+        }
+        catch (Exception)
+        {
+            // Failed, timed out, or the browser left
+            return false;
         }
     }
 

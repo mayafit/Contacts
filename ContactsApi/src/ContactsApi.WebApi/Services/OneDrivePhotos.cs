@@ -163,6 +163,12 @@ public class OneDrivePhotoService
     /// <summary>Provider name of OneDrive</summary>
     public const string Provider = "onedrive";
 
+    /// <summary>
+    /// Connects running or just ended, per owner (one backend replica): an error return
+    /// from Microsoft right after a code return waits for it instead of reporting failure
+    /// </summary>
+    public static readonly ConcurrentDictionary<string, Task> Connecting = new();
+
     /// <summary>Session key of the sign-in's state (CSRF)</summary>
     public const string StateKey = "OneDriveOAuthState";
 
