@@ -49,7 +49,15 @@ public class GeoLookupClient
 
     private const string UserAgent = "Atlas/1.0 (personal data app; https://contacts.mayaffit.com)";
     private const string Nominatim = "https://nominatim.openstreetmap.org/reverse";
-    private const string Overpass = "https://overpass-api.de/api/interpreter";
+    // Public instances: often busy (502 "at capacity") or queueing for half a minute
+    private static readonly string[] Overpass =
+    {
+        "https://overpass-api.de/api/interpreter", "https://overpass.private.coffee/api/interpreter",
+        "https://overpass.kumi.systems/api/interpreter"
+    };
+
+    /// <summary>How long nearby places may take in all (the app's proxy allows 100 s)</summary>
+    private static readonly TimeSpan OverpassBudget = TimeSpan.FromSeconds(75);
     private static readonly TimeSpan CacheFor = TimeSpan.FromDays(1);
     private static readonly ConcurrentDictionary<string, (DateTime At, LocationLookup Value)> Cache = new();
     private static readonly ConcurrentDictionary<string, (DateTime At, (LookupAddress?, LocationCandidate?) Value)> ReverseCache = new();
@@ -193,15 +201,36 @@ public class GeoLookupClient
     {
         var keys = string.Join("|", KindKeys);
         var query = string.Create(CultureInfo.InvariantCulture,
-            $"[out:json][timeout:20];nwr(around:{radiusM:F0},{lat:F6},{lon:F6})[name][~\"^({keys})$\"~\".\"];out center tags 80;");
-        var request = new HttpRequestMessage(HttpMethod.Post, Overpass)
-        {
-            Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["data"] = query })
-        };
+            $"[out:json][timeout:45];nwr(around:{radiusM:F0},{lat:F6},{lon:F6})[name][~\"^({keys})$\"~\".\"];out center tags 80;");
+        var deadline = DateTime.UtcNow + OverpassBudget;
         await OverpassGate.WaitAsync(ct);
         try
         {
-            return ParseOverpass(await GetAsync(request, ct), lat, lon);
+            // A busy instance answers 502/504/429 or keeps the request queued: wait for
+            // it, else try the next one, until the budget is spent
+            Exception? last = null;
+            for (var attempt = 0; DateTime.UtcNow < deadline - TimeSpan.FromSeconds(3); attempt++)
+            {
+                var left = deadline - DateTime.UtcNow;
+                using var attemptCt = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                attemptCt.CancelAfter(left < TimeSpan.FromSeconds(50) ? left : TimeSpan.FromSeconds(50));
+                var request = new HttpRequestMessage(HttpMethod.Post, Overpass[attempt % Overpass.Length])
+                {
+                    Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["data"] = query })
+                };
+                try
+                {
+                    return ParseOverpass(await GetAsync(request, attemptCt.Token), lat, lon);
+                }
+                catch (Exception ex) when (!ct.IsCancellationRequested
+                                           && ex is HttpRequestException or GeoLookupException or OperationCanceledException)
+                {
+                    last = ex;
+                    await Task.Delay(TimeSpan.FromSeconds(Math.Min(4, 1 << attempt)), ct);
+                }
+            }
+
+            throw new GeoLookupException("No Overpass instance answered in time", last);
         }
         finally
         {

@@ -75,7 +75,8 @@ builder.Services.AddHostedService<AtlasMigrator>();
 builder.Services.AddHttpClient(ContactsApi.Infrastructure.Atlas.SportsTrackerClient.HttpClientName, c => c.Timeout = TimeSpan.FromSeconds(60));
 builder.Services.AddSingleton<AtlasSyncQueue>();
 // What is at a point (OpenStreetMap Nominatim and Overpass)
-builder.Services.AddHttpClient<ContactsApi.Infrastructure.Atlas.GeoLookupClient>(c => c.Timeout = TimeSpan.FromSeconds(25));
+// Each request has its own deadline (a busy Overpass queues for up to a minute)
+builder.Services.AddHttpClient<ContactsApi.Infrastructure.Atlas.GeoLookupClient>(c => c.Timeout = TimeSpan.FromSeconds(90));
 builder.Services.AddScoped<AtlasConnectionService>();
 builder.Services.AddHostedService<AtlasSyncWorker>();
 builder.Services.AddHttpContextAccessor();
