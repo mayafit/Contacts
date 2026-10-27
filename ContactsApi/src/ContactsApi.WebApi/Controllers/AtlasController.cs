@@ -6,6 +6,7 @@ using ContactsApi.Infrastructure.Atlas;
 using ContactsApi.WebApi.Models.Responses;
 using ContactsApi.WebApi.Services;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace ContactsApi.WebApi.Controllers;
 
@@ -160,7 +161,8 @@ public class AtlasController : ControllerBase
     /// Atlas with ?onedrive=connected, or ?onedrive=error&amp;reason=…
     /// </summary>
     [HttpGet("connections/onedrive/callback")]
-    public async Task<IActionResult> OneDriveCallback([FromQuery] string? code, [FromQuery] string? state, [FromQuery] string? error)
+    public async Task<IActionResult> OneDriveCallback([FromQuery] string? code, [FromQuery] string? state, [FromQuery] string? error,
+        [FromQuery(Name = "error_description")] string? errorDescription)
     {
         IActionResult Back(string result, string? reason = null) =>
             Redirect((_config["Frontend:BaseUrl"] ?? "http://localhost:3002").TrimEnd('/') + "/atlas?onedrive=" + result
@@ -171,10 +173,20 @@ public class AtlasController : ControllerBase
             return Back("error", "session");
         }
 
+        var owner = HttpContext.Session.GetString(GoogleTokenService.UserIdKey)!;
         var expected = HttpContext.Session.GetString(OneDrivePhotoService.StateKey);
         HttpContext.Session.Remove(OneDrivePhotoService.StateKey);
         if (error != null)
         {
+            HttpContext.RequestServices.GetRequiredService<ILogger<AtlasController>>()
+                .LogWarning("OneDrive sign-in came back with {Error}: {Description}", error, errorDescription);
+            // "Accept" pressed twice: Microsoft sends the code, then an error for the second press.
+            // The first return is still connecting; when it succeeds, that is the answer
+            if (error != "access_denied" && await RecentlyConnectedAsync(owner))
+            {
+                return Back("connected");
+            }
+
             return Back("error", error == "access_denied" ? "denied" : "microsoft");
         }
 
@@ -185,14 +197,37 @@ public class AtlasController : ControllerBase
 
         try
         {
-            var owner = HttpContext.Session.GetString(GoogleTokenService.UserIdKey)!;
-            await HttpContext.RequestServices.GetRequiredService<OneDrivePhotoService>().CompleteAsync(owner, code, HttpContext.RequestAborted);
+            // Finished even when the browser has moved on (a second return from Microsoft):
+            // the code is used up by then, and the connection would be lost
+            using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            await HttpContext.RequestServices.GetRequiredService<OneDrivePhotoService>().CompleteAsync(owner, code, limit.Token);
             return Back("connected");
         }
-        catch (OneDriveException)
+        catch (OneDriveException ex)
         {
+            HttpContext.RequestServices.GetRequiredService<ILogger<AtlasController>>()
+                .LogWarning("OneDrive sign-in could not be completed: {Code} {Message}", ex.Code, ex.Message);
             return Back("error", "microsoft");
         }
+    }
+
+    /// <summary>OneDrive was connected in the last minute (waits up to 15 s for a connect still running)</summary>
+    private async Task<bool> RecentlyConnectedAsync(string owner)
+    {
+        var db = HttpContext.RequestServices.GetRequiredService<AtlasDbContext>();
+        for (var i = 0; i < 15; i++)
+        {
+            var since = DateTime.UtcNow.AddMinutes(-1);
+            if (await db.Connections.AsNoTracking().AnyAsync(c => c.OwnerId == owner && c.Provider == OneDrivePhotoService.Provider
+                                                                  && c.SecretProtected != null && c.Status != "expired" && c.UpdatedAt >= since))
+            {
+                return true;
+            }
+
+            await Task.Delay(TimeSpan.FromSeconds(1));
+        }
+
+        return false;
     }
 
     /// <summary>Syncs OneDrive again (what changed since the last sync)</summary>
