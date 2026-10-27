@@ -107,6 +107,12 @@ public class AtlasPlace : ISourced
     public string Details { get; set; } = "{}";
     /// <summary>The user named or associated it: imports keep its address and category</summary>
     public bool UserEdited { get; set; }
+    /// <summary>pending, auto, ambiguous, none, user (see PlaceIdentity)</summary>
+    public string IdentifyState { get; set; } = "pending";
+    /// <summary>JSON: the possible identities of an ambiguous place</summary>
+    public string IdentifyCandidates { get; set; } = "[]";
+    /// <summary>How an automatic identity was found: lookup, nearby</summary>
+    public string? IdentifiedFrom { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

@@ -235,6 +235,70 @@ public class GeoLookupClient
         }
     }
 
+    private static readonly ConcurrentDictionary<string, (DateTime At, List<LocationCandidate> Value)> QuickCache = new();
+    private static readonly SemaphoreSlim QuickGate = new(1, 1);
+    private static DateTime _lastQuick = DateTime.MinValue;
+
+    /// <summary>Forgets every cached answer (tests)</summary>
+    internal static void ClearCaches()
+    {
+        Cache.Clear();
+        ReverseCache.Clear();
+        QuickCache.Clear();
+    }
+
+    /// <summary>
+    /// Named places around a point from Photon only, for identifying many places in a
+    /// row: one request per 1.1 s across the app (fair use), cached for a day
+    /// </summary>
+    /// <exception cref="GeoLookupException">Photon is unavailable or busy</exception>
+    public async Task<List<LocationCandidate>> NearbyQuickAsync(double lat, double lon, double radiusM, CancellationToken ct = default)
+    {
+        if (!double.IsFinite(lat) || !double.IsFinite(lon))
+        {
+            throw new ArgumentException("Coordinates out of range");
+        }
+
+        var key = string.Create(CultureInfo.InvariantCulture, $"{lat:F5},{lon:F5},{radiusM:F0}");
+        if (QuickCache.TryGetValue(key, out var hit) && DateTime.UtcNow - hit.At < CacheFor)
+        {
+            return hit.Value;
+        }
+
+        await QuickGate.WaitAsync(ct);
+        try
+        {
+            var wait = _lastQuick.AddSeconds(1.1) - DateTime.UtcNow;
+            if (wait > TimeSpan.Zero)
+            {
+                await Task.Delay(wait, ct);
+            }
+
+            List<LocationCandidate> found;
+            try
+            {
+                found = await PhotonAsync(lat, lon, radiusM, ct);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException && !ct.IsCancellationRequested)
+            {
+                throw new GeoLookupException("Photon is unavailable", ex);
+            }
+
+            if (QuickCache.Count > 5000)
+            {
+                QuickCache.Clear();
+            }
+
+            QuickCache[key] = (DateTime.UtcNow, found);
+            return found;
+        }
+        finally
+        {
+            _lastQuick = DateTime.UtcNow;
+            QuickGate.Release();
+        }
+    }
+
     /// <summary>The named places nearest to the point (Photon: fast, names and kinds only)</summary>
     private async Task<List<LocationCandidate>> PhotonAsync(double lat, double lon, double radiusM, CancellationToken ct)
     {

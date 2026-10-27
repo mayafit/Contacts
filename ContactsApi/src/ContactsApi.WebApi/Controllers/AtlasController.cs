@@ -179,7 +179,23 @@ public class AtlasController : ControllerBase
     /// <summary>Says what a visit's place is (a found location, or typed)</summary>
     [HttpPost("visits/{id:guid}/place")]
     public Task<IActionResult> AssociateVisitPlace(Guid id, [FromBody] PlaceAssociation association) =>
-        Run((svc, owner) => svc.AssociateVisitPlaceAsync(owner, id, association, HttpContext.RequestAborted));
+        Run((svc, owner) => svc.AssociateVisitPlaceAsync(owner, id, association, HttpContext.RequestAborted,
+            HttpContext.RequestServices.GetRequiredService<GeoLookupClient>()));
+
+    /// <summary>The user accepts a place's automatic identity</summary>
+    [HttpPost("places/{id:guid}/confirm")]
+    public Task<IActionResult> ConfirmPlace(Guid id) =>
+        Run((svc, owner) => svc.ConfirmPlaceAsync(owner, id, HttpContext.RequestAborted));
+
+    /// <summary>Gives other places the identity of this one</summary>
+    [HttpPost("places/{id:guid}/apply-to")]
+    public Task<IActionResult> ApplyIdentity(Guid id, [FromBody] ApplyIdentityRequest request) =>
+        Run(async (svc, owner) => new { applied = await svc.ApplyIdentityAsync(owner, id, request.PlaceIds ?? new List<Guid>(), HttpContext.RequestAborted) });
+
+    /// <summary>Tracks and visits for the density map</summary>
+    [HttpPost("density")]
+    public Task<IActionResult> Density([FromBody] AtlasQuery query) =>
+        Run((svc, owner) => svc.DensityAsync(owner, query ?? new AtlasQuery(), HttpContext.RequestAborted));
 
     /// <summary>Changes a place</summary>
     [HttpPatch("places/{id:guid}")]

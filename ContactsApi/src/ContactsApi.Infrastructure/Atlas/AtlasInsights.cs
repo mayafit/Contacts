@@ -119,7 +119,7 @@ public partial class AtlasService
 
     private async Task<List<VisitRow>> InsightVisitsAsync(string owner, AtlasQuery q, CancellationToken ct)
     {
-        if (!q.Visits || q.ConflictsOnly || q.Types is { Count: > 0 })
+        if (!q.Visits || q.ConflictsOnly)
         {
             return new List<VisitRow>();
         }

@@ -157,6 +157,12 @@ public partial class AtlasService
             {
                 place.Name = incoming;
             }
+            // A real name needs no identification
+            if (place.IdentifyState == "pending" && !PlaceIdentity.UnnamedNames.Contains(place.Name))
+            {
+                place.IdentifyState = "user";
+            }
+
             place.Lat = p.Lat;
             place.Lon = p.Lon;
             // What the user said the place is wins over a later import
@@ -385,11 +391,79 @@ public partial class AtlasService
             totalVisits = await vq.CountAsync(ct);
             visits = await vq.OrderByDescending(v => v.StartTime).Take(limit)
                 .Select(v => new VisitSummary(v.Id, v.PlaceId, v.Place != null ? v.Place.Name : null, v.Place != null ? v.Place.Address : null,
-                    v.StartTime, v.EndTime, v.Lat, v.Lon, v.Source))
+                    v.StartTime, v.EndTime, v.Lat, v.Lon, v.Source, v.Place != null ? v.Place.IdentifyState : null))
                 .ToListAsync(ct);
         }
 
         return new SearchResult(activities, visits, totalActivities, totalVisits);
+    }
+
+    /// <summary>Tracks (simplified) and visits matching a query, for the density map</summary>
+    public async Task<DensityData> DensityAsync(string owner, AtlasQuery q, CancellationToken ct = default)
+    {
+        const int maxTracks = 6000, maxVisits = 30000;
+        var tracks = new List<DensityTrack>();
+        var visits = new List<double[]>();
+        var truncated = false;
+        if (q.Activities)
+        {
+            var aq = FilterActivities(owner, q);
+            if (q.From.HasValue)
+            {
+                var from = Utc(q.From.Value);
+                aq = aq.Where(a => a.EndTime >= from);
+            }
+
+            if (q.To.HasValue)
+            {
+                var to = Utc(q.To.Value);
+                aq = aq.Where(a => a.StartTime <= to);
+            }
+
+            var rows = await aq.Where(a => a.Polyline != null || (a.Fusion != null && a.Fusion.Polyline != null))
+                .OrderByDescending(a => a.StartTime)
+                .Take(maxTracks + 1)
+                .Select(a => new
+                {
+                    Type = a.Fusion != null && a.Fusion.Type != null ? a.Fusion.Type : a.Type,
+                    Polyline = a.Fusion != null && a.Fusion.Polyline != null ? a.Fusion.Polyline : a.Polyline
+                })
+                .ToListAsync(ct);
+            truncated |= rows.Count > maxTracks;
+            foreach (var r in rows.Take(maxTracks))
+            {
+                var points = DecodePolyline(r.Polyline!);
+                if (points.Count >= 2)
+                {
+                    tracks.Add(new DensityTrack(r.Type, Geo.EncodePolyline(Geo.Simplify(points, 80))));
+                }
+            }
+        }
+
+        if (q.Visits && !q.ConflictsOnly)
+        {
+            var vq = FilterVisits(owner, q);
+            if (q.From.HasValue)
+            {
+                var from = Utc(q.From.Value);
+                vq = vq.Where(v => v.EndTime >= from);
+            }
+
+            if (q.To.HasValue)
+            {
+                var to = Utc(q.To.Value);
+                vq = vq.Where(v => v.StartTime <= to);
+            }
+
+            var rows = await vq.OrderByDescending(v => v.StartTime).Take(maxVisits + 1)
+                .Select(v => new { v.Lat, v.Lon, v.StartTime, v.EndTime }).ToListAsync(ct);
+            truncated |= rows.Count > maxVisits;
+            visits = rows.Take(maxVisits)
+                .Select(v => new[] { Math.Round(v.Lat, 5), Math.Round(v.Lon, 5), Math.Round(Math.Max(0, (v.EndTime - v.StartTime).TotalHours), 2) })
+                .ToList();
+        }
+
+        return new DensityData(tracks, visits, truncated);
     }
 
     /// <summary>The owner's activities in the query's area, types and text (not its time)</summary>
@@ -432,6 +506,19 @@ public partial class AtlasService
     private IQueryable<PlaceVisit> FilterVisits(string owner, AtlasQuery q)
     {
         var vq = _db.Visits.AsNoTracking().Where(v => v.OwnerId == owner);
+        if (q.Types is { Count: > 0 })
+        {
+            // Only the visits of those trips: during one (±30 min) and in its area (+~300 m)
+            var trips = FilterActivities(owner, new AtlasQuery { Types = q.Types });
+            vq = vq.Where(v => trips.Any(a =>
+                (a.Fusion != null ? a.Fusion.StartTime : a.StartTime) <= v.EndTime.AddMinutes(30)
+                && (a.Fusion != null ? a.Fusion.EndTime : a.EndTime) >= v.StartTime.AddMinutes(-30)
+                && (a.Fusion != null && a.Fusion.MinLat != null ? a.Fusion.MinLat : a.MinLat) - 0.003 <= v.Lat
+                && (a.Fusion != null && a.Fusion.MaxLat != null ? a.Fusion.MaxLat : a.MaxLat) + 0.003 >= v.Lat
+                && (a.Fusion != null && a.Fusion.MinLon != null ? a.Fusion.MinLon : a.MinLon) - 0.0035 <= v.Lon
+                && (a.Fusion != null && a.Fusion.MaxLon != null ? a.Fusion.MaxLon : a.MaxLon) + 0.0035 >= v.Lon));
+        }
+
         if (HasBox(q))
         {
             vq = vq.Where(v => v.Lat >= q.MinLat && v.Lat <= q.MaxLat && v.Lon >= q.MinLon && v.Lon <= q.MaxLon);
@@ -662,7 +749,7 @@ public partial class AtlasService
                 .Select(g => new HistogramRow(g.Key.Bucket, g.Key.Type, g.Count())));
         }
 
-        if (filter.Visits && !filter.ConflictsOnly && filter.Types is not { Count: > 0 })
+        if (filter.Visits && !filter.ConflictsOnly)
         {
             var starts = await FilterVisits(owner, filter)
                 .Where(v => v.StartTime >= from && v.StartTime <= to)
@@ -851,6 +938,8 @@ public partial class AtlasService
         p.Phone = patch.Phone != null ? Trim(patch.Phone, 100) : p.Phone;
         p.OpeningHours = patch.OpeningHours != null ? Trim(patch.OpeningHours, 500) : p.OpeningHours;
         p.UserEdited = true;
+        p.IdentifyState = "user";
+        p.IdentifyCandidates = "[]";
         p.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
         return p;
@@ -877,7 +966,8 @@ public partial class AtlasService
             p.OpeningHours, details, visits.Count,
             visits.Count > 0 ? visits.Min(v => v.StartTime) : null,
             visits.Count > 0 ? visits.Max(v => v.EndTime) : null,
-            Math.Round(visits.Sum(v => Math.Max(0, (v.EndTime - v.StartTime).TotalHours)), 1));
+            Math.Round(visits.Sum(v => Math.Max(0, (v.EndTime - v.StartTime).TotalHours)), 1),
+            p.IdentifyState, p.IdentifyState == "ambiguous" ? CandidatesOf(p) : new List<LocationCandidate>(), p.IdentifiedFrom);
     }
 
     /// <summary>
@@ -886,7 +976,9 @@ public partial class AtlasService
     /// without a place gets a new one where the visit was. The place keeps its own
     /// coordinates (where the user was).
     /// </summary>
-    public async Task<VisitPlaceResult> AssociateVisitPlaceAsync(string owner, Guid visitId, PlaceAssociation input, CancellationToken ct = default)
+    /// <param name="geo">To tell whether the area has only this identity (then nearby places get it too)</param>
+    public async Task<VisitPlaceResult> AssociateVisitPlaceAsync(string owner, Guid visitId, PlaceAssociation input, CancellationToken ct = default,
+        GeoLookupClient? geo = null)
     {
         var name = Trim(input.Name, 300) ?? throw new ArgumentException("A name is required");
         var visit = await _db.Visits.Include(v => v.Place).FirstOrDefaultAsync(v => v.Id == visitId && v.OwnerId == owner, ct)
@@ -912,11 +1004,16 @@ public partial class AtlasService
             .GroupBy(d => d.Key.Length > 60 ? d.Key[..60] : d.Key)
             .ToDictionary(g => g.Key, g => g.First().Value.Length > 500 ? g.First().Value[..500] : g.First().Value));
         place.UserEdited = true;
+        place.IdentifyState = "user";
+        place.IdentifiedFrom = null;
+        place.IdentifyCandidates = "[]";
         place.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
 
-        var summary = new VisitSummary(visit.Id, place.Id, place.Name, place.Address, visit.StartTime, visit.EndTime, visit.Lat, visit.Lon, visit.Source);
-        return new VisitPlaceResult(summary, await GetPlaceAsync(owner, place.Id, ct));
+        var (applied, suggested) = await SpreadIdentityAsync(owner, place, geo, ct);
+        var summary = new VisitSummary(visit.Id, place.Id, place.Name, place.Address, visit.StartTime, visit.EndTime, visit.Lat, visit.Lon, visit.Source,
+            place.IdentifyState);
+        return new VisitPlaceResult(summary, await GetPlaceAsync(owner, place.Id, ct), applied, suggested);
     }
 
     /// <summary>Deletes a place (its visits stay, without the place)</summary>

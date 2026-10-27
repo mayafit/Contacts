@@ -309,6 +309,17 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                     b.Property<string>("GooglePlaceId")
                         .HasColumnType("text");
 
+                    b.Property<string>("IdentifiedFrom")
+                        .HasColumnType("text");
+
+                    b.Property<string>("IdentifyCandidates")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("IdentifyState")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<Guid?>("ImportId")
                         .HasColumnType("uuid");
 

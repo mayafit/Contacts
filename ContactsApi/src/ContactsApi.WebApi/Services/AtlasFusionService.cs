@@ -138,11 +138,23 @@ public class AtlasFusionWorker : BackgroundService
 
                 if (after == null)
                 {
-                    return;
+                    break;
                 }
 
                 // Leave the Pi room for the app between batches
                 await Task.Delay(TimeSpan.FromMilliseconds(400), ct);
+            }
+
+            // Then places waiting for an identity (about a second of lookup each)
+            while (!ct.IsCancellationRequested && !_signal.Pending)
+            {
+                using var scope = _scopes.CreateScope();
+                var done = await scope.ServiceProvider.GetRequiredService<AtlasService>()
+                    .IdentifyPendingPlacesAsync(scope.ServiceProvider.GetRequiredService<GeoLookupClient>(), 10, ct);
+                if (done == 0)
+                {
+                    return;
+                }
             }
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)

@@ -218,6 +218,20 @@ Insights add:
   - The place keeps its own coordinates (where the user was).
 - **Place details:** `GET /api/atlas/places/{id}` (MCP `atlas_get_place`) returns the place's fields plus its visit count, first and last visit, and hours spent there.
 
+## Place identity, trip visits and the density map (11.4d, built)
+
+- **Automatic identification:** the fusion service, while idle, looks up unnamed places with Photon. Most-visited places go first, at one lookup per 1.1 s, cached.
+  - **Clear (`auto`):** exactly one relevant establishment within 40 m and no other within 80 m. Bus stops, parking and street furniture don't count.
+  - **Ambiguous:** several within 100 m; the place keeps up to 6 candidates for the user to pick.
+  - **None:** nothing nameable around.
+  - **User:** the user named, picked or confirmed it.
+- **Typed identity:** the panel has a "Name this place" field.
+- **Neighbours:** when the user identifies a place, the places within 100 m that the user hasn't named are handled together.
+  - If the area (150 m around) has no other relevant identity, they get it automatically (`auto`, from `nearby`).
+  - Otherwise they are suggested; `POST places/{id}/apply-to` gives them the identity.
+- **Visits of trips:** with activity types selected, search, the timeline and insights show only visits during a trip of those types (±30 min) and in its area (+~300 m).
+- **Density map:** `POST /api/atlas/density` returns up to 6,000 simplified tracks and 30,000 visits for the query. The app draws them with MapLibre: tracks as low-opacity lines in type colours, visits as a heat map.
+
 ## Insights, next (later phases)
 
 - **Places:** most visited, new places, routines (weekday and hour), time at home, work and elsewhere.
