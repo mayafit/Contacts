@@ -1,10 +1,10 @@
 /**
  * @fileoverview Text and links for places: coordinates, map links, OpenStreetMap and
- * Wikipedia links, unnamed places, the details worth showing
+ * Wikipedia links, unnamed places, the details worth showing, how a place got its identity
  * @module Contacts/atlas/placeText
  */
 
-import type { LookupAddress } from './types';
+import type { LookupAddress, NearbyPlace } from './types';
 import { isSet } from './types';
 
 /**
@@ -164,3 +164,58 @@ export const detailRows = (details: Record<string, string> | null | undefined): 
       .join(', ');
     return [{ key, label, value }];
   });
+
+/**
+ * The line that says how a place got its identity (shown under its name).
+ * @param state - The place's identifyState
+ * @param identifiedFrom - 'lookup', 'nearby' or null
+ * @returns e.g. "Identified automatically from a nearby place"; null when nothing needs saying
+ */
+export const identifyNote = (
+  state: string | null | undefined,
+  identifiedFrom?: string | null,
+): string | null => {
+  if (state === 'auto') {
+    return identifiedFrom === 'nearby'
+      ? 'Identified automatically from a nearby place'
+      : 'Identified automatically';
+  }
+  if (state === 'ambiguous') {
+    return 'Which one is it?';
+  }
+  if (state === 'pending') {
+    return 'Not identified yet';
+  }
+  return null;
+};
+
+/**
+ * The small mark of a place in lists and on the map.
+ * @param state - The place's identifyState
+ * @returns '?' when ambiguous, 'auto' when identified automatically, else null
+ */
+export const identifyMark = (state: string | null | undefined): '?' | 'auto' | null => {
+  if (state === 'ambiguous') {
+    return '?';
+  }
+  return state === 'auto' ? 'auto' : null;
+};
+
+/** At most this many nearby suggestions are checked at first */
+export const NEARBY_CHECKED_MAX = 3;
+
+/**
+ * The nearby places checked at first: all of a few, none of many (the user picks).
+ * @param suggested - The nearby places that may be the same
+ * @returns Their ids, all when at most NEARBY_CHECKED_MAX, else none
+ */
+export const defaultNearbySelection = (suggested: NearbyPlace[]): string[] =>
+  suggested.length <= NEARBY_CHECKED_MAX ? suggested.map((p) => p.placeId) : [];
+
+/**
+ * Says how many nearby places got the identity.
+ * @param count - The number of places
+ * @returns e.g. "Also named 2 nearby places"
+ */
+export const alsoNamedText = (count: number): string =>
+  `Also named ${count} nearby ${count === 1 ? 'place' : 'places'}`;

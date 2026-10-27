@@ -104,3 +104,26 @@ export const englishLabels = <T extends { layers?: StyleLayer[] }>(style: T): T 
   });
   return style;
 };
+
+/** What the map draws: each item (clickable), or how often places were visited (density) */
+export type MapMode = 'items' | 'density';
+
+const MODE_KEY = 'atlas.mapMode';
+
+/** The remembered map mode ('items' when none, or storage is unavailable) */
+export const loadMapMode = (): MapMode => {
+  try {
+    return localStorage.getItem(MODE_KEY) === 'density' ? 'density' : 'items';
+  } catch {
+    return 'items';
+  }
+};
+
+/** Remembers the map mode in this browser */
+export const saveMapMode = (mode: MapMode): void => {
+  try {
+    localStorage.setItem(MODE_KEY, mode);
+  } catch {
+    // blocked storage: the choice lasts for this visit
+  }
+};

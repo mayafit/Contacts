@@ -12,11 +12,13 @@ import type {
   ActivitySummary,
   AtlasQuery,
   AtlasSummary,
+  DensityData,
   FusionSettings,
   FusionStatus,
   HistogramRow,
   Insights,
   LocationLookup,
+  NearbyPlace,
   NearResult,
   ParsedData,
   PlaceAssociation,
@@ -25,7 +27,7 @@ import type {
   SearchResult,
   SeriesPoint,
   SourceConnection,
-  VisitSummary,
+  VisitPlaceResult,
 } from '../../entries/Contacts/atlas/types';
 
 /** One ingest batch */
@@ -958,13 +960,61 @@ export class BackendApiClient {
   async atlasAssociateVisitPlace(
     visitId: string,
     body: PlaceAssociation,
-  ): Promise<{ visit: VisitSummary; place: PlaceDetail }> {
-    return unwrap(
-      await this.request<{ visit: VisitSummary; place: PlaceDetail }>(
-        `/atlas/visits/${encodeURIComponent(visitId)}/place`,
-        { method: 'POST', body: JSON.stringify(body) },
-      ),
+  ): Promise<VisitPlaceResult> {
+    const r = unwrap(
+      await this.request<VisitPlaceResult>(`/atlas/visits/${encodeURIComponent(visitId)}/place`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
       'Saving the place failed',
+    );
+    // Older servers do not propagate the identity to nearby places
+    return { ...r, applied: r.applied ?? [], suggested: r.suggested ?? [] };
+  }
+
+  /**
+   * Accepts a place's automatic identity (it becomes the user's).
+   * @param id - Place id
+   * @returns The place after the change
+   */
+  async atlasConfirmPlace(id: string): Promise<PlaceDetail> {
+    return unwrap(
+      await this.request<PlaceDetail>(`/atlas/places/${encodeURIComponent(id)}/confirm`, {
+        method: 'POST',
+      }),
+      'Confirming the place failed',
+    );
+  }
+
+  /**
+   * Gives nearby places the identity of a place (name, address, category, link, details).
+   * @param id - The identified place
+   * @param placeIds - The places to give its identity
+   * @returns The places that got it
+   */
+  async atlasApplyIdentity(id: string, placeIds: string[]): Promise<NearbyPlace[]> {
+    const r = unwrap(
+      await this.request<{ applied: NearbyPlace[] }>(
+        `/atlas/places/${encodeURIComponent(id)}/apply-to`,
+        { method: 'POST', body: JSON.stringify({ placeIds }) },
+      ),
+      'Naming the nearby places failed',
+    );
+    return r.applied ?? [];
+  }
+
+  /**
+   * Every track and visit matching a query, light enough to draw at once (density map).
+   * @param query - The same filters as the search
+   * @returns Simplified tracks (newest first) and visits with their hours
+   */
+  async atlasDensity(query: AtlasQuery): Promise<DensityData> {
+    return unwrap(
+      await this.request<DensityData>('/atlas/density', {
+        method: 'POST',
+        body: JSON.stringify(query),
+      }),
+      'Loading the density map failed',
     );
   }
 
