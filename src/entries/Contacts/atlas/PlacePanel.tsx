@@ -717,7 +717,7 @@ const PlacePanel: React.FC<PlacePanelProps> = ({
             <Box sx={{ py: 1 }}>
               <LinearProgress />
               <Typography variant="caption" sx={{ color: tokens.textMuted }}>
-                Looking up OpenStreetMap… this can take a few seconds
+                Looking up OpenStreetMap… usually a few seconds, up to a minute when it is busy
               </Typography>
             </Box>
           )}

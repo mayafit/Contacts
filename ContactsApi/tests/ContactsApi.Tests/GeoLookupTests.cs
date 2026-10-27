@@ -76,6 +76,9 @@ public class GeoLookupTests
         Assert.Empty(GeoLookupClient.ParseOverpass("""{"elements":[]}""", Lat, Lon));
         Assert.Throws<GeoLookupException>(() => GeoLookupClient.ParseOverpass("<html>busy</html>", Lat, Lon));
         Assert.Equal("Fast food", GeoLookupClient.Humanize("fast_food"));
+        // Ran out of time on the server: a failure (retried, not cached as "nothing here")
+        Assert.Throws<GeoLookupException>(() => GeoLookupClient.ParseOverpass(
+            """{"elements":[],"remark":"runtime error: Query timed out in \"query\" at line 1 after 25 seconds."}""", Lat, Lon));
     }
 
     /// <summary>Against a real PostgreSQL when ATLAS_TEST_DB is set (skipped otherwise)</summary>
