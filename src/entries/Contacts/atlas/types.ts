@@ -230,6 +230,110 @@ export interface VisitSummary {
   source: string;
 }
 
+/** A place with what is known about it and its visits */
+export interface PlaceDetail {
+  id: string;
+  name: string;
+  address: string | null;
+  /** Human label, e.g. "Cafe", or a source's own category */
+  category: string | null;
+  lat: number;
+  lon: number;
+  notes: string | null;
+  /** Where the place came from (google-timeline, manual…) */
+  source: string;
+  /** The real-world location it is associated with, e.g. "osm:node/123456" */
+  linkedRef: string | null;
+  website: string | null;
+  phone: string | null;
+  /** OpenStreetMap opening_hours syntax, shown as is */
+  openingHours: string | null;
+  /** Anything else found (cuisine, brand, wikipedia, operator, …) */
+  details: Record<string, string>;
+  /** Visits to this place */
+  visits: number;
+  firstVisit: string | null;
+  lastVisit: string | null;
+  hoursSpent: number;
+}
+
+/** The street address at a point */
+export interface LookupAddress {
+  /** One line, e.g. "12 Herzl St, Rehovot, Israel" */
+  display: string;
+  houseNumber: string | null;
+  road: string | null;
+  suburb: string | null;
+  city: string | null;
+  state: string | null;
+  postcode: string | null;
+  country: string | null;
+  countryCode: string | null;
+}
+
+/** A named place near a looked-up point */
+export interface LocationCandidate {
+  /** e.g. "osm:node/123", "osm:way/456" */
+  ref: string;
+  /** In English when known, else the local name */
+  name: string;
+  /** The local-language name when it differs */
+  localName: string | null;
+  /** Raw OpenStreetMap key=value, e.g. "amenity=cafe" */
+  kind: string;
+  /** Human label, e.g. "Cafe" */
+  label: string;
+  lat: number;
+  lon: number;
+  /** From the looked-up point */
+  distanceM: number;
+  address: string | null;
+  website: string | null;
+  phone: string | null;
+  openingHours: string | null;
+  /** cuisine, brand, operator, wikipedia, wikidata, description, … */
+  details: Record<string, string>;
+}
+
+/** What is at a point (OpenStreetMap) */
+export interface LocationLookup {
+  lat: number;
+  lon: number;
+  address: LookupAddress | null;
+  /** Nearest first, at most 25 */
+  candidates: LocationCandidate[];
+  /** Failures of one source (partial results), e.g. "Nearby places are unavailable right now" */
+  errors: string[];
+  /** "© OpenStreetMap contributors" — shown with the results */
+  attribution: string;
+}
+
+/** A visit's place set to a name/address, or associated with a real-world location */
+export interface PlaceAssociation {
+  name: string;
+  address?: string | null;
+  /** The candidate's label */
+  category?: string | null;
+  /** The candidate's ref; null for a manual name/address */
+  linkedRef?: string | null;
+  website?: string | null;
+  phone?: string | null;
+  openingHours?: string | null;
+  details?: Record<string, string> | null;
+}
+
+/** Changes to a place (missing: unchanged; "" clears linkedRef, website, phone, openingHours) */
+export interface PlacePatch {
+  name?: string;
+  address?: string;
+  category?: string;
+  notes?: string;
+  linkedRef?: string;
+  website?: string;
+  phone?: string;
+  openingHours?: string;
+}
+
 /** Search filters */
 export interface AtlasQuery {
   from?: string;

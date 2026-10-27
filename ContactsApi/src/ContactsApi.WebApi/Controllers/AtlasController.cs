@@ -164,6 +164,23 @@ public class AtlasController : ControllerBase
     public Task<IActionResult> CreatePlace([FromBody] PlaceInput place) =>
         Run((svc, owner) => svc.CreatePlaceAsync(owner, place, HttpContext.RequestAborted));
 
+    /// <summary>A place with everything known about it and its visits</summary>
+    [HttpGet("places/{id:guid}")]
+    public Task<IActionResult> GetPlace(Guid id) =>
+        Run((svc, owner) => svc.GetPlaceAsync(owner, id, HttpContext.RequestAborted));
+
+    /// <summary>What is at a point: the address and named places around it (OpenStreetMap)</summary>
+    [HttpGet("lookup")]
+    public Task<IActionResult> Lookup([FromQuery] double? lat, [FromQuery] double? lon, [FromQuery] double radius = 80) =>
+        RunWith<GeoLookupClient, LocationLookup>((geo, _) => lat.HasValue && lon.HasValue
+            ? geo.LookupAsync(lat.Value, lon.Value, radius, HttpContext.RequestAborted)
+            : throw new ArgumentException("lat and lon are required"));
+
+    /// <summary>Says what a visit's place is (a found location, or typed)</summary>
+    [HttpPost("visits/{id:guid}/place")]
+    public Task<IActionResult> AssociateVisitPlace(Guid id, [FromBody] PlaceAssociation association) =>
+        Run((svc, owner) => svc.AssociateVisitPlaceAsync(owner, id, association, HttpContext.RequestAborted));
+
     /// <summary>Changes a place</summary>
     [HttpPatch("places/{id:guid}")]
     public Task<IActionResult> UpdatePlace(Guid id, [FromBody] PlacePatch patch) =>
@@ -232,6 +249,10 @@ public class AtlasController : ControllerBase
         catch (SportsTrackerException ex)
         {
             return BadRequest(ApiResponse<object>.ErrorResponse(ex.Code, ex.Message));
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ApiResponse<object>.ErrorResponse("INVALID_INPUT", ex.Message));
         }
     }
 }

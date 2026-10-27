@@ -97,6 +97,16 @@ public class AtlasPlace : ISourced
     public string? Category { get; set; }
     public string? GooglePlaceId { get; set; }
     public string? Notes { get; set; }
+    /// <summary>The real-world location it is associated with, e.g. "osm:node/123"</summary>
+    public string? LinkedRef { get; set; }
+    public string? Website { get; set; }
+    public string? Phone { get; set; }
+    /// <summary>OSM opening_hours syntax, shown as is</summary>
+    public string? OpeningHours { get; set; }
+    /// <summary>JSON object: whatever else was found (cuisine, brand, wikipedia…)</summary>
+    public string Details { get; set; } = "{}";
+    /// <summary>The user named or associated it: imports keep its address and category</summary>
+    public bool UserEdited { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
