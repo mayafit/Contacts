@@ -156,7 +156,22 @@ public record AtlasSummary(
 public record ActivityPatch(string? Name = null, string? Type = null, string? Notes = null);
 
 /// <summary>Editable place fields</summary>
-public record PlacePatch(string? Name = null, string? Address = null, string? Category = null, string? Notes = null, double? Lat = null, double? Lon = null);
+public record PlacePatch(string? Name = null, string? Address = null, string? Category = null, string? Notes = null, double? Lat = null, double? Lon = null,
+    string? LinkedRef = null, string? Website = null, string? Phone = null, string? OpeningHours = null);
+
+/// <summary>A place with everything known about it and how often it was visited</summary>
+public record PlaceDetail(
+    Guid Id, string Name, string? Address, string? Category, double Lat, double Lon, string? Notes, string Source,
+    string? LinkedRef, string? Website, string? Phone, string? OpeningHours, Dictionary<string, string> Details,
+    int Visits, DateTime? FirstVisit, DateTime? LastVisit, double HoursSpent);
+
+/// <summary>What a visit's place is: a location found by a lookup, or typed by the user</summary>
+public record PlaceAssociation(
+    string Name, string? Address = null, string? Category = null, string? LinkedRef = null, string? Website = null,
+    string? Phone = null, string? OpeningHours = null, Dictionary<string, string>? Details = null);
+
+/// <summary>A visit and its place after an association</summary>
+public record VisitPlaceResult(VisitSummary Visit, PlaceDetail Place);
 
 /// <summary>What was at or passed through a point</summary>
 public record NearResult(List<VisitSummary> Visits, List<ActivitySummary> Activities);

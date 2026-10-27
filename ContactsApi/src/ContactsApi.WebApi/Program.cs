@@ -74,6 +74,8 @@ builder.Services.AddHostedService<AtlasMigrator>();
 // Connected sources (Sports Tracker): connect, background sync
 builder.Services.AddHttpClient(ContactsApi.Infrastructure.Atlas.SportsTrackerClient.HttpClientName, c => c.Timeout = TimeSpan.FromSeconds(60));
 builder.Services.AddSingleton<AtlasSyncQueue>();
+// What is at a point (OpenStreetMap Nominatim and Overpass)
+builder.Services.AddHttpClient<ContactsApi.Infrastructure.Atlas.GeoLookupClient>(c => c.Timeout = TimeSpan.FromSeconds(25));
 builder.Services.AddScoped<AtlasConnectionService>();
 builder.Services.AddHostedService<AtlasSyncWorker>();
 builder.Services.AddHttpContextAccessor();
