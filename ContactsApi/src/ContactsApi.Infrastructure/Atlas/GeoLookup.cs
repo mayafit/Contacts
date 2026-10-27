@@ -29,6 +29,12 @@ public record LocationCandidate(string Ref, string Name, string? LocalName, stri
 /// <summary>A lookup service failed or answered nonsense</summary>
 public class GeoLookupException : Exception
 {
+    /// <summary>The service said it is overloaded (429/502/503/504)</summary>
+    public bool Busy { get; init; }
+
+    /// <summary>How long it asked to be left alone</summary>
+    public TimeSpan? RetryAfter { get; init; }
+
     /// <summary>Creates the exception</summary>
     public GeoLookupException(string message, Exception? inner = null) : base(message, inner)
     {
@@ -64,6 +70,8 @@ public class GeoLookupClient
     private static readonly SemaphoreSlim NominatimGate = new(1, 1);
     // Overpass is shared too: at most two requests at a time from this app
     private static readonly SemaphoreSlim OverpassGate = new(2, 2);
+    // Instances that said they are full, and until when to leave them alone
+    private static readonly ConcurrentDictionary<string, DateTime> BusyUntil = new();
     private static DateTime _lastNominatim = DateTime.MinValue;
 
     /// <summary>The keys that say what a place is, most telling first</summary>
@@ -177,17 +185,20 @@ public class GeoLookupClient
     {
         var url = string.Create(CultureInfo.InvariantCulture,
             $"{Nominatim}?format=jsonv2&lat={lat:F6}&lon={lon:F6}&zoom=18&addressdetails=1&extratags=1&namedetails=1&accept-language=en");
-        await NominatimGate.WaitAsync(ct);
+        // At most 25 s, waiting for the gate included (the HTTP client allows 90 s for Overpass)
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        limit.CancelAfter(TimeSpan.FromSeconds(25));
+        await NominatimGate.WaitAsync(limit.Token);
         try
         {
             // One request per second, as Nominatim's policy asks
             var wait = _lastNominatim.AddSeconds(1.1) - DateTime.UtcNow;
             if (wait > TimeSpan.Zero)
             {
-                await Task.Delay(wait, ct);
+                await Task.Delay(wait, limit.Token);
             }
 
-            var json = await GetAsync(new HttpRequestMessage(HttpMethod.Get, url), ct);
+            var json = await GetAsync(new HttpRequestMessage(HttpMethod.Get, url), limit.Token);
             return ParseNominatim(json, lat, lon);
         }
         finally
@@ -200,21 +211,36 @@ public class GeoLookupClient
     private async Task<List<LocationCandidate>> AroundAsync(double lat, double lon, double radiusM, CancellationToken ct)
     {
         var keys = string.Join("|", KindKeys);
+        // A small declared timeout: busy instances admit small queries more readily
         var query = string.Create(CultureInfo.InvariantCulture,
-            $"[out:json][timeout:45];nwr(around:{radiusM:F0},{lat:F6},{lon:F6})[name][~\"^({keys})$\"~\".\"];out center tags 80;");
-        var deadline = DateTime.UtcNow + OverpassBudget;
-        await OverpassGate.WaitAsync(ct);
+            $"[out:json][timeout:25];nwr(around:{radiusM:F0},{lat:F6},{lon:F6})[name][~\"^({keys})$\"~\".\"];out center tags 80;");
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        TimeSpan Left() => OverpassBudget - clock.Elapsed;
+
+        // Waiting behind other lookups counts against the budget
+        if (!await OverpassGate.WaitAsync(OverpassBudget - TimeSpan.FromSeconds(10), ct))
+        {
+            throw new GeoLookupException("Nearby-places lookups are busy");
+        }
+
         try
         {
-            // A busy instance answers 502/504/429 or keeps the request queued: wait for
-            // it, else try the next one, until the budget is spent
+            // A busy instance answers 502/504/429 or keeps the request queued: wait for it,
+            // else the next one; at most four attempts, and an instance that said it is
+            // full is left alone for a minute (retrying would only make it worse)
             Exception? last = null;
-            for (var attempt = 0; DateTime.UtcNow < deadline - TimeSpan.FromSeconds(3); attempt++)
+            for (var attempt = 0; attempt < 4 && Left() > TimeSpan.FromSeconds(5); attempt++)
             {
-                var left = deadline - DateTime.UtcNow;
+                var url = Overpass.Select((u, i) => Overpass[(attempt + i) % Overpass.Length])
+                    .FirstOrDefault(u => !BusyUntil.TryGetValue(u, out var until) || until < DateTime.UtcNow);
+                if (url == null)
+                {
+                    break;
+                }
+
                 using var attemptCt = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                attemptCt.CancelAfter(left < TimeSpan.FromSeconds(50) ? left : TimeSpan.FromSeconds(50));
-                var request = new HttpRequestMessage(HttpMethod.Post, Overpass[attempt % Overpass.Length])
+                attemptCt.CancelAfter(Left() < TimeSpan.FromSeconds(50) ? Left() : TimeSpan.FromSeconds(50));
+                var request = new HttpRequestMessage(HttpMethod.Post, url)
                 {
                     Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["data"] = query })
                 };
@@ -226,7 +252,16 @@ public class GeoLookupClient
                                            && ex is HttpRequestException or GeoLookupException or OperationCanceledException)
                 {
                     last = ex;
-                    await Task.Delay(TimeSpan.FromSeconds(Math.Min(4, 1 << attempt)), ct);
+                    if (ex is GeoLookupException { Busy: true } busy)
+                    {
+                        BusyUntil[url] = DateTime.UtcNow + (busy.RetryAfter ?? TimeSpan.FromSeconds(60));
+                    }
+
+                    var pause = TimeSpan.FromSeconds(Math.Min(4, 1 << attempt));
+                    if (pause < Left() - TimeSpan.FromSeconds(5))
+                    {
+                        await Task.Delay(pause, ct);
+                    }
                 }
             }
 
@@ -248,7 +283,13 @@ public class GeoLookupClient
             var text = await res.Content.ReadAsStringAsync(ct);
             if (!res.IsSuccessStatusCode)
             {
-                throw new GeoLookupException($"{request.RequestUri?.Host} answered {(int)res.StatusCode}");
+                var status = (int)res.StatusCode;
+                var retryAfter = res.Headers.RetryAfter?.Delta;
+                throw new GeoLookupException($"{request.RequestUri?.Host} answered {status}")
+                {
+                    Busy = status is 429 or 502 or 503 or 504,
+                    RetryAfter = retryAfter is { } r && r > TimeSpan.Zero && r < TimeSpan.FromMinutes(10) ? r : null
+                };
             }
 
             return text;
@@ -328,6 +369,13 @@ public class GeoLookupClient
         try
         {
             using var doc = JsonDocument.Parse(json);
+            // A query that ran out of time answers 200 with a remark and no elements
+            if (doc.RootElement.TryGetProperty("remark", out var remark) && remark.GetString() is { } note
+                && note.Contains("runtime error", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new GeoLookupException("Overpass could not finish the query");
+            }
+
             if (!doc.RootElement.TryGetProperty("elements", out var elements) || elements.ValueKind != JsonValueKind.Array)
             {
                 return new List<LocationCandidate>();
