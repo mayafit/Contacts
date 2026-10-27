@@ -73,7 +73,7 @@ public record ActivitySummary(
 /// <summary>A visit with its place</summary>
 public record VisitSummary(
     Guid Id, Guid? PlaceId, string? PlaceName, string? Address, DateTime StartTime, DateTime EndTime,
-    double Lat, double Lon, string Source);
+    double Lat, double Lon, string Source, string? IdentifyState = null);
 
 /// <summary>Search results</summary>
 public record SearchResult(List<ActivitySummary> Activities, List<VisitSummary> Visits, int TotalActivities, int TotalVisits);
@@ -163,7 +163,8 @@ public record PlacePatch(string? Name = null, string? Address = null, string? Ca
 public record PlaceDetail(
     Guid Id, string Name, string? Address, string? Category, double Lat, double Lon, string? Notes, string Source,
     string? LinkedRef, string? Website, string? Phone, string? OpeningHours, Dictionary<string, string> Details,
-    int Visits, DateTime? FirstVisit, DateTime? LastVisit, double HoursSpent);
+    int Visits, DateTime? FirstVisit, DateTime? LastVisit, double HoursSpent,
+    string IdentifyState = "pending", List<LocationCandidate>? Candidates = null, string? IdentifiedFrom = null);
 
 /// <summary>What a visit's place is: a location found by a lookup, or typed by the user</summary>
 public record PlaceAssociation(
@@ -171,7 +172,16 @@ public record PlaceAssociation(
     string? Phone = null, string? OpeningHours = null, Dictionary<string, string>? Details = null);
 
 /// <summary>A visit and its place after an association</summary>
-public record VisitPlaceResult(VisitSummary Visit, PlaceDetail Place);
+public record VisitPlaceResult(VisitSummary Visit, PlaceDetail Place, List<NearbyPlace>? Applied = null, List<NearbyPlace>? Suggested = null);
+
+/// <summary>Tracks and visits for the density map</summary>
+public record DensityData(List<DensityTrack> Tracks, List<double[]> Visits, bool Truncated);
+
+/// <summary>One track for the density map (simplified)</summary>
+public record DensityTrack(string Type, string Polyline);
+
+/// <summary>Places to give an identity to</summary>
+public record ApplyIdentityRequest(List<Guid> PlaceIds);
 
 /// <summary>What was at or passed through a point</summary>
 public record NearResult(List<VisitSummary> Visits, List<ActivitySummary> Activities);
