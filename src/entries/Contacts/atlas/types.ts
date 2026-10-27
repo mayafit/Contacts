@@ -141,7 +141,7 @@ export interface LinkedPlace {
 
 /** A connected account that Atlas syncs from */
 export interface SourceConnection {
-  provider: 'sports-tracker';
+  provider: 'sports-tracker' | 'onedrive';
   /** Username or email as entered */
   account: string | null;
   status: 'idle' | 'syncing' | 'error' | 'expired';
@@ -408,6 +408,42 @@ export interface DensityData {
   visits: [number, number, number][];
   /** More matched than returned */
   truncated: boolean;
+}
+
+/**
+ * A photo or video of the connected OneDrive. lat/lon is where it is shown; placedBy says
+ * how that was found: the camera's position (gps), the track at its time, or the visit.
+ */
+export interface PhotoSummary {
+  id: string;
+  name: string;
+  takenAt: string;
+  isVideo: boolean;
+  lat: number | null;
+  lon: number | null;
+  placedBy: 'gps' | 'track' | 'visit' | null;
+  width: number | null;
+  height: number | null;
+  /** Opens it in OneDrive */
+  webUrl: string | null;
+  activityId: string | null;
+  visitId: string | null;
+  camera: string | null;
+}
+
+/** Photos for the map (truncated: there were more; the newest are given) */
+export interface PhotoMapData {
+  photos: PhotoSummary[];
+  truncated: boolean;
+}
+
+/** The OneDrive connection: whether the server can connect it, the connection, photo counts */
+export interface OneDriveStatus {
+  configured: boolean;
+  connection: SourceConnection | null;
+  photos: number;
+  /** Placed on the map */
+  withPosition: number;
 }
 
 /** Search results */

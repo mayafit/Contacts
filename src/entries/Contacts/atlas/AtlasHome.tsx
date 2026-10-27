@@ -27,7 +27,14 @@ import {
   UploadFile,
 } from '@mui/icons-material';
 import { backendApiClient } from '../../../services/api/BackendApiClient';
-import type { ActivityDetail, AtlasQuery, AtlasSummary, SearchResult, VisitSummary } from './types';
+import type {
+  ActivityDetail,
+  AtlasQuery,
+  AtlasSummary,
+  PhotoSummary,
+  SearchResult,
+  VisitSummary,
+} from './types';
 import AtlasMap, { type Box as Area } from './AtlasMap';
 import { loadStartRange, saveStartRange, startRangeOf, type StartRange } from './startRange';
 import AtlasTimeline, { type Range } from './AtlasTimeline';
@@ -36,7 +43,8 @@ import InsightsPanel, { type InsightsFilter } from './InsightsPanel';
 import { areaAround } from './insights';
 import ActivityPanel from './ActivityPanel';
 import PlacePanel from './PlacePanel';
-import ImportDialog from './ImportDialog';
+import ImportDialog, { type ImportTab } from './ImportDialog';
+import PhotoViewer from './PhotoViewer';
 import AiAccessDialog from './AiAccessDialog';
 import FusionSettingsDialog from './FusionSettingsDialog';
 import AtlasFilterBar from './AtlasFilterBar';
@@ -98,6 +106,10 @@ const AtlasHome: React.FC = () => {
   const [visit, setVisit] = useState<VisitSummary | null>(null);
   const [cursor, setCursor] = useState<[number, number] | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  const [importTab, setImportTab] = useState<ImportTab>('files');
+  // Photos of the open activity or place, and the viewer (the list it was opened on)
+  const [panelPhotos, setPanelPhotos] = useState<PhotoSummary[]>([]);
+  const [viewer, setViewer] = useState<{ photos: PhotoSummary[]; index: number } | null>(null);
   const [aiOpen, setAiOpen] = useState(false);
   const [fusionOpen, setFusionOpen] = useState(false);
   // Bumped to fit the map to the area filter
@@ -109,6 +121,53 @@ const AtlasHome: React.FC = () => {
   const [mergeFrom, setMergeFrom] = useState<string | null>(null);
   // Bumped when new results arrive, so the map fits to them (not to the old ones)
   const [fitTick, setFitTick] = useState(0);
+
+  // Back from Microsoft's sign-in (OneDrive): show the OneDrive tab with the outcome
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const outcome = params.get('onedrive');
+    if (!outcome) {
+      return;
+    }
+    if (outcome === 'error') {
+      const reason = params.get('reason');
+      setError(
+        reason === 'denied'
+          ? 'OneDrive was not connected: the permission was not given.'
+          : reason === 'session'
+            ? 'OneDrive was not connected: your session ended. Sign in and connect again.'
+            : 'Connecting OneDrive failed. Try again.',
+      );
+    }
+    setImportTab('onedrive');
+    setImportOpen(true);
+    params.delete('onedrive');
+    params.delete('reason');
+    const rest = params.toString();
+    window.history.replaceState(null, '', window.location.pathname + (rest ? `?${rest}` : ''));
+  }, []);
+
+  // Photos of what is open: the activity's, else the visited place's
+  const photosOf = detail ? `a:${detail.summary.id}` : visit?.placeId ? `p:${visit.placeId}` : '';
+  useEffect(() => {
+    setPanelPhotos([]);
+    if (!photosOf) {
+      return undefined;
+    }
+    let alive = true;
+    const id = photosOf.slice(2);
+    (photosOf.startsWith('a:')
+      ? backendApiClient.atlasActivityPhotos(id)
+      : backendApiClient.atlasPlacePhotos(id)
+    )
+      .then((p) => alive && setPanelPhotos(p))
+      .catch(() => {
+        // No photos (OneDrive not connected, or the load failed): the panel shows none
+      });
+    return () => {
+      alive = false;
+    };
+  }, [photosOf, reloadKey]);
 
   const loadSummary = useCallback(async () => {
     try {
@@ -589,6 +648,8 @@ const AtlasHome: React.FC = () => {
                 focusArea={focusArea}
                 query={filters}
                 reloadKey={reloadKey}
+                photos={panelPhotos}
+                onOpenPhoto={(photos, index) => setViewer({ photos, index })}
               />
               {empty && (
                 <Paper
@@ -717,6 +778,8 @@ const AtlasHome: React.FC = () => {
                   setCursor(null);
                   void openActivity(id);
                 }}
+                photos={panelPhotos}
+                onOpenPhoto={(index) => setViewer({ photos: panelPhotos, index })}
                 onShowPlace={(lat, lon, visitId) => {
                   const v = result?.visits.find((x) => x.id === visitId);
                   if (v) {
@@ -738,6 +801,8 @@ const AtlasHome: React.FC = () => {
                   setCursor(null);
                 }}
                 onPreview={setCursor}
+                photos={panelPhotos}
+                onOpenPhoto={(index) => setViewer({ photos: panelPhotos, index })}
                 onChanged={(v, alsoPlaces = []) => {
                   setVisit(v);
                   // The list and the map show the new name (every visit to the place, and to
@@ -867,7 +932,21 @@ const AtlasHome: React.FC = () => {
         )}
       </Box>
 
-      <ImportDialog open={importOpen} onClose={() => setImportOpen(false)} onChanged={changed} />
+      <ImportDialog
+        open={importOpen}
+        onClose={() => {
+          setImportOpen(false);
+          setImportTab('files');
+        }}
+        onChanged={changed}
+        initialTab={importTab}
+      />
+      <PhotoViewer
+        photos={viewer?.photos ?? []}
+        index={viewer?.index ?? null}
+        onIndex={(index) => setViewer((v) => (v && index !== null ? { ...v, index } : null))}
+        onShowOnMap={(lat, lon) => setCursor([lat, lon])}
+      />
       <AiAccessDialog open={aiOpen} onClose={() => setAiOpen(false)} />
       <FusionSettingsDialog
         open={fusionOpen}

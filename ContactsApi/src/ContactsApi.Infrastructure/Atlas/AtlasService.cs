@@ -989,6 +989,9 @@ public partial class AtlasService
         {
             throw new AtlasNotFoundException("Activity");
         }
+
+        await _db.Photos.Where(p => p.OwnerId == owner && (p.ActivityId == id || (cluster != null && p.ActivityId == cluster)))
+            .ExecuteUpdateAsync(s => s.SetProperty(p => p.Placed, false), ct);
     }
 
     /// <summary>Creates a place by hand</summary>
@@ -1115,6 +1118,9 @@ public partial class AtlasService
         {
             throw new AtlasNotFoundException("Visit");
         }
+
+        await _db.Photos.Where(p => p.OwnerId == owner && p.VisitId == id)
+            .ExecuteUpdateAsync(s => s.SetProperty(p => p.Placed, false), ct);
     }
 
     /// <summary>Deletes an import and everything it brought in</summary>

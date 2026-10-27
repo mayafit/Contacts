@@ -32,7 +32,13 @@ import {
   SportsScore,
   TripOrigin,
 } from '@mui/icons-material';
-import type { ActivityDetail, ActivityMember, LinkedPlace, MatchEvidence } from './types';
+import type {
+  ActivityDetail,
+  ActivityMember,
+  LinkedPlace,
+  MatchEvidence,
+  PhotoSummary,
+} from './types';
 import {
   ACTIVITY_TYPES,
   VISIT_COLOR,
@@ -47,6 +53,7 @@ import { indexAt, timeAtDistance, trackSamples, type ChartAxis } from './analysi
 import ActivityCharts from './ActivityCharts';
 import HrZonesBar from './HrZonesBar';
 import PanelSection from './PanelSection';
+import PhotoStrip from './PhotoStrip';
 import {
   AnalysisSummary,
   ComparedSection,
@@ -71,6 +78,10 @@ export interface ActivityPanelProps {
   onShowPlace: (lat: number, lon: number, visitId: string) => void;
   /** Opens another activity (e.g. an earlier one on the same route) */
   onOpenActivity: (id: string) => void;
+  /** Photos taken during it (OneDrive) */
+  photos?: PhotoSummary[];
+  /** Opens the viewer at one of the photos */
+  onOpenPhoto?: (index: number) => void;
 }
 
 /** Icon and text of a linked place's role */
@@ -179,6 +190,8 @@ const ActivityPanel: React.FC<ActivityPanelProps> = ({
   onStartMerge,
   onShowPlace,
   onOpenActivity,
+  photos,
+  onOpenPhoto,
 }) => {
   const s = detail.summary;
   const [editing, setEditing] = useState(false);
@@ -338,6 +351,12 @@ const ActivityPanel: React.FC<ActivityPanelProps> = ({
         >
           {detail.notes}
         </Typography>
+      )}
+
+      {photos && photos.length > 0 && onOpenPhoto && (
+        <PanelSection title="Photos" hint={photos.length}>
+          <PhotoStrip photos={photos} onOpen={onOpenPhoto} />
+        </PanelSection>
       )}
 
       <PanelSection

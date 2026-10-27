@@ -28,6 +28,7 @@ public class AtlasDbContext : DbContext
     public DbSet<FusionQueueItem> FusionQueue => Set<FusionQueueItem>();
     public DbSet<FusionSetting> FusionSettings => Set<FusionSetting>();
     public DbSet<ActivityEffort> Efforts => Set<ActivityEffort>();
+    public DbSet<AtlasPhoto> Photos => Set<AtlasPhoto>();
 
     /// <inheritdoc />
     protected override void OnModelCreating(ModelBuilder b)
@@ -96,6 +97,20 @@ public class AtlasDbContext : DbContext
             e.Property(x => x.OwnerId).HasMaxLength(64);
             e.Property(x => x.Provider).HasMaxLength(32);
             e.Property(x => x.Status).HasMaxLength(16);
+        });
+
+        b.Entity<AtlasPhoto>(e =>
+        {
+            e.ToTable("photos");
+            e.HasIndex(x => new { x.OwnerId, x.Provider, x.ExternalId }).IsUnique();
+            e.HasIndex(x => new { x.OwnerId, x.TakenAt });
+            e.HasIndex(x => new { x.OwnerId, x.ActivityId }).HasFilter("\"ActivityId\" IS NOT NULL");
+            e.HasIndex(x => new { x.OwnerId, x.VisitId }).HasFilter("\"VisitId\" IS NOT NULL");
+            e.HasIndex(x => new { x.OwnerId, x.Placed }).HasFilter("NOT \"Placed\"");
+            e.Property(x => x.OwnerId).HasMaxLength(64);
+            e.Property(x => x.Provider).HasMaxLength(32);
+            e.Property(x => x.ExternalId).HasMaxLength(128);
+            e.Property(x => x.PlacedBy).HasMaxLength(16);
         });
 
         b.Entity<TrackPoint>(e =>
