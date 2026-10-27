@@ -64,7 +64,7 @@ public class GeoLookupClient
 
     /// <summary>How long Overpass may take to add details (its instances are often at capacity)</summary>
     // Only for extra details (phone, website, hours): Photon lists the places quickly
-    private static readonly TimeSpan OverpassBudget = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan OverpassBudget = TimeSpan.FromSeconds(8);
     private const string Photon = "https://photon.komoot.io/reverse";
     private static readonly SemaphoreSlim PhotonGate = new(2, 2);
     private static readonly TimeSpan CacheFor = TimeSpan.FromDays(1);
@@ -331,7 +331,7 @@ public class GeoLookupClient
         TimeSpan Left() => OverpassBudget - clock.Elapsed;
 
         // Waiting behind other lookups counts against the budget
-        if (!await OverpassGate.WaitAsync(OverpassBudget - TimeSpan.FromSeconds(10), ct))
+        if (!await OverpassGate.WaitAsync(OverpassBudget - TimeSpan.FromSeconds(3), ct))
         {
             throw new GeoLookupException("Nearby-places lookups are busy");
         }
@@ -339,10 +339,10 @@ public class GeoLookupClient
         try
         {
             // A busy instance answers 502/504/429 or keeps the request queued: wait for it,
-            // else the next one; at most two attempts, and an instance that said it is
+            // else the next one; one attempt, and an instance that said it is
             // full is left alone for a minute (retrying would only make it worse)
             Exception? last = null;
-            for (var attempt = 0; attempt < 2 && Left() > TimeSpan.FromSeconds(5); attempt++)
+            for (var attempt = 0; attempt < 1 && Left() > TimeSpan.FromSeconds(3); attempt++)
             {
                 var url = Overpass.Select((u, i) => Overpass[(attempt + i) % Overpass.Length])
                     .FirstOrDefault(u => !BusyUntil.TryGetValue(u, out var until) || until < DateTime.UtcNow);
