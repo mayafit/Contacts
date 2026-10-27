@@ -185,3 +185,14 @@ public record ApplyIdentityRequest(List<Guid> PlaceIds);
 
 /// <summary>What was at or passed through a point</summary>
 public record NearResult(List<VisitSummary> Visits, List<ActivitySummary> Activities);
+
+/// <summary>
+/// A photo or video of a connected library. Lat/Lon is where it is shown (null when
+/// unknown); PlacedBy says how that was found: gps, track, visit.
+/// </summary>
+public record PhotoSummary(
+    Guid Id, string Name, DateTime TakenAt, bool IsVideo, double? Lat, double? Lon, string? PlacedBy,
+    int? Width, int? Height, string? WebUrl, Guid? ActivityId, Guid? VisitId, string? Camera);
+
+/// <summary>Photos for the map (Truncated: there were more, the newest are given)</summary>
+public record PhotoMapData(List<PhotoSummary> Photos, bool Truncated);

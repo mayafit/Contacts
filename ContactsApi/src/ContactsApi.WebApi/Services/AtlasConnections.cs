@@ -126,7 +126,8 @@ public class AtlasConnectionService
     public async Task<bool> DisconnectAsync(string owner, CancellationToken ct = default) =>
         await _db.Connections.Where(c => c.OwnerId == owner && c.Provider == SportsTracker).ExecuteDeleteAsync(ct) > 0;
 
-    private static SourceConnectionInfo Info(SourceConnection c) =>
+    /// <summary>A connection as the app shows it</summary>
+    public static SourceConnectionInfo Info(SourceConnection c) =>
         new(c.Provider, c.Account, c.Status, c.LastSyncAt, c.LastError, c.ItemsTotal, c.ItemsDone, c.ItemsImported);
 }
 
@@ -165,7 +166,7 @@ public class AtlasSyncWorker : BackgroundService
         using (var scope = _scopes.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AtlasDbContext>();
-            await db.Connections.Where(c => c.Status == "syncing")
+            await db.Connections.Where(c => c.Provider == AtlasConnectionService.SportsTracker && c.Status == "syncing")
                 .ExecuteUpdateAsync(s => s.SetProperty(c => c.Status, "error")
                     .SetProperty(c => c.LastError, "The sync was interrupted by a restart. Sync again to continue."), stoppingToken);
         }

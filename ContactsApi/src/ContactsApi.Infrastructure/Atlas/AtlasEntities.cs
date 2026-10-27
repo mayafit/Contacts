@@ -283,6 +283,56 @@ public class SourceConnection
     public int ItemsDone { get; set; }
     public int ItemsImported { get; set; }
     public Guid? ImportId { get; set; }
+    /// <summary>Where the next sync goes on from (OneDrive: the delta link); null to start over</summary>
+    public string? Cursor { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
+/// A photo or video of a connected library (OneDrive). Only its details are kept;
+/// the file stays in the library, thumbnails are fetched from there.
+/// </summary>
+public class AtlasPhoto
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string OwnerId { get; set; } = string.Empty;
+    /// <summary>onedrive</summary>
+    public string Provider { get; set; } = "onedrive";
+    /// <summary>The item's id in the library</summary>
+    public string ExternalId { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string? MimeType { get; set; }
+    public bool IsVideo { get; set; }
+    public long? Size { get; set; }
+    public int? Width { get; set; }
+    public int? Height { get; set; }
+    public string? CameraMake { get; set; }
+    public string? CameraModel { get; set; }
+    /// <summary>The time as the library gives it (cameras often write their local time, which reads as UTC)</summary>
+    public DateTime TakenAtRaw { get; set; }
+    /// <summary>Minutes the library's time is ahead of the real (UTC) time; 0 when it is UTC</summary>
+    public int ClockOffsetMin { get; set; }
+    /// <summary>When it was taken (UTC): TakenAtRaw minus the offset</summary>
+    public DateTime TakenAt { get; set; }
+    /// <summary>Where the camera says it was taken</summary>
+    public double? Lat { get; set; }
+    public double? Lon { get; set; }
+    public double? Altitude { get; set; }
+    /// <summary>Where it is shown: the camera's position, else a track or visit at its time</summary>
+    public double? MapLat { get; set; }
+    public double? MapLon { get; set; }
+    /// <summary>gps, track, visit; null when nothing says where</summary>
+    public string? PlacedBy { get; set; }
+    /// <summary>The activity (fused one) it was taken during</summary>
+    public Guid? ActivityId { get; set; }
+    /// <summary>The visit it was taken during</summary>
+    public Guid? VisitId { get; set; }
+    /// <summary>Placement is up to date (cleared when the photo or the data at its time changes)</summary>
+    public bool Placed { get; set; }
+    /// <summary>Opens the photo in the library</summary>
+    public string? WebUrl { get; set; }
+    public string? Folder { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

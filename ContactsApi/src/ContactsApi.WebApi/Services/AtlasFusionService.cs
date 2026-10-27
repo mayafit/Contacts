@@ -128,6 +128,16 @@ public class AtlasFusionWorker : BackgroundService
     {
         try
         {
+            // Photos waiting for placement (database only, quick)
+            while (!ct.IsCancellationRequested && !_signal.Pending)
+            {
+                using var scope = _scopes.CreateScope();
+                if (await scope.ServiceProvider.GetRequiredService<AtlasService>().PlacePendingPhotosAsync(500, ct) == 0)
+                {
+                    break;
+                }
+            }
+
             Guid? after = null;
             while (!ct.IsCancellationRequested && !_signal.Pending)
             {
