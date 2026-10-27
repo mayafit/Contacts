@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace ContactsApi.Infrastructure.Atlas.Migrations
 {
     [DbContext(typeof(AtlasDbContext))]
-    [Migration("20261027145819_PlaceIdentity")]
+    [Migration("20261027151918_PlaceIdentity")]
     partial class PlaceIdentity
     {
         /// <inheritdoc />
@@ -318,6 +318,9 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                     b.Property<string>("IdentifyCandidates")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<DateTime?>("IdentifyCheckedAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("IdentifyState")
                         .IsRequired()

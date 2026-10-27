@@ -121,16 +121,23 @@ const useDensity = (
       return undefined;
     }
     let alive = true;
+    // A newer filter cancels the previous load (each is heavy for the server)
+    const abort = new AbortController();
     setLoading(true);
     const t = setTimeout(() => {
       backendApiClient
-        .atlasDensity(JSON.parse(key) as AtlasQuery)
+        .atlasDensity(JSON.parse(key) as AtlasQuery, abort.signal)
         .then((d) => {
           if (alive) {
             setData(d);
           }
         })
         .catch((err) => {
+          if (!alive) {
+            return;
+          }
+          // Not the previous filter's map under the new filters
+          setData(null);
           logger.warn(
             { context: 'AtlasMap/density', metadata: { message: (err as Error)?.message } },
             'Loading the density map failed',
@@ -145,6 +152,7 @@ const useDensity = (
     return () => {
       alive = false;
       clearTimeout(t);
+      abort.abort();
     };
   }, [active, key, reloadKey]);
   return { data, loading };

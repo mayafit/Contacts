@@ -32,6 +32,22 @@ public class PlaceIdentityRuleTests
     }
 
     [Fact]
+    public void A_home_next_to_a_shop_is_not_named_after_it()
+    {
+        var shop = new[] { C("Kiosk", "shop=kiosk", 15) };
+        Assert.Equal("Kiosk", PlaceIdentity.Decide(shop).Choice?.Name);
+        var home = PlaceIdentity.Decide(shop, longStay: true);
+        Assert.Null(home.Choice);
+        Assert.Equal("Kiosk", Assert.Single(home.Options).Name);   // offered, not applied
+    }
+
+    [Fact]
+    public void An_empty_answer_proves_no_single_identity()
+    {
+        Assert.False(PlaceIdentity.SingleIdentity(Array.Empty<LocationCandidate>(), "osm:node/1"));
+    }
+
+    [Fact]
     public void Nothing_nameable_around_is_nothing()
     {
         var d = PlaceIdentity.Decide(new[] { C("Stop", "highway=bus_stop", 5), C("Far", "shop=bakery", 150) });

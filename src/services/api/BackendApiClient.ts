@@ -1008,11 +1008,12 @@ export class BackendApiClient {
    * @param query - The same filters as the search
    * @returns Simplified tracks (newest first) and visits with their hours
    */
-  async atlasDensity(query: AtlasQuery): Promise<DensityData> {
+  async atlasDensity(query: AtlasQuery, signal?: AbortSignal): Promise<DensityData> {
     return unwrap(
       await this.request<DensityData>('/atlas/density', {
         method: 'POST',
         body: JSON.stringify(query),
+        signal,
       }),
       'Loading the density map failed',
     );

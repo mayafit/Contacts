@@ -124,7 +124,7 @@ public partial class AtlasService
             return new List<VisitRow>();
         }
 
-        var vq = FilterVisits(owner, q);
+        var vq = await QueryVisitsAsync(owner, q, ct);
         if (q.From.HasValue)
         {
             var from = Utc(q.From.Value);

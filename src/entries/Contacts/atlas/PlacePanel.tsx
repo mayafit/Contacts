@@ -78,7 +78,7 @@ export interface PlacePanelProps {
    * The visit's place changed (name, address, or a new place): the visit after the change,
    * and the nearby places that got the same identity (their visits show the new name)
    */
-  onChanged: (visit: VisitSummary, alsoPlaceIds?: string[]) => void;
+  onChanged: (visit: VisitSummary, alsoPlaces?: NearbyPlace[]) => void;
   /** Marks a position on the map (a hovered candidate or nearby place); null removes the mark */
   onPreview: (pos: [number, number] | null) => void;
 }
@@ -613,10 +613,7 @@ const PlacePanel: React.FC<PlacePanelProps> = ({
       setApplyOutcome(null);
       setNearby(r.applied.length || r.suggested.length ? r : null);
       setPicked(defaultNearbySelection(r.suggested));
-      onChanged(
-        r.visit,
-        r.applied.map((p) => p.placeId),
-      );
+      onChanged(r.visit, r.applied);
     } catch (e) {
       setSaveError((e as Error).message || 'Saving the place failed');
     } finally {
@@ -729,7 +726,7 @@ const PlacePanel: React.FC<PlacePanelProps> = ({
         applied.length ? alsoNamedText(applied.length) : 'None of them could be named',
       );
       onPreview(null);
-      onChanged(visit, ids);
+      onChanged(visit, applied);
     } catch (e) {
       setSaveError((e as Error).message || 'Naming the nearby places failed');
     } finally {

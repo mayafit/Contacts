@@ -1,4 +1,5 @@
-﻿using Microsoft.EntityFrameworkCore.Migrations;
+﻿using System;
+using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
@@ -25,6 +26,13 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                 nullable: false,
                 defaultValue: "[]");
 
+            migrationBuilder.AddColumn<DateTime>(
+                name: "IdentifyCheckedAt",
+                schema: "atlas",
+                table: "places",
+                type: "timestamp with time zone",
+                nullable: true);
+
             migrationBuilder.AddColumn<string>(
                 name: "IdentifyState",
                 schema: "atlas",
@@ -49,6 +57,11 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
 
             migrationBuilder.DropColumn(
                 name: "IdentifyCandidates",
+                schema: "atlas",
+                table: "places");
+
+            migrationBuilder.DropColumn(
+                name: "IdentifyCheckedAt",
                 schema: "atlas",
                 table: "places");
 

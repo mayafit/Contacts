@@ -252,7 +252,9 @@ public class GeoLookupClient
     /// row: one request per 1.1 s across the app (fair use), cached for a day
     /// </summary>
     /// <exception cref="GeoLookupException">Photon is unavailable or busy</exception>
-    public async Task<List<LocationCandidate>> NearbyQuickAsync(double lat, double lon, double radiusM, CancellationToken ct = default)
+    /// <param name="budget">For a user waiting: the whole call (queue included) within it, else GeoLookupException</param>
+    public async Task<List<LocationCandidate>> NearbyQuickAsync(double lat, double lon, double radiusM, CancellationToken ct = default,
+        TimeSpan? budget = null)
     {
         if (!double.IsFinite(lat) || !double.IsFinite(lon))
         {
@@ -265,31 +267,50 @@ public class GeoLookupClient
             return hit.Value;
         }
 
-        await QuickGate.WaitAsync(ct);
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        if (budget.HasValue)
+        {
+            limit.CancelAfter(budget.Value);
+        }
+
+        try
+        {
+            await QuickGate.WaitAsync(limit.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            throw new GeoLookupException("Nearby lookups are busy");
+        }
+
         try
         {
             var wait = _lastQuick.AddSeconds(1.1) - DateTime.UtcNow;
             if (wait > TimeSpan.Zero)
             {
-                await Task.Delay(wait, ct);
+                await Task.Delay(wait, limit.Token);
             }
 
             List<LocationCandidate> found;
             try
             {
-                found = await PhotonAsync(lat, lon, radiusM, ct);
+                found = await PhotonAsync(lat, lon, radiusM, limit.Token);
             }
             catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException && !ct.IsCancellationRequested)
             {
                 throw new GeoLookupException("Photon is unavailable", ex);
             }
 
-            if (QuickCache.Count > 5000)
+            // An empty answer may be an outage or index lag: not kept
+            if (found.Count > 0)
             {
-                QuickCache.Clear();
+                if (QuickCache.Count > 5000)
+                {
+                    QuickCache.Clear();
+                }
+
+                QuickCache[key] = (DateTime.UtcNow, found);
             }
 
-            QuickCache[key] = (DateTime.UtcNow, found);
             return found;
         }
         finally

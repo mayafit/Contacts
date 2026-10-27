@@ -316,6 +316,9 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<DateTime?>("IdentifyCheckedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("IdentifyState")
                         .IsRequired()
                         .HasColumnType("text");

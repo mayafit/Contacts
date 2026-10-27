@@ -158,7 +158,7 @@ public partial class AtlasService
                 place.Name = incoming;
             }
             // A real name needs no identification
-            if (place.IdentifyState == "pending" && !PlaceIdentity.UnnamedNames.Contains(place.Name))
+            if (place.IdentifyState != "user" && !PlaceIdentity.UnnamedNames.Contains(place.Name))
             {
                 place.IdentifyState = "user";
             }
@@ -375,7 +375,7 @@ public partial class AtlasService
 
         if (q.Visits && !q.ConflictsOnly)
         {
-            var vq = FilterVisits(owner, q);
+            var vq = await QueryVisitsAsync(owner, q, ct);
             if (q.From.HasValue)
             {
                 var from = Utc(q.From.Value);
@@ -435,14 +435,15 @@ public partial class AtlasService
                 var points = DecodePolyline(r.Polyline!);
                 if (points.Count >= 2)
                 {
-                    tracks.Add(new DensityTrack(r.Type, Geo.EncodePolyline(Geo.Simplify(points, 80))));
+                    // ~30 m first: a density line needs no finer detail (and it is per request)
+                    tracks.Add(new DensityTrack(r.Type, Geo.EncodePolyline(Geo.Simplify(points, 80, 0.0003))));
                 }
             }
         }
 
         if (q.Visits && !q.ConflictsOnly)
         {
-            var vq = FilterVisits(owner, q);
+            var vq = await QueryVisitsAsync(owner, q, ct);
             if (q.From.HasValue)
             {
                 var from = Utc(q.From.Value);
@@ -502,22 +503,103 @@ public partial class AtlasService
         return aq;
     }
 
+    /// <summary>
+    /// The owner's visits in the query's area and text (not its time); with activity
+    /// types, only the visits of those trips (see <see cref="TripVisitIdsAsync"/>)
+    /// </summary>
+    private async Task<IQueryable<PlaceVisit>> QueryVisitsAsync(string owner, AtlasQuery q, CancellationToken ct)
+    {
+        var vq = FilterVisits(owner, q);
+        if (q.Types is { Count: > 0 })
+        {
+            var ids = await TripVisitIdsAsync(owner, q, ct);
+            vq = vq.Where(v => ids.Contains(v.Id));
+        }
+
+        return vq;
+    }
+
+    /// <summary>
+    /// The visits made during trips of the query's types: during one (±30 min) and in
+    /// its area (+~300 m). Matched in memory (a sweep over both, sorted by time): as a
+    /// correlated SQL subquery it compares every visit with every trip.
+    /// </summary>
+    private async Task<List<Guid>> TripVisitIdsAsync(string owner, AtlasQuery q, CancellationToken ct)
+    {
+        var trips = FilterActivities(owner, new AtlasQuery { Types = q.Types });
+        if (q.From.HasValue)
+        {
+            var from = Utc(q.From.Value).AddDays(-1);
+            trips = trips.Where(a => a.EndTime >= from);
+        }
+
+        if (q.To.HasValue)
+        {
+            var to = Utc(q.To.Value).AddDays(1);
+            trips = trips.Where(a => a.StartTime <= to);
+        }
+
+        var spans = (await trips.Select(a => new
+            {
+                S = a.Fusion != null ? a.Fusion.StartTime : a.StartTime,
+                E = a.Fusion != null ? a.Fusion.EndTime : a.EndTime,
+                MinLat = a.Fusion != null && a.Fusion.MinLat != null ? a.Fusion.MinLat : a.MinLat,
+                MaxLat = a.Fusion != null && a.Fusion.MaxLat != null ? a.Fusion.MaxLat : a.MaxLat,
+                MinLon = a.Fusion != null && a.Fusion.MinLon != null ? a.Fusion.MinLon : a.MinLon,
+                MaxLon = a.Fusion != null && a.Fusion.MaxLon != null ? a.Fusion.MaxLon : a.MaxLon
+            })
+            .ToListAsync(ct))
+            .Where(t => t.MinLat.HasValue && t.MaxLat.HasValue && t.MinLon.HasValue && t.MaxLon.HasValue)
+            .OrderBy(t => t.S)
+            .ToList();
+        if (spans.Count == 0)
+        {
+            return new List<Guid>();
+        }
+
+        var vq = FilterVisits(owner, q);
+        if (q.From.HasValue)
+        {
+            var from = Utc(q.From.Value);
+            vq = vq.Where(v => v.EndTime >= from);
+        }
+
+        if (q.To.HasValue)
+        {
+            var to = Utc(q.To.Value);
+            vq = vq.Where(v => v.StartTime <= to);
+        }
+
+        var visits = await vq.Select(v => new { v.Id, v.StartTime, v.EndTime, v.Lat, v.Lon }).ToListAsync(ct);
+        var margin = TimeSpan.FromMinutes(30);
+        var longest = spans.Max(t => t.E - t.S);
+        var starts = spans.Select(t => t.S).ToArray();
+        var ids = new List<Guid>();
+        foreach (var v in visits)
+        {
+            // Trips that start before the visit ends; back while they could still reach it
+            var i = Array.BinarySearch(starts, v.EndTime + margin);
+            i = i >= 0 ? i : ~i - 1;
+            for (; i >= 0 && spans[i].S >= v.StartTime - margin - longest; i--)
+            {
+                var t = spans[i];
+                if (t.E >= v.StartTime - margin
+                    && v.Lat >= t.MinLat - 0.003 && v.Lat <= t.MaxLat + 0.003
+                    && v.Lon >= t.MinLon - 0.0035 && v.Lon <= t.MaxLon + 0.0035)
+                {
+                    ids.Add(v.Id);
+                    break;
+                }
+            }
+        }
+
+        return ids;
+    }
+
     /// <summary>The owner's visits in the query's area and text (not its time)</summary>
     private IQueryable<PlaceVisit> FilterVisits(string owner, AtlasQuery q)
     {
         var vq = _db.Visits.AsNoTracking().Where(v => v.OwnerId == owner);
-        if (q.Types is { Count: > 0 })
-        {
-            // Only the visits of those trips: during one (±30 min) and in its area (+~300 m)
-            var trips = FilterActivities(owner, new AtlasQuery { Types = q.Types });
-            vq = vq.Where(v => trips.Any(a =>
-                (a.Fusion != null ? a.Fusion.StartTime : a.StartTime) <= v.EndTime.AddMinutes(30)
-                && (a.Fusion != null ? a.Fusion.EndTime : a.EndTime) >= v.StartTime.AddMinutes(-30)
-                && (a.Fusion != null && a.Fusion.MinLat != null ? a.Fusion.MinLat : a.MinLat) - 0.003 <= v.Lat
-                && (a.Fusion != null && a.Fusion.MaxLat != null ? a.Fusion.MaxLat : a.MaxLat) + 0.003 >= v.Lat
-                && (a.Fusion != null && a.Fusion.MinLon != null ? a.Fusion.MinLon : a.MinLon) - 0.0035 <= v.Lon
-                && (a.Fusion != null && a.Fusion.MaxLon != null ? a.Fusion.MaxLon : a.MaxLon) + 0.0035 >= v.Lon));
-        }
 
         if (HasBox(q))
         {
@@ -751,7 +833,7 @@ public partial class AtlasService
 
         if (filter.Visits && !filter.ConflictsOnly)
         {
-            var starts = await FilterVisits(owner, filter)
+            var starts = await (await QueryVisitsAsync(owner, filter, ct))
                 .Where(v => v.StartTime >= from && v.StartTime <= to)
                 .Select(v => v.StartTime)
                 .ToListAsync(ct);
@@ -917,6 +999,7 @@ public partial class AtlasService
             OwnerId = owner, Source = "manual", Name = Trim(input.Name, 300) ?? "Place", Lat = input.Lat, Lon = input.Lon,
             Address = Trim(input.Address, 500), Category = Trim(input.Category, 100)
         };
+        place.IdentifyState = PlaceIdentity.UnnamedNames.Contains(place.Name) ? "pending" : "user";
         _db.Places.Add(place);
         await _db.SaveChangesAsync(ct);
         return place;

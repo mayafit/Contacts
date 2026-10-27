@@ -738,12 +738,13 @@ const AtlasHome: React.FC = () => {
                   setCursor(null);
                 }}
                 onPreview={setCursor}
-                onChanged={(v, alsoPlaceIds = []) => {
+                onChanged={(v, alsoPlaces = []) => {
                   setVisit(v);
                   // The list and the map show the new name (every visit to the place, and to
                   // the nearby places that got it too), in place: reloading would refit the
                   // map and drop a "here" result set
-                  const also = new Set(alsoPlaceIds);
+                  // Each nearby place with the state the server gave it (auto or user)
+                  const also = new Map(alsoPlaces.map((p) => [p.placeId, p.identifyState]));
                   const named = { placeName: v.placeName, address: v.address };
                   setResult((r) =>
                     r
@@ -759,7 +760,7 @@ const AtlasHome: React.FC = () => {
                               };
                             }
                             if (isSet(x.placeId) && also.has(x.placeId)) {
-                              return { ...x, ...named, identifyState: 'user' };
+                              return { ...x, ...named, identifyState: also.get(x.placeId) };
                             }
                             return x;
                           }),

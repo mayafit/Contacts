@@ -68,14 +68,16 @@ public static class Geo
     /// Douglas–Peucker simplification to at most <paramref name="max"/> points,
     /// tightening the tolerance until it fits.
     /// </summary>
-    public static List<(double Lat, double Lon)> Simplify(IReadOnlyList<(double Lat, double Lon)> points, int max = 400)
+    /// <param name="startTolerance">First tolerance tried, in degrees (~1 m by default; coarser is faster)</param>
+    public static List<(double Lat, double Lon)> Simplify(IReadOnlyList<(double Lat, double Lon)> points, int max = 400,
+        double startTolerance = 0.00001)
     {
         if (points.Count <= max)
         {
             return points.ToList();
         }
 
-        var tolerance = 0.00001; // ~1 m in degrees
+        var tolerance = startTolerance;
         List<(double, double)> result;
         do
         {
