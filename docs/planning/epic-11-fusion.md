@@ -209,7 +209,8 @@ Insights add:
 - **Coordinates:** a selected visit shows them, with a copy button and links to Google Maps and OpenStreetMap.
 - **Identify this location:** `GET /api/atlas/lookup?lat&lon&radius` (MCP `atlas_identify_location`). It asks OpenStreetMap, with no API key needed:
   - **Nominatim:** the street address and the object at the point
-  - **Overpass:** named places within 50–250 m (shops, restaurants, sites, offices, parks, bus stops, buildings), with category, distance, address, website, phone, opening hours, brand, cuisine, operator and Wikipedia
+  - **Photon** (Komoot): the named places nearest the point within 50–250 m, such as shops, restaurants, sites, offices, parks, bus stops and buildings. It answers in about a second and gives name, category and distance.
+  - **Overpass:** adds website, phone, opening hours, brand, cuisine, operator and Wikipedia, when it answers within 20 s. The public instances are often at capacity, and from the Pi they rarely answer.
   - **Usage policy:** one Nominatim request per second with an identifying User-Agent, answers cached for a day, and partial results when one service fails. The results show "© OpenStreetMap contributors".
 - **Associate:** `POST /api/atlas/visits/{id}/place` gives the visit's place the chosen name, address, category, website, phone, opening hours and other details. It also stores a link to the OSM entry (`LinkedRef`, e.g. `osm:node/123`).
   - Every visit to that place shows the new name.
