@@ -69,6 +69,34 @@ public class GeoLookupTests
         Assert.True(found.Zip(found.Skip(1)).All(p => p.First.DistanceM <= p.Second.DistanceM));
     }
 
+    // Trimmed from Photon's real answer for the same point
+    private const string PhotonJson = """
+        {"type":"FeatureCollection","features":[
+          {"type":"Feature","properties":{"osm_type":"N","osm_id":2671441002,"osm_key":"amenity","osm_value":"fuel","name":"Dor Alon","city":"Nahal Sorek Regional Council"},
+           "geometry":{"type":"Point","coordinates":[34.860262,31.8105843]}},
+          {"type":"Feature","properties":{"osm_type":"W","osm_id":1192121299,"osm_key":"shop","osm_value":"convenience","name":"אלונית יסודות"},
+           "geometry":{"type":"Point","coordinates":[34.8603441,31.8107615]}},
+          {"type":"Feature","properties":{"osm_type":"N","osm_id":1803053522,"osm_key":"highway","osm_value":"bus_stop","name":"Yesodot Junction East"},
+           "geometry":{"type":"Point","coordinates":[34.8595446,31.8097802]}},
+          {"type":"Feature","properties":{"osm_type":"W","osm_id":1192118916,"osm_key":"junction","osm_value":"yes","name":"צומת יסודות"},
+           "geometry":{"type":"Point","coordinates":[34.8591926,31.8100178]}},
+          {"type":"Feature","properties":{"osm_type":"N","osm_id":9,"osm_key":"shop","osm_value":"bakery","name":"Far away bakery"},
+           "geometry":{"type":"Point","coordinates":[34.90,31.83]}}
+        ]}
+        """;
+
+    [Fact]
+    public void Reads_photon_places_of_a_telling_kind_within_reach()
+    {
+        var found = GeoLookupClient.ParsePhoton(PhotonJson, Lat, Lon, 100);
+        Assert.Equal(new[] { "osm:node/2671441002", "osm:way/1192121299", "osm:node/1803053522" }, found.Select(c => c.Ref));
+        Assert.Equal("Fuel", found[0].Label);
+        Assert.Equal("Convenience", found[1].Label);
+        Assert.Equal("Bus stop", found[2].Label);
+        Assert.Empty(GeoLookupClient.ParsePhoton("""{"features":[]}""", Lat, Lon, 100));
+        Assert.Throws<GeoLookupException>(() => GeoLookupClient.ParsePhoton("busy", Lat, Lon, 100));
+    }
+
     [Fact]
     public void Survives_errors_and_empty_answers()
     {

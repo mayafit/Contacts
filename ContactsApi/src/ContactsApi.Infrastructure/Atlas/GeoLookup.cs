@@ -1,6 +1,6 @@
 /**
  * @fileoverview What is at a point: the street address and named places around it,
- * from OpenStreetMap (Nominatim and Overpass), cached and within their usage policy
+ * from OpenStreetMap (Nominatim, Photon and Overpass), cached and within their usage policy
  * @module ContactsApi.Infrastructure.Atlas
  */
 using System.Collections.Concurrent;
@@ -63,7 +63,10 @@ public class GeoLookupClient
     };
 
     /// <summary>How long nearby places may take in all (the app's proxy allows 100 s)</summary>
-    private static readonly TimeSpan OverpassBudget = TimeSpan.FromSeconds(75);
+    // Only for extra details (phone, website, hours): Photon lists the places quickly
+    private static readonly TimeSpan OverpassBudget = TimeSpan.FromSeconds(20);
+    private const string Photon = "https://photon.komoot.io/reverse";
+    private static readonly SemaphoreSlim PhotonGate = new(2, 2);
     private static readonly TimeSpan CacheFor = TimeSpan.FromDays(1);
     private static readonly ConcurrentDictionary<string, (DateTime At, LocationLookup Value)> Cache = new();
     private static readonly ConcurrentDictionary<string, (DateTime At, (LookupAddress?, LocationCandidate?) Value)> ReverseCache = new();
@@ -113,11 +116,12 @@ public class GeoLookupClient
         LocationCandidate? atPoint = null;
         var nearby = new List<LocationCandidate>();
         var reverse = ReverseCachedAsync(lat, lon, ct);
+        var photon = PhotonAsync(lat, lon, radiusM, ct);
         var around = AroundAsync(lat, lon, radiusM, ct);
-        // Both finish before either is looked at (no unobserved failure)
+        // All finish before any is looked at (no unobserved failure)
         try
         {
-            await Task.WhenAll(reverse, around);
+            await Task.WhenAll(reverse, photon, around);
         }
         catch (Exception) when (!ct.IsCancellationRequested)
         {
@@ -134,14 +138,30 @@ public class GeoLookupClient
             errors.Add("The address lookup is unavailable right now.");
         }
 
+        // Photon lists the places; Overpass, when it answers, adds phone, website and hours
+        var byRef = new Dictionary<string, LocationCandidate>();
+        if (photon.IsCompletedSuccessfully)
+        {
+            foreach (var c in photon.Result)
+            {
+                byRef[c.Ref] = c;
+            }
+        }
+
         if (around.IsCompletedSuccessfully)
         {
-            nearby = around.Result;
+            foreach (var c in around.Result)
+            {
+                byRef[c.Ref] = c;
+            }
         }
-        else
+
+        if (!photon.IsCompletedSuccessfully && !around.IsCompletedSuccessfully)
         {
             errors.Add("Nearby places are unavailable right now.");
         }
+
+        nearby = byRef.Values.ToList();
 
         if (atPoint != null && nearby.All(c => c.Ref != atPoint.Ref))
         {
@@ -208,6 +228,88 @@ public class GeoLookupClient
         }
     }
 
+    /// <summary>The named places nearest to the point (Photon: fast, names and kinds only)</summary>
+    private async Task<List<LocationCandidate>> PhotonAsync(double lat, double lon, double radiusM, CancellationToken ct)
+    {
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        limit.CancelAfter(TimeSpan.FromSeconds(15));
+        var url = string.Create(CultureInfo.InvariantCulture,
+            $"{Photon}?lat={lat:F6}&lon={lon:F6}&limit=25&radius={radiusM / 1000:F3}&lang=en");
+        await PhotonGate.WaitAsync(limit.Token);
+        try
+        {
+            return ParsePhoton(await GetAsync(new HttpRequestMessage(HttpMethod.Get, url), limit.Token), lat, lon, radiusM);
+        }
+        finally
+        {
+            PhotonGate.Release();
+        }
+    }
+
+    /// <summary>Photon's answer: named places of a telling kind within the radius, nearest first</summary>
+    internal static List<LocationCandidate> ParsePhoton(string json, double lat, double lon, double radiusM)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("features", out var features) || features.ValueKind != JsonValueKind.Array)
+            {
+                return new List<LocationCandidate>();
+            }
+
+            var found = new List<LocationCandidate>();
+            foreach (var f in features.EnumerateArray())
+            {
+                if (!f.TryGetProperty("properties", out var p) || p.ValueKind != JsonValueKind.Object
+                    || !f.TryGetProperty("geometry", out var g) || !g.TryGetProperty("coordinates", out var xy)
+                    || xy.ValueKind != JsonValueKind.Array || xy.GetArrayLength() < 2
+                    || !xy[0].TryGetDouble(out var plon) || !xy[1].TryGetDouble(out var plat))
+                {
+                    continue;
+                }
+
+                var type = Str(p, "osm_type") switch { "N" => "node", "W" => "way", "R" => "relation", _ => null };
+                var key = Str(p, "osm_key");
+                var value = Str(p, "osm_value");
+                var name = Str(p, "name");
+                // Places of a telling kind (and bus stops); not streets, junctions or areas
+                if (type == null || !p.TryGetProperty("osm_id", out var idEl) || !idEl.TryGetInt64(out var id)
+                    || key == null || value == null || string.IsNullOrWhiteSpace(name)
+                    || !(KindKeys.Contains(key) || (key == "highway" && value == "bus_stop")) || key is "place" or "landuse")
+                {
+                    continue;
+                }
+
+                var tags = new Dictionary<string, string> { [key] = value, ["name"] = name };
+                var street = Str(p, "street");
+                if (street != null)
+                {
+                    tags["addr:street"] = street;
+                    if (Str(p, "housenumber") is { } number)
+                    {
+                        tags["addr:housenumber"] = number;
+                    }
+
+                    if (Str(p, "city") is { } city)
+                    {
+                        tags["addr:city"] = city;
+                    }
+                }
+
+                if (Candidate(type, id, tags, plat, plon, lat, lon) is { } c && c.DistanceM <= radiusM * 1.5)
+                {
+                    found.Add(c);
+                }
+            }
+
+            return found.OrderBy(c => c.DistanceM).ToList();
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
+        {
+            throw new GeoLookupException("The nearby-places lookup answered nonsense", ex);
+        }
+    }
+
     private async Task<List<LocationCandidate>> AroundAsync(double lat, double lon, double radiusM, CancellationToken ct)
     {
         var keys = string.Join("|", KindKeys);
@@ -229,7 +331,7 @@ public class GeoLookupClient
             // else the next one; at most four attempts, and an instance that said it is
             // full is left alone for a minute (retrying would only make it worse)
             Exception? last = null;
-            for (var attempt = 0; attempt < 4 && Left() > TimeSpan.FromSeconds(5); attempt++)
+            for (var attempt = 0; attempt < 2 && Left() > TimeSpan.FromSeconds(5); attempt++)
             {
                 var url = Overpass.Select((u, i) => Overpass[(attempt + i) % Overpass.Length])
                     .FirstOrDefault(u => !BusyUntil.TryGetValue(u, out var until) || until < DateTime.UtcNow);
