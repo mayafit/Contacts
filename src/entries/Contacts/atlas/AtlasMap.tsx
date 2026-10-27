@@ -19,7 +19,16 @@ import {
 import L from 'leaflet';
 import type { LatLngBoundsExpression, LeafletMouseEvent } from 'leaflet';
 import './leaflet.css';
-import type { ActivitySummary, AtlasQuery, DensityData, PointOutput, VisitSummary } from './types';
+import type {
+  ActivitySummary,
+  AtlasQuery,
+  DensityData,
+  PhotoMapData,
+  PhotoSummary,
+  PointOutput,
+  VisitSummary,
+} from './types';
+import { PHOTO_COLOR, spread, takenText } from './photos';
 import { FILTER_COLOR, HEALTH_COLOR, VISIT_COLOR, typeColor, isSet } from './types';
 import { Box } from '@mui/material';
 import AtlasLegend from './AtlasLegend';
@@ -29,8 +38,10 @@ import {
   MAP_STYLES,
   englishLabels,
   loadMapMode,
+  loadMapPhotos,
   loadMapStyle,
   saveMapMode,
+  saveMapPhotos,
   saveMapStyle,
   type MapMode,
   type MapStyle,
@@ -45,7 +56,7 @@ import {
   Tooltip as MuiTooltip,
   Typography,
 } from '@mui/material';
-import { CenterFocusStrong } from '@mui/icons-material';
+import { CenterFocusStrong, PhotoCamera } from '@mui/icons-material';
 import { logger } from '../../../shared/logger';
 import { backendApiClient } from '../../../services/api/BackendApiClient';
 import DensityLayer from './DensityLayer';
@@ -87,6 +98,10 @@ export interface AtlasMapProps {
   query?: AtlasQuery;
   /** Bumped when the data changed (the density map loads again) */
   reloadKey?: number;
+  /** Photos of the open activity or place, shown as thumbnails */
+  photos?: PhotoSummary[];
+  /** Opens the photo viewer on a list at a photo */
+  onOpenPhoto?: (photos: PhotoSummary[], index: number) => void;
 }
 
 /** Waits this long after a filter change before loading the density map (ms) */
@@ -106,13 +121,18 @@ const VisitLabel: React.FC<{ visit: VisitSummary }> = ({ visit }) => {
   return <span>{mark === '?' ? `${name} (?)` : name}</span>;
 };
 
-/** The density map's data for the filters, loaded while in density mode */
-const useDensity = (
+/**
+ * Data for the filters, loaded while a layer is on (the density map, the photos); a
+ * newer filter cancels the previous load
+ */
+const useFiltered = <T,>(
   active: boolean,
   query: AtlasQuery | undefined,
   reloadKey: number,
-): { data: DensityData | null; loading: boolean } => {
-  const [data, setData] = useState<DensityData | null>(null);
+  load: (q: AtlasQuery, signal: AbortSignal) => Promise<T>,
+  what: string,
+): { data: T | null; loading: boolean } => {
+  const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(false);
   const key = JSON.stringify(query ?? {});
   useEffect(() => {
@@ -125,8 +145,7 @@ const useDensity = (
     const abort = new AbortController();
     setLoading(true);
     const t = setTimeout(() => {
-      backendApiClient
-        .atlasDensity(JSON.parse(key) as AtlasQuery, abort.signal)
+      load(JSON.parse(key) as AtlasQuery, abort.signal)
         .then((d) => {
           if (alive) {
             setData(d);
@@ -139,8 +158,8 @@ const useDensity = (
           // Not the previous filter's map under the new filters
           setData(null);
           logger.warn(
-            { context: 'AtlasMap/density', metadata: { message: (err as Error)?.message } },
-            'Loading the density map failed',
+            { context: 'AtlasMap', metadata: { what, message: (err as Error)?.message } },
+            'Loading a map layer failed',
           );
         })
         .finally(() => {
@@ -154,9 +173,43 @@ const useDensity = (
       clearTimeout(t);
       abort.abort();
     };
+    // load and what are fixed per caller
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, key, reloadKey]);
   return { data, loading };
 };
+
+/** The density map's data for the filters, loaded while in density mode */
+const useDensity = (active: boolean, query: AtlasQuery | undefined, reloadKey: number) =>
+  useFiltered<DensityData>(
+    active,
+    query,
+    reloadKey,
+    (q, signal) => backendApiClient.atlasDensity(q, signal),
+    'density',
+  );
+
+/** Photos for the filters, loaded while the photos layer is on */
+const usePhotoLayer = (active: boolean, query: AtlasQuery | undefined, reloadKey: number) =>
+  useFiltered<PhotoMapData>(
+    active,
+    query,
+    reloadKey,
+    (q, signal) => backendApiClient.atlasMapPhotos(q, signal),
+    'photos',
+  );
+
+/** Thumbnails on the map for the open activity or place, at most this many */
+const PHOTO_PINS = 40;
+
+/** A photo's thumbnail as a map pin */
+const photoPin = (p: PhotoSummary): L.DivIcon =>
+  L.divIcon({
+    className: 'atlas-photo-pin',
+    html: `<img src="${backendApiClient.atlasPhotoUrl(p.id, 'small')}" alt="" loading="lazy" style="width:34px;height:34px;object-fit:cover;border-radius:6px;border:2px solid ${PHOTO_COLOR};box-shadow:0 1px 4px rgba(0,0,0,.5);display:block" />`,
+    iconSize: [34, 34],
+    iconAnchor: [17, 17],
+  });
 
 /** The small permanent label at the area filter's top-left corner */
 const AREA_LABEL = L.divIcon({
@@ -396,11 +449,20 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
   focusArea = 0,
   query,
   reloadKey = 0,
+  photos,
+  onOpenPhoto,
 }) => {
   const [mapStyle, setMapStyle] = useState<MapStyle>(loadMapStyle);
   const [mode, setMode] = useState<MapMode>(loadMapMode);
   const density = mode === 'density';
   const { data: densityData, loading: densityLoading } = useDensity(density, query, reloadKey);
+  const [photoLayer, setPhotoLayer] = useState(loadMapPhotos);
+  const { data: layerPhotos, loading: photosLoading } = usePhotoLayer(photoLayer, query, reloadKey);
+  // The open activity's or place's photos that have a position, a few spread over its time
+  const pins = useMemo(() => {
+    const placed = (photos ?? []).filter((p) => isSet(p.lat) && isSet(p.lon));
+    return spread(placed, PHOTO_PINS).map((p) => ({ p, index: (photos ?? []).indexOf(p) }));
+  }, [photos]);
   // Bumped by the "Show all results" button
   const [fitAll, setFitAll] = useState(0);
   const styleDef = MAP_STYLES.find((m) => m.value === mapStyle) ?? MAP_STYLES[0];
@@ -546,6 +608,35 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
               </Tooltip>
             </CircleMarker>
           ))}
+        {photoLayer &&
+          layerPhotos?.photos.map((p, i) =>
+            isSet(p.lat) && isSet(p.lon) ? (
+              <CircleMarker
+                key={p.id}
+                center={[p.lat, p.lon]}
+                radius={4}
+                pathOptions={{
+                  color: '#0e1116',
+                  weight: 1,
+                  fillColor: PHOTO_COLOR,
+                  fillOpacity: 0.9,
+                }}
+                eventHandlers={{ click: () => onOpenPhoto?.(layerPhotos.photos, i) }}
+              >
+                <Tooltip>{takenText(p.takenAt)}</Tooltip>
+              </CircleMarker>
+            ) : null,
+          )}
+        {pins.map(({ p, index }) => (
+          <Marker
+            key={`pin-${p.id}`}
+            position={[p.lat!, p.lon!]}
+            icon={photoPin(p)}
+            eventHandlers={{ click: () => onOpenPhoto?.(photos ?? [], index) }}
+          >
+            <Tooltip>{takenText(p.takenAt)}</Tooltip>
+          </Marker>
+        ))}
         {cursor && (
           <CircleMarker
             center={cursor}
@@ -587,9 +678,41 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
           gap: 1,
         }}
       >
-        {density && densityLoading && (
-          <CircularProgress size={16} aria-label="Loading the density map" />
+        {((density && densityLoading) || (photoLayer && photosLoading)) && (
+          <CircularProgress size={16} aria-label="Loading the map" />
         )}
+        <MuiTooltip
+          title={
+            photoLayer
+              ? layerPhotos?.truncated
+                ? `Showing the newest ${layerPhotos.photos.length.toLocaleString()} photos · click to hide`
+                : 'Hide photos'
+              : 'Show the photos taken in the filters (OneDrive)'
+          }
+        >
+          <ToggleButton
+            size="small"
+            value="photos"
+            selected={photoLayer}
+            aria-label="Photos on the map"
+            onChange={() => {
+              saveMapPhotos(!photoLayer);
+              setPhotoLayer(!photoLayer);
+            }}
+            sx={{
+              bgcolor: 'rgba(14, 17, 22, 0.85)',
+              py: 0.4,
+              px: 1,
+              fontSize: 13,
+              textTransform: 'none',
+              gap: 0.5,
+              '&.Mui-selected': { color: PHOTO_COLOR },
+            }}
+          >
+            <PhotoCamera sx={{ fontSize: 16 }} />
+            Photos
+          </ToggleButton>
+        </MuiTooltip>
         <ToggleButtonGroup
           size="small"
           exclusive

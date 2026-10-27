@@ -37,6 +37,7 @@ import {
 } from '@mui/icons-material';
 import { backendApiClient } from '../../../services/api/BackendApiClient';
 import type {
+  PhotoSummary,
   LocationCandidate,
   LocationLookup,
   LookupAddress,
@@ -65,6 +66,7 @@ import {
   telUrl,
 } from './placeText';
 import PanelSection from './PanelSection';
+import PhotoStrip from './PhotoStrip';
 import { tokens } from '../theme/contactsTheme';
 
 /** Props for PlacePanel */
@@ -81,6 +83,10 @@ export interface PlacePanelProps {
   onChanged: (visit: VisitSummary, alsoPlaces?: NearbyPlace[]) => void;
   /** Marks a position on the map (a hovered candidate or nearby place); null removes the mark */
   onPreview: (pos: [number, number] | null) => void;
+  /** Photos taken during visits here (OneDrive) */
+  photos?: PhotoSummary[];
+  /** Opens the viewer at one of the photos */
+  onOpenPhoto?: (index: number) => void;
 }
 
 /** Search radii of the lookup (meters) */
@@ -516,6 +522,8 @@ const PlacePanel: React.FC<PlacePanelProps> = ({
   onShowEverything,
   onChanged,
   onPreview,
+  photos,
+  onOpenPhoto,
 }) => {
   const [place, setPlace] = useState<PlaceDetail | null>(null);
   const [placeError, setPlaceError] = useState<string | null>(null);
@@ -949,6 +957,12 @@ const PlacePanel: React.FC<PlacePanelProps> = ({
           Identify this location
         </Button>
       </Box>
+
+      {photos && photos.length > 0 && onOpenPhoto && (
+        <PanelSection title="Photos" hint={photos.length}>
+          <PhotoStrip photos={photos} onOpen={onOpenPhoto} />
+        </PanelSection>
+      )}
 
       {place && (
         <PanelSection

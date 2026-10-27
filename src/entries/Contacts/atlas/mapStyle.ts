@@ -127,3 +127,24 @@ export const saveMapMode = (mode: MapMode): void => {
     // blocked storage: the choice lasts for this visit
   }
 };
+
+/** Where the photos toggle is kept */
+const PHOTOS_KEY = 'atlas.mapPhotos';
+
+/** Whether the map shows all photos (remembered in this browser) */
+export const loadMapPhotos = (): boolean => {
+  try {
+    return localStorage.getItem(PHOTOS_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
+
+/** Remembers the photos toggle in this browser */
+export const saveMapPhotos = (on: boolean): void => {
+  try {
+    localStorage.setItem(PHOTOS_KEY, on ? '1' : '0');
+  } catch {
+    // blocked storage: the choice lasts for this visit
+  }
+};

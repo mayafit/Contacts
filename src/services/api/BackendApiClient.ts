@@ -13,6 +13,9 @@ import type {
   AtlasQuery,
   AtlasSummary,
   DensityData,
+  OneDriveStatus,
+  PhotoMapData,
+  PhotoSummary,
   FusionSettings,
   FusionStatus,
   HistogramRow,
@@ -1017,6 +1020,79 @@ export class BackendApiClient {
       }),
       'Loading the density map failed',
     );
+  }
+
+  /** The OneDrive connection and how many photos are known */
+  async atlasOneDrive(): Promise<OneDriveStatus> {
+    return unwrap(
+      await this.request<OneDriveStatus>('/atlas/connections/onedrive'),
+      'Loading the OneDrive connection failed',
+    );
+  }
+
+  /**
+   * Starts connecting OneDrive: the browser goes to Microsoft's sign-in and comes back
+   * to /atlas?onedrive=connected (or ?onedrive=error&reason=…).
+   */
+  async atlasConnectOneDrive(): Promise<void> {
+    const { url } = unwrap(
+      await this.request<{ url: string }>('/atlas/connections/onedrive/start', { method: 'POST' }),
+      'Connecting OneDrive failed',
+    );
+    window.location.href = url;
+  }
+
+  /** Syncs OneDrive again (what changed since the last sync) */
+  async atlasSyncOneDrive(): Promise<OneDriveStatus> {
+    return unwrap(
+      await this.request<OneDriveStatus>('/atlas/connections/onedrive/sync', { method: 'POST' }),
+      'Syncing OneDrive failed',
+    );
+  }
+
+  /** Disconnects OneDrive and forgets its photos' details (the photos stay in OneDrive) */
+  async atlasDisconnectOneDrive(): Promise<void> {
+    unwrap(
+      await this.request<{ removed: boolean }>('/atlas/connections/onedrive', { method: 'DELETE' }),
+      'Disconnecting OneDrive failed',
+    );
+  }
+
+  /** Photos taken during an activity, in time order */
+  async atlasActivityPhotos(id: string): Promise<PhotoSummary[]> {
+    return unwrap(
+      await this.request<PhotoSummary[]>(`/atlas/activities/${id}/photos`),
+      'Loading the photos failed',
+    );
+  }
+
+  /** Photos taken during visits to a place, newest first */
+  async atlasPlacePhotos(id: string): Promise<PhotoSummary[]> {
+    return unwrap(
+      await this.request<PhotoSummary[]>(`/atlas/places/${id}/photos`),
+      'Loading the photos failed',
+    );
+  }
+
+  /** Photos for the map, with the search's time, area and activity types */
+  async atlasMapPhotos(query: AtlasQuery, signal?: AbortSignal): Promise<PhotoMapData> {
+    return unwrap(
+      await this.request<PhotoMapData>('/atlas/photos/map', {
+        method: 'POST',
+        body: JSON.stringify(query),
+        signal,
+      }),
+      'Loading the photos failed',
+    );
+  }
+
+  /**
+   * Address of a photo's thumbnail (the server fetches it from OneDrive).
+   * @param id - Photo id
+   * @param size - small (96 px), medium (176), large (800)
+   */
+  atlasPhotoUrl(id: string, size: 'small' | 'medium' | 'large' = 'medium'): string {
+    return `${this.baseUrl}/atlas/photos/${id}/thumbnail?size=${size}`;
   }
 
   /** Deletes an import and what it brought in */
