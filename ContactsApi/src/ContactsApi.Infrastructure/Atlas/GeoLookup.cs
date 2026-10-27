@@ -62,7 +62,7 @@ public class GeoLookupClient
         "https://overpass.kumi.systems/api/interpreter"
     };
 
-    /// <summary>How long nearby places may take in all (the app's proxy allows 100 s)</summary>
+    /// <summary>How long Overpass may take to add details (its instances are often at capacity)</summary>
     // Only for extra details (phone, website, hours): Photon lists the places quickly
     private static readonly TimeSpan OverpassBudget = TimeSpan.FromSeconds(20);
     private const string Photon = "https://photon.komoot.io/reverse";
@@ -148,6 +148,12 @@ public class GeoLookupClient
             }
         }
 
+        // Nominatim's object at the point carries its extra tags: over Photon's, under Overpass's
+        if (reverse.IsCompletedSuccessfully && reverse.Result.Item2 is { } point)
+        {
+            byRef[point.Ref] = point;
+        }
+
         if (around.IsCompletedSuccessfully)
         {
             foreach (var c in around.Result)
@@ -176,7 +182,8 @@ public class GeoLookupClient
                 Cache.Clear();
             }
 
-            Cache[key] = (DateTime.UtcNow, result);
+            // Without Overpass's details (phone, website, hours) only ten minutes: it may answer later
+            Cache[key] = (around.IsCompletedSuccessfully ? DateTime.UtcNow : DateTime.UtcNow - CacheFor + TimeSpan.FromMinutes(10), result);
         }
 
         return result;
@@ -234,7 +241,7 @@ public class GeoLookupClient
         using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
         limit.CancelAfter(TimeSpan.FromSeconds(15));
         var url = string.Create(CultureInfo.InvariantCulture,
-            $"{Photon}?lat={lat:F6}&lon={lon:F6}&limit=25&radius={radiusM / 1000:F3}&lang=en");
+            $"{Photon}?lat={lat:F6}&lon={lon:F6}&limit=50&radius={radiusM / 1000:F3}&lang=en&osm_tag=!place&osm_tag=!boundary&osm_tag=!landuse");
         await PhotonGate.WaitAsync(limit.Token);
         try
         {
@@ -260,9 +267,12 @@ public class GeoLookupClient
             var found = new List<LocationCandidate>();
             foreach (var f in features.EnumerateArray())
             {
-                if (!f.TryGetProperty("properties", out var p) || p.ValueKind != JsonValueKind.Object
-                    || !f.TryGetProperty("geometry", out var g) || !g.TryGetProperty("coordinates", out var xy)
+                if (f.ValueKind != JsonValueKind.Object
+                    || !f.TryGetProperty("properties", out var p) || p.ValueKind != JsonValueKind.Object
+                    || !f.TryGetProperty("geometry", out var g) || g.ValueKind != JsonValueKind.Object
+                    || !g.TryGetProperty("coordinates", out var xy)
                     || xy.ValueKind != JsonValueKind.Array || xy.GetArrayLength() < 2
+                    || xy[0].ValueKind != JsonValueKind.Number || xy[1].ValueKind != JsonValueKind.Number
                     || !xy[0].TryGetDouble(out var plon) || !xy[1].TryGetDouble(out var plat))
                 {
                     continue;
@@ -273,7 +283,8 @@ public class GeoLookupClient
                 var value = Str(p, "osm_value");
                 var name = Str(p, "name");
                 // Places of a telling kind (and bus stops); not streets, junctions or areas
-                if (type == null || !p.TryGetProperty("osm_id", out var idEl) || !idEl.TryGetInt64(out var id)
+                if (type == null || !p.TryGetProperty("osm_id", out var idEl) || idEl.ValueKind != JsonValueKind.Number
+                    || !idEl.TryGetInt64(out var id)
                     || key == null || value == null || string.IsNullOrWhiteSpace(name)
                     || !(KindKeys.Contains(key) || (key == "highway" && value == "bus_stop")) || key is "place" or "landuse")
                 {
@@ -328,7 +339,7 @@ public class GeoLookupClient
         try
         {
             // A busy instance answers 502/504/429 or keeps the request queued: wait for it,
-            // else the next one; at most four attempts, and an instance that said it is
+            // else the next one; at most two attempts, and an instance that said it is
             // full is left alone for a minute (retrying would only make it worse)
             Exception? last = null;
             for (var attempt = 0; attempt < 2 && Left() > TimeSpan.FromSeconds(5); attempt++)
