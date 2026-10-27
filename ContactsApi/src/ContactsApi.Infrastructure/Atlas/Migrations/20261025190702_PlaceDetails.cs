@@ -39,6 +39,14 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                 type: "text",
                 nullable: true);
 
+            migrationBuilder.AddColumn<bool>(
+                name: "UserEdited",
+                schema: "atlas",
+                table: "places",
+                type: "boolean",
+                nullable: false,
+                defaultValue: false);
+
             migrationBuilder.AddColumn<string>(
                 name: "Website",
                 schema: "atlas",
@@ -67,6 +75,11 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
 
             migrationBuilder.DropColumn(
                 name: "Phone",
+                schema: "atlas",
+                table: "places");
+
+            migrationBuilder.DropColumn(
+                name: "UserEdited",
                 schema: "atlas",
                 table: "places");
 

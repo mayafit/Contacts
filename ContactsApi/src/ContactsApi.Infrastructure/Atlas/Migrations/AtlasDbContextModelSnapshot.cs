@@ -347,6 +347,9 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<bool>("UserEdited")
+                        .HasColumnType("boolean");
+
                     b.Property<string>("Website")
                         .HasColumnType("text");
 

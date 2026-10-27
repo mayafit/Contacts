@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace ContactsApi.Infrastructure.Atlas.Migrations
 {
     [DbContext(typeof(AtlasDbContext))]
-    [Migration("20261025182031_PlaceDetails")]
+    [Migration("20261025190702_PlaceDetails")]
     partial class PlaceDetails
     {
         /// <inheritdoc />
@@ -349,6 +349,9 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
 
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("UserEdited")
+                        .HasColumnType("boolean");
 
                     b.Property<string>("Website")
                         .HasColumnType("text");

@@ -159,8 +159,13 @@ public partial class AtlasService
             }
             place.Lat = p.Lat;
             place.Lon = p.Lon;
-            place.Address = Trim(p.Address, 500) ?? place.Address;
-            place.Category = Trim(p.Category, 100) ?? place.Category;
+            // What the user said the place is wins over a later import
+            if (!place.UserEdited)
+            {
+                place.Address = Trim(p.Address, 500) ?? place.Address;
+                place.Category = Trim(p.Category, 100) ?? place.Category;
+            }
+
             place.GooglePlaceId = p.GooglePlaceId ?? place.GooglePlaceId;
             place.UpdatedAt = DateTime.UtcNow;
             placeIds[key] = place.Id;
@@ -845,6 +850,7 @@ public partial class AtlasService
         p.Website = patch.Website != null ? Trim(patch.Website, 500) : p.Website;
         p.Phone = patch.Phone != null ? Trim(patch.Phone, 100) : p.Phone;
         p.OpeningHours = patch.OpeningHours != null ? Trim(patch.OpeningHours, 500) : p.OpeningHours;
+        p.UserEdited = true;
         p.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
         return p;
@@ -903,7 +909,9 @@ public partial class AtlasService
         place.Details = System.Text.Json.JsonSerializer.Serialize((input.Details ?? new())
             .Where(d => !string.IsNullOrWhiteSpace(d.Key) && d.Value != null)
             .Take(40)
-            .ToDictionary(d => d.Key.Length > 60 ? d.Key[..60] : d.Key, d => d.Value.Length > 500 ? d.Value[..500] : d.Value));
+            .GroupBy(d => d.Key.Length > 60 ? d.Key[..60] : d.Key)
+            .ToDictionary(g => g.Key, g => g.First().Value.Length > 500 ? g.First().Value[..500] : g.First().Value));
+        place.UserEdited = true;
         place.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
 

@@ -52,7 +52,10 @@ public class GeoLookupClient
     private const string Overpass = "https://overpass-api.de/api/interpreter";
     private static readonly TimeSpan CacheFor = TimeSpan.FromDays(1);
     private static readonly ConcurrentDictionary<string, (DateTime At, LocationLookup Value)> Cache = new();
+    private static readonly ConcurrentDictionary<string, (DateTime At, (LookupAddress?, LocationCandidate?) Value)> ReverseCache = new();
     private static readonly SemaphoreSlim NominatimGate = new(1, 1);
+    // Overpass is shared too: at most two requests at a time from this app
+    private static readonly SemaphoreSlim OverpassGate = new(2, 2);
     private static DateTime _lastNominatim = DateTime.MinValue;
 
     /// <summary>The keys that say what a place is, most telling first</summary>
@@ -77,12 +80,12 @@ public class GeoLookupClient
     /// <summary>The address at a point and the named places within <paramref name="radiusM"/>, nearest first</summary>
     public async Task<LocationLookup> LookupAsync(double lat, double lon, double radiusM = 80, CancellationToken ct = default)
     {
-        if (lat is < -90 or > 90 || lon is < -180 or > 180)
+        if (!double.IsFinite(lat) || !double.IsFinite(lon) || lat is < -90 or > 90 || lon is < -180 or > 180)
         {
             throw new ArgumentException("Coordinates out of range");
         }
 
-        radiusM = Math.Clamp(radiusM, 20, 300);
+        radiusM = double.IsFinite(radiusM) ? Math.Clamp(radiusM, 20, 300) : 80;
         var key = string.Create(CultureInfo.InvariantCulture, $"{lat:F5},{lon:F5},{radiusM:F0}");
         if (Cache.TryGetValue(key, out var hit) && DateTime.UtcNow - hit.At < CacheFor)
         {
@@ -93,22 +96,33 @@ public class GeoLookupClient
         LookupAddress? address = null;
         LocationCandidate? atPoint = null;
         var nearby = new List<LocationCandidate>();
-        var reverse = ReverseAsync(lat, lon, ct);
+        var reverse = ReverseCachedAsync(lat, lon, ct);
         var around = AroundAsync(lat, lon, radiusM, ct);
+        // Both finish before either is looked at (no unobserved failure)
         try
         {
-            (address, atPoint) = await reverse;
+            await Task.WhenAll(reverse, around);
         }
-        catch (Exception ex) when (ex is HttpRequestException or GeoLookupException or TaskCanceledException && !ct.IsCancellationRequested)
+        catch (Exception) when (!ct.IsCancellationRequested)
+        {
+            // each one below
+        }
+
+        ct.ThrowIfCancellationRequested();
+        if (reverse.IsCompletedSuccessfully)
+        {
+            (address, atPoint) = reverse.Result;
+        }
+        else
         {
             errors.Add("The address lookup is unavailable right now.");
         }
 
-        try
+        if (around.IsCompletedSuccessfully)
         {
-            nearby = await around;
+            nearby = around.Result;
         }
-        catch (Exception ex) when (ex is HttpRequestException or GeoLookupException or TaskCanceledException && !ct.IsCancellationRequested)
+        else
         {
             errors.Add("Nearby places are unavailable right now.");
         }
@@ -130,6 +144,25 @@ public class GeoLookupClient
         }
 
         return result;
+    }
+
+    /// <summary>The reverse lookup does not depend on the radius: cached by the point alone</summary>
+    private async Task<(LookupAddress?, LocationCandidate?)> ReverseCachedAsync(double lat, double lon, CancellationToken ct)
+    {
+        var key = string.Create(CultureInfo.InvariantCulture, $"{lat:F5},{lon:F5}");
+        if (ReverseCache.TryGetValue(key, out var hit) && DateTime.UtcNow - hit.At < CacheFor)
+        {
+            return hit.Value;
+        }
+
+        var value = await ReverseAsync(lat, lon, ct);
+        if (ReverseCache.Count > 2000)
+        {
+            ReverseCache.Clear();
+        }
+
+        ReverseCache[key] = (DateTime.UtcNow, value);
+        return value;
     }
 
     private async Task<(LookupAddress?, LocationCandidate?)> ReverseAsync(double lat, double lon, CancellationToken ct)
@@ -165,7 +198,15 @@ public class GeoLookupClient
         {
             Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["data"] = query })
         };
-        return ParseOverpass(await GetAsync(request, ct), lat, lon);
+        await OverpassGate.WaitAsync(ct);
+        try
+        {
+            return ParseOverpass(await GetAsync(request, ct), lat, lon);
+        }
+        finally
+        {
+            OverpassGate.Release();
+        }
     }
 
     private async Task<string> GetAsync(HttpRequestMessage request, CancellationToken ct)
@@ -274,14 +315,19 @@ public class GeoLookupClient
                 }
 
                 var point = e.TryGetProperty("center", out var center) ? center : e;
-                if (!point.TryGetProperty("lat", out var la) || !point.TryGetProperty("lon", out var lo))
+                if (!point.TryGetProperty("lat", out var la) || !point.TryGetProperty("lon", out var lo)
+                    || !la.TryGetDouble(out var plat) || !lo.TryGetDouble(out var plon))
                 {
                     continue;
                 }
 
-                var tags = t.EnumerateObject().Where(p => p.Value.ValueKind == JsonValueKind.String)
-                    .ToDictionary(p => p.Name, p => p.Value.GetString()!);
-                if (Candidate(type, id, tags, la.GetDouble(), lo.GetDouble(), lat, lon) is { } c)
+                var tags = new Dictionary<string, string>();
+                foreach (var p in t.EnumerateObject().Where(p => p.Value.ValueKind == JsonValueKind.String))
+                {
+                    tags.TryAdd(p.Name, p.Value.GetString()!);
+                }
+
+                if (Candidate(type, id, tags, plat, plon, lat, lon) is { } c)
                 {
                     found.Add(c);
                 }

@@ -105,6 +105,8 @@ public class AtlasPlace : ISourced
     public string? OpeningHours { get; set; }
     /// <summary>JSON object: whatever else was found (cuisine, brand, wikipedia…)</summary>
     public string Details { get; set; } = "{}";
+    /// <summary>The user named or associated it: imports keep its address and category</summary>
+    public bool UserEdited { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

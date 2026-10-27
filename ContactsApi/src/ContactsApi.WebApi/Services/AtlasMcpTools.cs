@@ -37,10 +37,11 @@ public class AtlasMcpTools
     public Task<LocationLookup> IdentifyLocation(
         [Description("Latitude")] double lat,
         [Description("Longitude")] double lon,
-        [Description("Search radius in metres, 20-300 (default 80)")] double radius = 80)
+        [Description("Search radius in metres, 20-300 (default 80)")] double radius = 80,
+        CancellationToken ct = default)
     {
         _ = Owner;
-        return _geo.LookupAsync(lat, lon, radius);
+        return _geo.LookupAsync(lat, lon, radius, ct);
     }
 
     [McpServerTool(Name = "atlas_get_place"), Description("A place with everything known about it (address, category, linked real-world location, website, phone, opening hours, other details) and its visits (count, first, last, hours spent).")]

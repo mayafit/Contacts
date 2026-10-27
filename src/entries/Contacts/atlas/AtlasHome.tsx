@@ -738,8 +738,25 @@ const AtlasHome: React.FC = () => {
                 onPreview={setCursor}
                 onChanged={(v) => {
                   setVisit(v);
-                  // The list and the map show the new name (every visit to the place)
-                  setReloadKey((k) => k + 1);
+                  // The list and the map show the new name (every visit to the place), in
+                  // place: reloading would refit the map and drop a "here" result set
+                  setResult((r) =>
+                    r
+                      ? {
+                          ...r,
+                          visits: r.visits.map((x) =>
+                            x.id === v.id || (isSet(v.placeId) && x.placeId === v.placeId)
+                              ? {
+                                  ...x,
+                                  placeId: v.placeId,
+                                  placeName: v.placeName,
+                                  address: v.address,
+                                }
+                              : x,
+                          ),
+                        }
+                      : r,
+                  );
                 }}
                 onShowEverything={async () => {
                   try {

@@ -526,6 +526,9 @@ export const atlasToolset = (ui: AtlasUi): Toolset => ({
       }
       case 'atlas_identify_location': {
         const radius = Number(args.radius);
+        if (!Number.isFinite(Number(args.lat)) || !Number.isFinite(Number(args.lon))) {
+          return { error: 'lat and lon are required numbers' };
+        }
         const r = await backendApiClient.atlasLookup(
           Number(args.lat),
           Number(args.lon),

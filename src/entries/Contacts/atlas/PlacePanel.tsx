@@ -261,6 +261,8 @@ const CandidateRow: React.FC<{
     <Box
       onMouseEnter={() => onPreview([c.lat, c.lon])}
       onMouseLeave={() => onPreview(null)}
+      onFocus={() => onPreview([c.lat, c.lon])}
+      onBlur={() => onPreview(null)}
       sx={{ py: 0.75, borderBottom: `1px solid ${tokens.border}` }}
     >
       <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.5 }}>
@@ -315,7 +317,13 @@ const CandidateRow: React.FC<{
           </Tooltip>
         )}
         {!confirming && (
-          <Button size="small" disabled={busy} onClick={onPick} sx={{ flexShrink: 0 }}>
+          <Button
+            size="small"
+            disabled={busy}
+            onClick={onPick}
+            aria-label={`This is ${c.name}`}
+            sx={{ flexShrink: 0 }}
+          >
             This is it
           </Button>
         )}
@@ -383,6 +391,7 @@ const PlacePanel: React.FC<PlacePanelProps> = ({
   onPreview,
 }) => {
   const [place, setPlace] = useState<PlaceDetail | null>(null);
+  const [placeError, setPlaceError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -398,6 +407,7 @@ const PlacePanel: React.FC<PlacePanelProps> = ({
   // The place's details (again when the visit gets another place)
   const placeId = visit.placeId ?? null;
   useEffect(() => {
+    setPlaceError(null);
     if (!placeId) {
       setPlace(null);
       return undefined;
@@ -406,7 +416,12 @@ const PlacePanel: React.FC<PlacePanelProps> = ({
     backendApiClient
       .atlasPlace(placeId)
       .then((p) => alive && setPlace(p))
-      .catch(() => alive && setPlace(null));
+      .catch((e: Error) => {
+        if (alive) {
+          setPlace(null);
+          setPlaceError(e.message || 'Loading the place failed');
+        }
+      });
     return () => {
       alive = false;
     };
@@ -428,6 +443,7 @@ const PlacePanel: React.FC<PlacePanelProps> = ({
       setLookingUp(true);
       setLookupError(null);
       setConfirming(null);
+      onPreview(null);
       try {
         const res = await backendApiClient.atlasLookup(visit.lat, visit.lon, r);
         if (n === lookupSeq.current) {
@@ -435,6 +451,7 @@ const PlacePanel: React.FC<PlacePanelProps> = ({
         }
       } catch (e) {
         if (n === lookupSeq.current) {
+          setLookup(null);
           setLookupError((e as Error).message || 'Looking up the location failed');
         }
       } finally {
@@ -443,7 +460,7 @@ const PlacePanel: React.FC<PlacePanelProps> = ({
         }
       }
     },
-    [visit.lat, visit.lon],
+    [visit.lat, visit.lon, onPreview],
   );
 
   /** Names the visit's place / associates it (creates a place when the visit has none) */
@@ -480,6 +497,9 @@ const PlacePanel: React.FC<PlacePanelProps> = ({
     }
   };
 
+  // With a place, changes wait for its details: a save without them would replace its link
+  const placeReady = !placeId || place !== null;
+  const locked = busy || !placeReady;
   const name = place?.name ?? visit.placeName ?? '';
   const address = place?.address ?? visit.address ?? null;
 
@@ -547,6 +567,7 @@ const PlacePanel: React.FC<PlacePanelProps> = ({
         <Tooltip title="Edit name and address">
           <IconButton
             size="small"
+            disabled={!placeReady}
             onClick={() => setEditing((v) => !v)}
             aria-label="Edit place"
             aria-pressed={editing}
@@ -580,6 +601,11 @@ const PlacePanel: React.FC<PlacePanelProps> = ({
           {saveError}
         </Alert>
       )}
+      {placeError && (
+        <Alert severity="warning" sx={{ mt: 1.5 }}>
+          {placeError} — changes are off until it loads.
+        </Alert>
+      )}
 
       {editing && (
         <PlaceForm
@@ -591,7 +617,7 @@ const PlacePanel: React.FC<PlacePanelProps> = ({
           }}
           showNotes={!!place}
           saveLabel="Save"
-          busy={busy}
+          busy={locked}
           onSave={saveEdit}
           onCancel={() => setEditing(false)}
         />
@@ -715,7 +741,7 @@ const PlacePanel: React.FC<PlacePanelProps> = ({
               {lookup.address && (
                 <AddressBlock
                   address={lookup.address}
-                  busy={busy}
+                  busy={locked}
                   onUse={() => {
                     if (lookup.address) {
                       applyAddress(lookup.address);
@@ -729,7 +755,7 @@ const PlacePanel: React.FC<PlacePanelProps> = ({
                   candidate={c}
                   fallbackAddress={lookup.address?.display ?? address ?? ''}
                   confirming={confirming === c.ref}
-                  busy={busy}
+                  busy={locked}
                   onPick={() => setConfirming(c.ref)}
                   onCancel={() => setConfirming(null)}
                   onConfirm={(v) => confirmCandidate(c, v)}

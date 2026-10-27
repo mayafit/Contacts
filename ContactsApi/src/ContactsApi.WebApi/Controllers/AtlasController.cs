@@ -171,8 +171,10 @@ public class AtlasController : ControllerBase
 
     /// <summary>What is at a point: the address and named places around it (OpenStreetMap)</summary>
     [HttpGet("lookup")]
-    public Task<IActionResult> Lookup([FromQuery] double lat, [FromQuery] double lon, [FromQuery] double radius = 80) =>
-        RunWith<GeoLookupClient, LocationLookup>((geo, _) => geo.LookupAsync(lat, lon, radius, HttpContext.RequestAborted));
+    public Task<IActionResult> Lookup([FromQuery] double? lat, [FromQuery] double? lon, [FromQuery] double radius = 80) =>
+        RunWith<GeoLookupClient, LocationLookup>((geo, _) => lat.HasValue && lon.HasValue
+            ? geo.LookupAsync(lat.Value, lon.Value, radius, HttpContext.RequestAborted)
+            : throw new ArgumentException("lat and lon are required"));
 
     /// <summary>Says what a visit's place is (a found location, or typed)</summary>
     [HttpPost("visits/{id:guid}/place")]
