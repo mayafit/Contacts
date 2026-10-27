@@ -13,6 +13,8 @@ data:
   # All three derive from the URL the browser uses. RedirectUri must also be
   # registered on the Google OAuth client, character for character.
   GoogleOAuth__RedirectUri: {{ printf "%s/api/auth/callback" $publicUrl | quote }}
+  # Register on the Entra app (OneDrive photos); its id and secret come from Vault
+  MicrosoftOAuth__RedirectUri: {{ printf "%s/api/atlas/connections/onedrive/callback" $publicUrl | quote }}
   Frontend__BaseUrl: {{ $publicUrl | quote }}
   Cors__AllowedOrigins__0: {{ $publicUrl | quote }}
   OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.config.OTEL_EXPORTER_OTLP_ENDPOINT | quote }}

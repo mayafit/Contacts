@@ -895,6 +895,8 @@ public partial class AtlasService
             foreach (var (from, to) in windows)
             {
                 var r = await RefuseAsync(owner, from, to, ct);
+                // New activities or visits there: the photos of that time are placed again
+                await RequeuePhotosAsync(owner, from, to, ct);
                 total = new FuseResult(total.Activities + r.Activities, total.Fused + r.Fused, total.Conflicts + r.Conflicts);
             }
         }

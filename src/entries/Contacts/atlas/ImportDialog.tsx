@@ -31,6 +31,7 @@ import { SamsungCollector, samsungKind } from './importers/samsung';
 import { tokens } from '../theme/contactsTheme';
 import { thinTrack, trackLength } from './geo';
 import SportsTrackerTab from './SportsTrackerTab';
+import OneDriveTab from './OneDriveTab';
 
 /** Props for ImportDialog */
 export interface ImportDialogProps {
@@ -38,7 +39,12 @@ export interface ImportDialogProps {
   onClose: () => void;
   /** Called after anything was imported or deleted */
   onChanged: () => void;
+  /** The tab shown when it opens (default: files) */
+  initialTab?: ImportTab;
 }
+
+/** The dialog's tabs */
+export type ImportTab = 'files' | 'sports-tracker' | 'onedrive';
 
 /** Items per request: keeps each request well under Cloudflare's 100 MB */
 const MAX_POINTS = 25_000;
@@ -139,8 +145,18 @@ const send = async (
  * @param props - Component props
  * @returns Dialog
  */
-const ImportDialog: React.FC<ImportDialogProps> = ({ open, onClose, onChanged }) => {
-  const [tab, setTab] = useState<'files' | 'sports-tracker'>('files');
+const ImportDialog: React.FC<ImportDialogProps> = ({
+  open,
+  onClose,
+  onChanged,
+  initialTab = 'files',
+}) => {
+  const [tab, setTab] = useState<ImportTab>(initialTab);
+  useEffect(() => {
+    if (open) {
+      setTab(initialTab);
+    }
+  }, [open, initialTab]);
   const [source, setSource] = useState<'auto' | 'sports-tracker'>('auto');
   const [busy, setBusy] = useState(false);
   const [log, setLog] = useState<string[]>([]);
@@ -241,15 +257,19 @@ const ImportDialog: React.FC<ImportDialogProps> = ({ open, onClose, onChanged })
       <DialogTitle sx={{ pb: 0 }}>Import</DialogTitle>
       <Tabs
         value={tab}
-        onChange={(_, v: 'files' | 'sports-tracker') => setTab(v)}
+        onChange={(_, v: ImportTab) => setTab(v)}
         sx={{ px: 3, borderBottom: `1px solid ${tokens.border}` }}
       >
         <Tab value="files" label="Files" disabled={busy} />
         <Tab value="sports-tracker" label="Sports Tracker" disabled={busy} />
+        <Tab value="onedrive" label="OneDrive photos" disabled={busy} />
       </Tabs>
       <DialogContent sx={{ pt: '16px !important' }}>
         <Box sx={{ display: tab === 'sports-tracker' ? 'block' : 'none' }}>
           <SportsTrackerTab open={open} onChanged={onChanged} />
+        </Box>
+        <Box sx={{ display: tab === 'onedrive' ? 'block' : 'none' }}>
+          <OneDriveTab open={open} onChanged={onChanged} />
         </Box>
         {tab === 'files' && (
           <>

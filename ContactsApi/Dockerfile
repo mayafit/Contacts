@@ -55,6 +55,9 @@ LABEL maintainer="contacts-team" \
       description="ContactsApi - C# ASP.NET backend for Google People API integration" \
       org.opencontainers.image.source="https://github.com/mayafit/contacts"
 
+# Time zones (photo times are read as the local time of where they were taken)
+RUN apk add --no-cache tzdata
+
 # Create non-root user for runtime (CIS 4.1)
 RUN addgroup -g 1001 -S dotnet && \
     adduser -S dotnet -u 1001 -G dotnet

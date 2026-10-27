@@ -79,6 +79,14 @@ builder.Services.AddSingleton<AtlasSyncQueue>();
 builder.Services.AddHttpClient<ContactsApi.Infrastructure.Atlas.GeoLookupClient>(c => c.Timeout = TimeSpan.FromSeconds(90));
 builder.Services.AddScoped<AtlasConnectionService>();
 builder.Services.AddHostedService<AtlasSyncWorker>();
+// OneDrive photos: the Entra app's id and secret come from Vault (MicrosoftOAuth__*),
+// the redirect from the config map; without them OneDrive reports itself not set up
+builder.Services.Configure<OneDriveOptions>(builder.Configuration.GetSection("MicrosoftOAuth"));
+builder.Services.AddHttpClient(ContactsApi.Infrastructure.Atlas.OneDriveClient.HttpClientName, c => c.Timeout = TimeSpan.FromSeconds(60));
+builder.Services.AddSingleton<OneDriveTokenCache>();
+builder.Services.AddSingleton<PhotoSyncQueue>();
+builder.Services.AddScoped<OneDrivePhotoService>();
+builder.Services.AddHostedService<PhotoSyncWorker>();
 builder.Services.AddHttpContextAccessor();
 
 // MCP server over the Atlas service (tools in AtlasMcpTools), at /api/mcp

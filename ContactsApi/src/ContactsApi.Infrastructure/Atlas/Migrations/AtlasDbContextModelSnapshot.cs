@@ -284,6 +284,120 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                     b.ToTable("activities", "atlas");
                 });
 
+            modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.AtlasPhoto", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ActivityId")
+                        .HasColumnType("uuid");
+
+                    b.Property<double?>("Altitude")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("CameraMake")
+                        .HasColumnType("text");
+
+                    b.Property<string>("CameraModel")
+                        .HasColumnType("text");
+
+                    b.Property<int>("ClockOffsetMin")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ExternalId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("Folder")
+                        .HasColumnType("text");
+
+                    b.Property<int?>("Height")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("IsVideo")
+                        .HasColumnType("boolean");
+
+                    b.Property<double?>("Lat")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("Lon")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("MapLat")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("MapLon")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("MimeType")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("OwnerId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<bool>("Placed")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("PlacedBy")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<long?>("Size")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("TakenAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("TakenAtRaw")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("VisitId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("WebUrl")
+                        .HasColumnType("text");
+
+                    b.Property<int?>("Width")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OwnerId", "ActivityId")
+                        .HasFilter("\"ActivityId\" IS NOT NULL");
+
+                    b.HasIndex("OwnerId", "Placed")
+                        .HasFilter("NOT \"Placed\"");
+
+                    b.HasIndex("OwnerId", "TakenAt");
+
+                    b.HasIndex("OwnerId", "VisitId")
+                        .HasFilter("\"VisitId\" IS NOT NULL");
+
+                    b.HasIndex("OwnerId", "Provider", "ExternalId")
+                        .IsUnique();
+
+                    b.ToTable("photos", "atlas");
+                });
+
             modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.AtlasPlace", b =>
                 {
                     b.Property<Guid>("Id")
@@ -628,6 +742,9 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Cursor")
+                        .HasColumnType("text");
 
                     b.Property<Guid?>("ImportId")
                         .HasColumnType("uuid");

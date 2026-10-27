@@ -29,13 +29,15 @@ public class AtlasController : ControllerBase
     private readonly IServiceProvider _services;
     private readonly AtlasReadiness _readiness;
     private readonly GoogleTokenService _tokens;
+    private readonly IConfiguration _config;
 
     /// <summary>Creates the controller</summary>
-    public AtlasController(IServiceProvider services, AtlasReadiness readiness, GoogleTokenService tokens)
+    public AtlasController(IServiceProvider services, AtlasReadiness readiness, GoogleTokenService tokens, IConfiguration config)
     {
         _services = services;
         _readiness = readiness;
         _tokens = tokens;
+        _config = config;
     }
 
     /// <summary>Whether Atlas can serve (database configured and migrated)</summary>
@@ -142,6 +144,130 @@ public class AtlasController : ControllerBase
     [HttpDelete("connections/sports-tracker")]
     public Task<IActionResult> DisconnectSportsTracker() =>
         RunWith<AtlasConnectionService, object>(async (svc, owner) => new { removed = await svc.DisconnectAsync(owner, HttpContext.RequestAborted) });
+
+    /// <summary>OneDrive photos: whether it can be connected, the connection, how many photos</summary>
+    [HttpGet("connections/onedrive")]
+    public Task<IActionResult> OneDrive() =>
+        RunWith<OneDrivePhotoService, OneDriveStatus>((svc, owner) => svc.StatusAsync(owner, HttpContext.RequestAborted));
+
+    /// <summary>Where the browser signs in to Microsoft to connect OneDrive</summary>
+    [HttpPost("connections/onedrive/start")]
+    public Task<IActionResult> StartOneDrive() =>
+        RunWith<OneDrivePhotoService, object>((svc, _) => Task.FromResult<object>(new { url = svc.StartUrl(HttpContext.Session) }));
+
+    /// <summary>
+    /// Microsoft comes back here after the sign-in; the browser then goes back to
+    /// Atlas with ?onedrive=connected, or ?onedrive=error&amp;reason=…
+    /// </summary>
+    [HttpGet("connections/onedrive/callback")]
+    public async Task<IActionResult> OneDriveCallback([FromQuery] string? code, [FromQuery] string? state, [FromQuery] string? error)
+    {
+        IActionResult Back(string result, string? reason = null) =>
+            Redirect((_config["Frontend:BaseUrl"] ?? "http://localhost:3002").TrimEnd('/') + "/atlas?onedrive=" + result
+                     + (reason == null ? "" : "&reason=" + Uri.EscapeDataString(reason)));
+
+        if (await _tokens.GetAccessTokenAsync(HttpContext) == null || !_readiness.Ready)
+        {
+            return Back("error", "session");
+        }
+
+        var expected = HttpContext.Session.GetString(OneDrivePhotoService.StateKey);
+        HttpContext.Session.Remove(OneDrivePhotoService.StateKey);
+        if (error != null)
+        {
+            return Back("error", error == "access_denied" ? "denied" : "microsoft");
+        }
+
+        if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(expected) || state != expected)
+        {
+            return Back("error", "state");
+        }
+
+        try
+        {
+            var owner = HttpContext.Session.GetString(GoogleTokenService.UserIdKey)!;
+            await HttpContext.RequestServices.GetRequiredService<OneDrivePhotoService>().CompleteAsync(owner, code, HttpContext.RequestAborted);
+            return Back("connected");
+        }
+        catch (OneDriveException)
+        {
+            return Back("error", "microsoft");
+        }
+    }
+
+    /// <summary>Syncs OneDrive again (what changed since the last sync)</summary>
+    [HttpPost("connections/onedrive/sync")]
+    public Task<IActionResult> SyncOneDrive() =>
+        RunWith<OneDrivePhotoService, OneDriveStatus>((svc, owner) => svc.SyncAsync(owner, HttpContext.RequestAborted));
+
+    /// <summary>Disconnects OneDrive and forgets its photos' details (the photos stay in OneDrive)</summary>
+    [HttpDelete("connections/onedrive")]
+    public Task<IActionResult> DisconnectOneDrive() =>
+        RunWith<OneDrivePhotoService, object>(async (svc, owner) => new { removed = await svc.DisconnectAsync(owner, HttpContext.RequestAborted) });
+
+    /// <summary>Photos taken during an activity</summary>
+    [HttpGet("activities/{id:guid}/photos")]
+    public Task<IActionResult> ActivityPhotos(Guid id) =>
+        Run((svc, owner) => svc.ActivityPhotosAsync(owner, id, HttpContext.RequestAborted));
+
+    /// <summary>Photos taken during visits to a place</summary>
+    [HttpGet("places/{id:guid}/photos")]
+    public Task<IActionResult> PlacePhotos(Guid id) =>
+        Run((svc, owner) => svc.PlacePhotosAsync(owner, id, HttpContext.RequestAborted));
+
+    /// <summary>Photos for the map (time, area, activity types)</summary>
+    [HttpPost("photos/map")]
+    public Task<IActionResult> MapPhotos([FromBody] AtlasQuery query) =>
+        Run((svc, owner) => svc.MapPhotosAsync(owner, query ?? new AtlasQuery(), HttpContext.RequestAborted));
+
+    /// <summary>A photo's thumbnail (small, medium, large), fetched from OneDrive</summary>
+    [HttpGet("photos/{id:guid}/thumbnail")]
+    public async Task<IActionResult> PhotoThumbnail(Guid id, [FromQuery] string size = "medium")
+    {
+        if (size is not ("small" or "medium" or "large"))
+        {
+            return BadRequest(ApiResponse<object>.ErrorResponse("INVALID_INPUT", "size is small, medium or large"));
+        }
+
+        if (await _tokens.GetAccessTokenAsync(HttpContext) == null)
+        {
+            return Unauthorized(ApiResponse<object>.ErrorResponse("SESSION_EXPIRED", "Your Google session expired. Please sign in again."));
+        }
+
+        if (!_readiness.Ready)
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, ApiResponse<object>.ErrorResponse("ATLAS_NOT_READY", "Atlas is starting."));
+        }
+
+        var owner = HttpContext.Session.GetString(GoogleTokenService.UserIdKey)!;
+        try
+        {
+            var thumb = await HttpContext.RequestServices.GetRequiredService<OneDrivePhotoService>()
+                .ThumbnailAsync(owner, id, size, HttpContext.RequestAborted);
+            if (thumb == null)
+            {
+                return NotFound(ApiResponse<object>.ErrorResponse("NOT_FOUND", "OneDrive has no thumbnail for it."));
+            }
+
+            // The photo does not change under its id; the browser keeps it a day
+            Response.Headers.CacheControl = "private, max-age=86400";
+            return File(thumb.Value.Bytes, thumb.Value.ContentType);
+        }
+        catch (AtlasNotFoundException ex)
+        {
+            return NotFound(ApiResponse<object>.ErrorResponse("NOT_FOUND", ex.Message));
+        }
+        catch (OneDriveException ex)
+        {
+            if (ex.Code == "ONEDRIVE_BUSY")
+            {
+                Response.Headers.RetryAfter = "5";
+            }
+
+            return StatusCode(ex.Code == "ONEDRIVE_BUSY" ? StatusCodes.Status503ServiceUnavailable : StatusCodes.Status502BadGateway,
+                ApiResponse<object>.ErrorResponse(ex.Code, ex.Message));
+        }
+    }
 
     /// <summary>Deletes an activity</summary>
     [HttpDelete("activities/{id:guid}")]
@@ -265,6 +391,15 @@ public class AtlasController : ControllerBase
         catch (SportsTrackerException ex)
         {
             return BadRequest(ApiResponse<object>.ErrorResponse(ex.Code, ex.Message));
+        }
+        catch (OneDriveException ex)
+        {
+            return ex.Code switch
+            {
+                "ONEDRIVE_FAILED" => StatusCode(StatusCodes.Status502BadGateway, ApiResponse<object>.ErrorResponse(ex.Code, ex.Message)),
+                "ONEDRIVE_BUSY" => StatusCode(StatusCodes.Status503ServiceUnavailable, ApiResponse<object>.ErrorResponse(ex.Code, ex.Message)),
+                _ => BadRequest(ApiResponse<object>.ErrorResponse(ex.Code, ex.Message))
+            };
         }
         catch (ArgumentException ex)
         {
