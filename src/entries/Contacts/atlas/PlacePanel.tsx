@@ -2,7 +2,9 @@
  * @fileoverview A visit's place: when and how long, address and coordinates (copy, map
  * links), what is known about the place (category, website, phone, hours, details, its
  * OpenStreetMap link, visit statistics), identifying what is at the location
- * (OpenStreetMap) and associating the place with it, and editing it by hand
+ * (OpenStreetMap) and associating the place with it, naming it or editing it by hand, its
+ * automatic identity (confirm, change, pick one of several) and giving nearby places the
+ * same identity
  * @module Contacts/atlas/PlacePanel
  */
 
@@ -11,6 +13,7 @@ import {
   Alert,
   Box,
   Button,
+  Checkbox,
   Chip,
   IconButton,
   LinearProgress,
@@ -22,6 +25,7 @@ import {
   Typography,
 } from '@mui/material';
 import {
+  AutoAwesome,
   Check,
   Close,
   ContentCopy,
@@ -36,6 +40,7 @@ import type {
   LocationCandidate,
   LocationLookup,
   LookupAddress,
+  NearbyPlace,
   PlaceAssociation,
   PlaceDetail,
   PlacePatch,
@@ -45,9 +50,12 @@ import { VISIT_COLOR, isSet, sourceLabel } from './types';
 import { formatDuration, formatWhen } from './geo';
 import { formatMeters } from './fusionText';
 import {
+  alsoNamedText,
+  defaultNearbySelection,
   detailRows,
   formatCoordinates,
   googleMapsUrl,
+  identifyNote,
   isUnnamedPlace,
   nameFromAddress,
   openStreetMapUrl,
@@ -66,9 +74,12 @@ export interface PlacePanelProps {
   onClose: () => void;
   /** Shows every visit and activity at this place */
   onShowEverything: () => void;
-  /** The visit's place changed (name, address, or a new place): the visit after the change */
-  onChanged: (visit: VisitSummary) => void;
-  /** Marks a position on the map (a hovered candidate); null removes the mark */
+  /**
+   * The visit's place changed (name, address, or a new place): the visit after the change,
+   * and the nearby places that got the same identity (their visits show the new name)
+   */
+  onChanged: (visit: VisitSummary, alsoPlaces?: NearbyPlace[]) => void;
+  /** Marks a position on the map (a hovered candidate or nearby place); null removes the mark */
   onPreview: (pos: [number, number] | null) => void;
 }
 
@@ -378,6 +389,122 @@ const AddressBlock: React.FC<{
   </Box>
 );
 
+/** A name for an unnamed place: type and press Enter (or Save) */
+const NameField: React.FC<{
+  busy: boolean;
+  onSave: (name: string) => void;
+  /** Shown with a Cancel button when given */
+  onCancel?: () => void;
+  autoFocus?: boolean;
+}> = ({ busy, onSave, onCancel, autoFocus = false }) => {
+  const [value, setValue] = useState('');
+  const save = () => {
+    if (!busy && value.trim()) {
+      onSave(value.trim());
+    }
+  };
+  return (
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
+      <TextField
+        size="small"
+        placeholder="Name this place"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            save();
+          }
+        }}
+        inputProps={{ dir: 'auto', 'aria-label': 'Name this place' }}
+        autoFocus={autoFocus}
+        sx={{ flex: 1 }}
+      />
+      <Button variant="contained" size="small" disabled={busy || !value.trim()} onClick={save}>
+        Save
+      </Button>
+      {onCancel && (
+        <Button size="small" disabled={busy} onClick={onCancel}>
+          Cancel
+        </Button>
+      )}
+    </Box>
+  );
+};
+
+/** "Identified automatically" with Confirm and Change */
+const AutoIdentity: React.FC<{
+  note: string;
+  busy: boolean;
+  onConfirm: () => void;
+  onChange: () => void;
+}> = ({ note, busy, onConfirm, onChange }) => (
+  <Box
+    sx={{
+      display: 'flex',
+      alignItems: 'center',
+      flexWrap: 'wrap',
+      columnGap: 0.5,
+      mt: 1,
+      px: 1,
+      py: 0.25,
+      borderRadius: '8px',
+      bgcolor: tokens.page,
+    }}
+  >
+    <AutoAwesome sx={{ fontSize: 14, color: tokens.textMuted }} />
+    <Typography variant="caption" sx={{ color: tokens.textSecondary, flex: 1, minWidth: 0 }}>
+      {note}
+    </Typography>
+    <Button size="small" disabled={busy} onClick={onConfirm}>
+      Confirm
+    </Button>
+    <Button size="small" disabled={busy} onClick={onChange}>
+      Change
+    </Button>
+  </Box>
+);
+
+/** A nearby place that may be the same, with a checkbox */
+const NearbyRow: React.FC<{
+  place: NearbyPlace;
+  checked: boolean;
+  busy: boolean;
+  onToggle: () => void;
+  onPreview: (pos: [number, number] | null) => void;
+}> = ({ place: p, checked, busy, onToggle, onPreview }) => (
+  <Box
+    onMouseEnter={() => onPreview([p.lat, p.lon])}
+    onMouseLeave={() => onPreview(null)}
+    onFocus={() => onPreview([p.lat, p.lon])}
+    onBlur={() => onPreview(null)}
+    sx={{
+      display: 'flex',
+      alignItems: 'center',
+      gap: 0.5,
+      py: 0.25,
+      borderBottom: `1px solid ${tokens.border}`,
+    }}
+  >
+    <Checkbox
+      size="small"
+      checked={checked}
+      disabled={busy}
+      onChange={onToggle}
+      inputProps={{ 'aria-label': `Same as ${p.name}` }}
+      sx={{ p: 0.5 }}
+    />
+    <Box sx={{ flex: 1, minWidth: 0 }}>
+      <Typography variant="body2" dir="auto" noWrap>
+        {p.name}
+      </Typography>
+      <Typography variant="caption" component="div" sx={{ color: tokens.textMuted }}>
+        {formatMeters(p.distanceM)} · {p.visits} {p.visits === 1 ? 'visit' : 'visits'}
+      </Typography>
+    </Box>
+  </Box>
+);
+
 /**
  * A visit's place.
  * @param props - Component props
@@ -399,8 +526,18 @@ const PlacePanel: React.FC<PlacePanelProps> = ({
   const [lookup, setLookup] = useState<LocationLookup | null>(null);
   const [lookingUp, setLookingUp] = useState(false);
   const [lookupError, setLookupError] = useState<string | null>(null);
-  // The candidate being confirmed (its ref)
+  // The candidate being confirmed (its ref; "stored:" + ref for the place's own candidates)
   const [confirming, setConfirming] = useState<string | null>(null);
+  // Nearby places that got / may get the identity just given
+  const [nearby, setNearby] = useState<{ applied: NearbyPlace[]; suggested: NearbyPlace[] } | null>(
+    null,
+  );
+  // The checked suggestions (place ids)
+  const [picked, setPicked] = useState<string[]>([]);
+  // What "Apply to selected" did
+  const [applyOutcome, setApplyOutcome] = useState<string | null>(null);
+  // Typing a name instead of picking one of the possible identities
+  const [naming, setNaming] = useState(false);
   // Only the latest lookup's answer is shown (and none after unmounting)
   const lookupSeq = useRef(0);
 
@@ -472,7 +609,11 @@ const PlacePanel: React.FC<PlacePanelProps> = ({
       setPlace(r.place);
       setConfirming(null);
       setEditing(false);
-      onChanged(r.visit);
+      setNaming(false);
+      setApplyOutcome(null);
+      setNearby(r.applied.length || r.suggested.length ? r : null);
+      setPicked(defaultNearbySelection(r.suggested));
+      onChanged(r.visit, r.applied);
     } catch (e) {
       setSaveError((e as Error).message || 'Saving the place failed');
     } finally {
@@ -489,7 +630,12 @@ const PlacePanel: React.FC<PlacePanelProps> = ({
       const fresh = await backendApiClient.atlasPlace(id);
       setPlace(fresh);
       setEditing(false);
-      onChanged({ ...visit, placeName: fresh.name, address: fresh.address });
+      onChanged({
+        ...visit,
+        placeName: fresh.name,
+        address: fresh.address,
+        identifyState: fresh.identifyState,
+      });
     } catch (e) {
       setSaveError((e as Error).message || 'Saving the place failed');
     } finally {
@@ -535,6 +681,59 @@ const PlacePanel: React.FC<PlacePanelProps> = ({
     }
   };
 
+  /** Names the place as typed (keeps what else is known about it) */
+  const nameIt = (typed: string) =>
+    void associate({
+      name: typed,
+      address: address || null,
+      category: place?.category ?? null,
+      linkedRef: null,
+    });
+
+  /** Accepts the automatic identity */
+  const confirmAuto = async () => {
+    if (!place) {
+      return;
+    }
+    setBusy(true);
+    setSaveError(null);
+    try {
+      const fresh = await backendApiClient.atlasConfirmPlace(place.id);
+      setPlace(fresh);
+      onChanged({ ...visit, identifyState: fresh.identifyState });
+    } catch (e) {
+      setSaveError((e as Error).message || 'Confirming the place failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Gives the checked nearby places this place's identity */
+  const applyNearby = async () => {
+    if (!place || picked.length === 0) {
+      return;
+    }
+    setBusy(true);
+    setSaveError(null);
+    try {
+      const applied = await backendApiClient.atlasApplyIdentity(place.id, picked);
+      const ids = applied.map((p) => p.placeId);
+      setNearby((n) =>
+        n ? { ...n, suggested: n.suggested.filter((p) => !ids.includes(p.placeId)) } : n,
+      );
+      setPicked([]);
+      setApplyOutcome(
+        applied.length ? alsoNamedText(applied.length) : 'None of them could be named',
+      );
+      onPreview(null);
+      onChanged(visit, applied);
+    } catch (e) {
+      setSaveError((e as Error).message || 'Naming the nearby places failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   /** Associates the place with a candidate */
   const confirmCandidate = (c: LocationCandidate, v: PlaceFormValues) =>
     void associate({
@@ -553,6 +752,10 @@ const PlacePanel: React.FC<PlacePanelProps> = ({
   const details = detailRows(place?.details);
   const osmUrl = osmObjectUrl(place?.linkedRef);
   const showLookup = lookingUp || !!lookup || !!lookupError;
+  const identifyState = place?.identifyState ?? visit.identifyState ?? null;
+  const note = identifyNote(identifyState, place?.identifiedFrom);
+  const ambiguous = identifyState === 'ambiguous' && !!place;
+  const storedCandidates = ambiguous ? (place?.candidates ?? []) : [];
 
   return (
     <Box sx={{ p: 2 }}>
@@ -583,6 +786,22 @@ const PlacePanel: React.FC<PlacePanelProps> = ({
           sx={{ color: tokens.textSecondary, display: 'block', ml: 5 }}
         >
           {place.category}
+        </Typography>
+      )}
+      {isUnnamedPlace(name) && !editing && !ambiguous && placeReady && (
+        <NameField busy={locked} onSave={nameIt} />
+      )}
+      {identifyState === 'auto' && place && note && (
+        <AutoIdentity
+          note={note}
+          busy={locked}
+          onConfirm={() => void confirmAuto()}
+          onChange={() => void identify(radius)}
+        />
+      )}
+      {identifyState === 'pending' && note && (
+        <Typography variant="caption" component="div" sx={{ color: tokens.textMuted, mt: 0.5 }}>
+          {note} — Atlas identifies places in the background
         </Typography>
       )}
       <Typography variant="body2" sx={{ color: tokens.textSecondary, mt: 1 }}>
@@ -621,6 +840,100 @@ const PlacePanel: React.FC<PlacePanelProps> = ({
           onSave={saveEdit}
           onCancel={() => setEditing(false)}
         />
+      )}
+
+      {nearby && nearby.applied.length > 0 && (
+        <Alert
+          severity="success"
+          onClose={() => setNearby({ ...nearby, applied: [] })}
+          sx={{ mt: 1.5 }}
+        >
+          {alsoNamedText(nearby.applied.length)}
+        </Alert>
+      )}
+      {applyOutcome && (
+        <Alert severity="success" onClose={() => setApplyOutcome(null)} sx={{ mt: 1.5 }}>
+          {applyOutcome}
+        </Alert>
+      )}
+      {nearby && nearby.suggested.length > 0 && (
+        <PanelSection title="Nearby places that may be the same" hint={nearby.suggested.length}>
+          {nearby.suggested.map((p) => (
+            <NearbyRow
+              key={p.placeId}
+              place={p}
+              checked={picked.includes(p.placeId)}
+              busy={locked}
+              onToggle={() =>
+                setPicked((ids) =>
+                  ids.includes(p.placeId)
+                    ? ids.filter((x) => x !== p.placeId)
+                    : [...ids, p.placeId],
+                )
+              }
+              onPreview={onPreview}
+            />
+          ))}
+          <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
+            <Button
+              variant="contained"
+              size="small"
+              disabled={locked || picked.length === 0}
+              onClick={() => void applyNearby()}
+            >
+              Apply to selected
+            </Button>
+            <Button
+              size="small"
+              disabled={locked}
+              onClick={() => {
+                onPreview(null);
+                setNearby({ ...nearby, suggested: [] });
+              }}
+            >
+              Not these
+            </Button>
+          </Box>
+        </PanelSection>
+      )}
+
+      {ambiguous && (
+        <PanelSection title={note ?? 'Which one is it?'} hint={storedCandidates.length}>
+          {storedCandidates.map((c) => (
+            <CandidateRow
+              key={c.ref}
+              candidate={c}
+              fallbackAddress={address ?? ''}
+              confirming={confirming === `stored:${c.ref}`}
+              busy={locked}
+              onPick={() => setConfirming(`stored:${c.ref}`)}
+              onCancel={() => setConfirming(null)}
+              onConfirm={(v) => confirmCandidate(c, v)}
+              onPreview={onPreview}
+            />
+          ))}
+          {naming ? (
+            <NameField busy={locked} onSave={nameIt} onCancel={() => setNaming(false)} autoFocus />
+          ) : (
+            <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
+              <Button size="small" disabled={locked} onClick={() => setNaming(true)}>
+                Something else
+              </Button>
+              <Button
+                size="small"
+                startIcon={<TravelExplore />}
+                disabled={lookingUp}
+                onClick={() => {
+                  const wider = RADII[RADII.length - 1];
+                  setRadius(wider);
+                  void identify(wider);
+                }}
+              >
+                Search wider
+              </Button>
+            </Box>
+          )}
+        </PanelSection>
       )}
 
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 1.5 }}>

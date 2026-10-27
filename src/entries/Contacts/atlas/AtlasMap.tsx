@@ -1,6 +1,6 @@
 /**
  * @fileoverview World map with activity tracks, visits, the selected item and
- * an area selection tool
+ * an area selection tool; or, in density mode, how often each way and place was visited
  * @module Contacts/atlas/AtlasMap
  */
 
@@ -19,7 +19,7 @@ import {
 import L from 'leaflet';
 import type { LatLngBoundsExpression, LeafletMouseEvent } from 'leaflet';
 import './leaflet.css';
-import type { ActivitySummary, PointOutput, VisitSummary } from './types';
+import type { ActivitySummary, AtlasQuery, DensityData, PointOutput, VisitSummary } from './types';
 import { FILTER_COLOR, HEALTH_COLOR, VISIT_COLOR, typeColor, isSet } from './types';
 import { Box } from '@mui/material';
 import AtlasLegend from './AtlasLegend';
@@ -28,13 +28,30 @@ import {
   ATTRIBUTION,
   MAP_STYLES,
   englishLabels,
+  loadMapMode,
   loadMapStyle,
+  saveMapMode,
   saveMapStyle,
+  type MapMode,
   type MapStyle,
 } from './mapStyle';
-import { IconButton, MenuItem, TextField, Tooltip as MuiTooltip } from '@mui/material';
+import {
+  CircularProgress,
+  IconButton,
+  MenuItem,
+  TextField,
+  ToggleButton,
+  ToggleButtonGroup,
+  Tooltip as MuiTooltip,
+  Typography,
+} from '@mui/material';
 import { CenterFocusStrong } from '@mui/icons-material';
 import { logger } from '../../../shared/logger';
+import { backendApiClient } from '../../../services/api/BackendApiClient';
+import DensityLayer from './DensityLayer';
+import { trackTypes } from './densityGeo';
+import { identifyMark } from './placeText';
+import { tokens } from '../theme/contactsTheme';
 
 /** A rectangle on the map */
 export interface Box {
@@ -66,7 +83,80 @@ export interface AtlasMapProps {
   cursor?: [number, number] | null;
   /** Fit the view to the area filter when this changes (0: never) */
   focusArea?: number;
+  /** The filters, for the density map (fetched only in density mode) */
+  query?: AtlasQuery;
+  /** Bumped when the data changed (the density map loads again) */
+  reloadKey?: number;
 }
+
+/** Waits this long after a filter change before loading the density map (ms) */
+const DENSITY_DEBOUNCE = 400;
+
+/** A visit's name on the map, marked when its identity is automatic or uncertain */
+const VisitLabel: React.FC<{ visit: VisitSummary }> = ({ visit }) => {
+  const mark = identifyMark(visit.identifyState);
+  const name = visit.placeName || 'Visit';
+  if (mark === 'auto') {
+    return (
+      <span>
+        <i>{name}</i> <span style={{ opacity: 0.7 }}>· auto</span>
+      </span>
+    );
+  }
+  return <span>{mark === '?' ? `${name} (?)` : name}</span>;
+};
+
+/** The density map's data for the filters, loaded while in density mode */
+const useDensity = (
+  active: boolean,
+  query: AtlasQuery | undefined,
+  reloadKey: number,
+): { data: DensityData | null; loading: boolean } => {
+  const [data, setData] = useState<DensityData | null>(null);
+  const [loading, setLoading] = useState(false);
+  const key = JSON.stringify(query ?? {});
+  useEffect(() => {
+    if (!active) {
+      setLoading(false);
+      return undefined;
+    }
+    let alive = true;
+    // A newer filter cancels the previous load (each is heavy for the server)
+    const abort = new AbortController();
+    setLoading(true);
+    const t = setTimeout(() => {
+      backendApiClient
+        .atlasDensity(JSON.parse(key) as AtlasQuery, abort.signal)
+        .then((d) => {
+          if (alive) {
+            setData(d);
+          }
+        })
+        .catch((err) => {
+          if (!alive) {
+            return;
+          }
+          // Not the previous filter's map under the new filters
+          setData(null);
+          logger.warn(
+            { context: 'AtlasMap/density', metadata: { message: (err as Error)?.message } },
+            'Loading the density map failed',
+          );
+        })
+        .finally(() => {
+          if (alive) {
+            setLoading(false);
+          }
+        });
+    }, DENSITY_DEBOUNCE);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+      abort.abort();
+    };
+  }, [active, key, reloadKey]);
+  return { data, loading };
+};
 
 /** The small permanent label at the area filter's top-left corner */
 const AREA_LABEL = L.divIcon({
@@ -304,8 +394,13 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
   fitKey,
   cursor,
   focusArea = 0,
+  query,
+  reloadKey = 0,
 }) => {
   const [mapStyle, setMapStyle] = useState<MapStyle>(loadMapStyle);
+  const [mode, setMode] = useState<MapMode>(loadMapMode);
+  const density = mode === 'density';
+  const { data: densityData, loading: densityLoading } = useDensity(density, query, reloadKey);
   // Bumped by the "Show all results" button
   const [fitAll, setFitAll] = useState(0);
   const styleDef = MAP_STYLES.find((m) => m.value === mapStyle) ?? MAP_STYLES[0];
@@ -334,10 +429,14 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
       ]
     : null;
 
-  const kinds = useMemo(
-    () => [...activities.map((a) => a.type), ...(visits.length ? ['visit'] : [])],
-    [activities, visits],
-  );
+  const kinds = useMemo(() => {
+    if (density) {
+      return densityData
+        ? [...trackTypes(densityData.tracks), ...(densityData.visits.length ? ['visit'] : [])]
+        : [];
+    }
+    return [...activities.map((a) => a.type), ...(visits.length ? ['visit'] : [])];
+  }, [density, densityData, activities, visits]);
 
   return (
     <Box sx={{ position: 'relative', height: '100%', width: '100%' }}>
@@ -379,39 +478,42 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
             />
           </>
         )}
-        {lines.map(({ a, path, flight }) => (
-          <Polyline
-            key={a.id}
-            positions={path}
-            pathOptions={{
-              color: typeColor(a.type),
-              // Many tracks at once: thinner and lighter, so the streets stay readable
-              weight: a.id === selectedId ? 5 : crowded ? 1.5 : flight ? 2 : 2.5,
-              opacity: selectedId && a.id !== selectedId ? 0.3 : crowded ? 0.5 : 0.9,
-              dashArray: flight ? '8 6' : undefined,
-            }}
-            eventHandlers={{ click: () => onSelectActivity(a.id) }}
-          >
-            <Tooltip sticky>{describeActivity(a)}</Tooltip>
-          </Polyline>
-        ))}
-        {lines
-          .filter((l) => l.flight)
-          .flatMap(({ a, path }) => [
-            { key: `${a.id}-from`, at: path[0], color: typeColor(a.type) },
-            { key: `${a.id}-to`, at: path[path.length - 1], color: typeColor(a.type) },
-          ])
-          .map((m) => (
-            // Airports: where one flight ends and the next begins
-            <CircleMarker
-              key={m.key}
-              center={m.at}
-              radius={3.5}
-              interactive={false}
-              pathOptions={{ color: '#0e1116', weight: 1, fillColor: m.color, fillOpacity: 1 }}
-            />
+        {density && <DensityLayer data={densityData} />}
+        {!density &&
+          lines.map(({ a, path, flight }) => (
+            <Polyline
+              key={a.id}
+              positions={path}
+              pathOptions={{
+                color: typeColor(a.type),
+                // Many tracks at once: thinner and lighter, so the streets stay readable
+                weight: a.id === selectedId ? 5 : crowded ? 1.5 : flight ? 2 : 2.5,
+                opacity: selectedId && a.id !== selectedId ? 0.3 : crowded ? 0.5 : 0.9,
+                dashArray: flight ? '8 6' : undefined,
+              }}
+              eventHandlers={{ click: () => onSelectActivity(a.id) }}
+            >
+              <Tooltip sticky>{describeActivity(a)}</Tooltip>
+            </Polyline>
           ))}
-        {selectedFlight ? (
+        {!density &&
+          lines
+            .filter((l) => l.flight)
+            .flatMap(({ a, path }) => [
+              { key: `${a.id}-from`, at: path[0], color: typeColor(a.type) },
+              { key: `${a.id}-to`, at: path[path.length - 1], color: typeColor(a.type) },
+            ])
+            .map((m) => (
+              // Airports: where one flight ends and the next begins
+              <CircleMarker
+                key={m.key}
+                center={m.at}
+                radius={3.5}
+                interactive={false}
+                pathOptions={{ color: '#0e1116', weight: 1, fillColor: m.color, fillOpacity: 1 }}
+              />
+            ))}
+        {density ? null : selectedFlight ? (
           <Polyline
             positions={selectedFlight.path}
             pathOptions={{ color: highlightColor, weight: 2.5, opacity: 0.95, dashArray: '8 6' }}
@@ -425,22 +527,25 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
             />
           )
         )}
-        {visits.map((v) => (
-          <CircleMarker
-            key={v.id}
-            center={[v.lat, v.lon]}
-            radius={v.id === selectedVisitId ? 8 : 5}
-            pathOptions={{
-              color: v.id === selectedVisitId ? '#ffffff' : VISIT_COLOR,
-              fillColor: VISIT_COLOR,
-              fillOpacity: 0.85,
-              weight: v.id === selectedVisitId ? 2 : 1,
-            }}
-            eventHandlers={{ click: () => onSelectVisit(v) }}
-          >
-            <Tooltip>{v.placeName || 'Visit'}</Tooltip>
-          </CircleMarker>
-        ))}
+        {!density &&
+          visits.map((v) => (
+            <CircleMarker
+              key={v.id}
+              center={[v.lat, v.lon]}
+              radius={v.id === selectedVisitId ? 8 : 5}
+              pathOptions={{
+                color: v.id === selectedVisitId ? '#ffffff' : VISIT_COLOR,
+                fillColor: VISIT_COLOR,
+                fillOpacity: 0.85,
+                weight: v.id === selectedVisitId ? 2 : 1,
+              }}
+              eventHandlers={{ click: () => onSelectVisit(v) }}
+            >
+              <Tooltip>
+                <VisitLabel visit={v} />
+              </Tooltip>
+            </CircleMarker>
+          ))}
         {cursor && (
           <CircleMarker
             center={cursor}
@@ -471,7 +576,41 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
           <CenterFocusStrong fontSize="small" />
         </IconButton>
       </MuiTooltip>
-      <Box sx={{ position: 'absolute', top: 10, right: 10, zIndex: 1000 }}>
+      <Box
+        sx={{
+          position: 'absolute',
+          top: 10,
+          right: 10,
+          zIndex: 1000,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 1,
+        }}
+      >
+        {density && densityLoading && (
+          <CircularProgress size={16} aria-label="Loading the density map" />
+        )}
+        <ToggleButtonGroup
+          size="small"
+          exclusive
+          value={mode}
+          onChange={(_, v: MapMode | null) => {
+            if (v) {
+              saveMapMode(v);
+              setMode(v);
+            }
+          }}
+          aria-label="Map mode"
+          sx={{
+            bgcolor: 'rgba(14, 17, 22, 0.85)',
+            '& .MuiToggleButton-root': { py: 0.4, px: 1, fontSize: 13, textTransform: 'none' },
+          }}
+        >
+          <ToggleButton value="items">Items</ToggleButton>
+          <MuiTooltip title="How often you went where (selecting items needs Items)">
+            <ToggleButton value="density">Density</ToggleButton>
+          </MuiTooltip>
+        </ToggleButtonGroup>
         <TextField
           select
           size="small"
@@ -514,6 +653,17 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
           }}
         >
           <AtlasLegend kinds={kinds} />
+          {density && (
+            <Typography
+              variant="caption"
+              component="div"
+              sx={{ color: tokens.textMuted, lineHeight: 1.4 }}
+            >
+              Brighter = more often
+              {densityData?.truncated &&
+                ` · showing the newest ${densityData.tracks.length.toLocaleString()} tracks and ${densityData.visits.length.toLocaleString()} visits`}
+            </Typography>
+          )}
         </Box>
       )}
     </Box>

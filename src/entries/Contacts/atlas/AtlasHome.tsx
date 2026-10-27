@@ -587,6 +587,8 @@ const AtlasHome: React.FC = () => {
                 fitKey={String(fitTick)}
                 cursor={cursor}
                 focusArea={focusArea}
+                query={filters}
+                reloadKey={reloadKey}
               />
               {empty && (
                 <Paper
@@ -736,24 +738,32 @@ const AtlasHome: React.FC = () => {
                   setCursor(null);
                 }}
                 onPreview={setCursor}
-                onChanged={(v) => {
+                onChanged={(v, alsoPlaces = []) => {
                   setVisit(v);
-                  // The list and the map show the new name (every visit to the place), in
-                  // place: reloading would refit the map and drop a "here" result set
+                  // The list and the map show the new name (every visit to the place, and to
+                  // the nearby places that got it too), in place: reloading would refit the
+                  // map and drop a "here" result set
+                  // Each nearby place with the state the server gave it (auto or user)
+                  const also = new Map(alsoPlaces.map((p) => [p.placeId, p.identifyState]));
+                  const named = { placeName: v.placeName, address: v.address };
                   setResult((r) =>
                     r
                       ? {
                           ...r,
-                          visits: r.visits.map((x) =>
-                            x.id === v.id || (isSet(v.placeId) && x.placeId === v.placeId)
-                              ? {
-                                  ...x,
-                                  placeId: v.placeId,
-                                  placeName: v.placeName,
-                                  address: v.address,
-                                }
-                              : x,
-                          ),
+                          visits: r.visits.map((x) => {
+                            if (x.id === v.id || (isSet(v.placeId) && x.placeId === v.placeId)) {
+                              return {
+                                ...x,
+                                ...named,
+                                placeId: v.placeId,
+                                identifyState: v.identifyState,
+                              };
+                            }
+                            if (isSet(x.placeId) && also.has(x.placeId)) {
+                              return { ...x, ...named, identifyState: also.get(x.placeId) };
+                            }
+                            return x;
+                          }),
                         }
                       : r,
                   );

@@ -228,7 +228,19 @@ export interface VisitSummary {
   lat: number;
   lon: number;
   source: string;
+  /** How the place got its identity (see IdentifyState); missing from older servers */
+  identifyState?: string;
 }
+
+/**
+ * How a place got its identity:
+ * - pending: not looked at yet by the background identification
+ * - auto: named automatically (one clear establishment, or from a nearby place)
+ * - ambiguous: several possible identities (the place's candidates); the user picks
+ * - none: nothing nameable found around it
+ * - user: the user named or confirmed it
+ */
+export type IdentifyState = 'pending' | 'auto' | 'ambiguous' | 'none' | 'user';
 
 /** A place with what is known about it and its visits */
 export interface PlaceDetail {
@@ -255,6 +267,35 @@ export interface PlaceDetail {
   firstVisit: string | null;
   lastVisit: string | null;
   hoursSpent: number;
+  /** How the place got its identity */
+  identifyState: IdentifyState;
+  /** The possible identities when ambiguous (at most 6, nearest first); else empty */
+  candidates: LocationCandidate[];
+  /** 'lookup' or 'nearby' (copied from a nearby place the user identified); null otherwise */
+  identifiedFrom: string | null;
+}
+
+/** A place near an identified one that got (or may get) the same identity */
+export interface NearbyPlace {
+  placeId: string;
+  /** Its current name ("Place" when unnamed) */
+  name: string;
+  lat: number;
+  lon: number;
+  /** From the identified place */
+  distanceM: number;
+  visits: number;
+  identifyState: string;
+}
+
+/** A visit's place after naming or associating it */
+export interface VisitPlaceResult {
+  visit: VisitSummary;
+  place: PlaceDetail;
+  /** Nearby places that got the same identity automatically */
+  applied: NearbyPlace[];
+  /** Nearby places that may be the same; the user decides */
+  suggested: NearbyPlace[];
 }
 
 /** The street address at a point */
@@ -349,6 +390,24 @@ export interface AtlasQuery {
   limit?: number;
   /** Only fused activities whose sources disagree */
   conflictsOnly?: boolean;
+}
+
+/** One track of the density map */
+export interface DensityTrack {
+  /** Activity type: ride, drive, flight, walk… */
+  type: string;
+  /** Google encoded polyline (precision 5), simplified */
+  polyline: string;
+}
+
+/** Everything matching a query, light enough to draw at once (density map) */
+export interface DensityData {
+  /** Newest first, at most 6000 */
+  tracks: DensityTrack[];
+  /** [lat, lon, hours spent] per visit, at most 30000 */
+  visits: [number, number, number][];
+  /** More matched than returned */
+  truncated: boolean;
 }
 
 /** Search results */

@@ -9,6 +9,7 @@ import { Place, WarningAmber } from '@mui/icons-material';
 import type { SearchResult, VisitSummary } from './types';
 import { ACTIVITY_TYPES, VISIT_COLOR, sourceLabel, typeColor } from './types';
 import { formatDistance, formatDuration, formatWhen } from './geo';
+import { identifyMark } from './placeText';
 import { tokens } from '../theme/contactsTheme';
 
 /** Props for ResultsList */
@@ -161,9 +162,42 @@ const ResultsList: React.FC<ResultsListProps> = ({
             >
               <Place sx={{ fontSize: 16, mt: 0.25, color: VISIT_COLOR }} />
               <Box sx={{ minWidth: 0 }}>
-                <Typography variant="body2" dir="auto" noWrap sx={{ fontWeight: 600 }}>
-                  {it.v.placeName || 'Visit'}
-                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0 }}>
+                  <Typography
+                    variant="body2"
+                    dir="auto"
+                    noWrap
+                    sx={{
+                      fontWeight: 600,
+                      minWidth: 0,
+                      flexShrink: 1,
+                      fontStyle: identifyMark(it.v.identifyState) === 'auto' ? 'italic' : undefined,
+                    }}
+                  >
+                    {it.v.placeName || 'Visit'}
+                  </Typography>
+                  {identifyMark(it.v.identifyState) === 'auto' && (
+                    <Tooltip title="Identified automatically">
+                      <Typography
+                        variant="caption"
+                        sx={{ color: tokens.textMuted, flexShrink: 0, lineHeight: 1 }}
+                      >
+                        auto
+                      </Typography>
+                    </Tooltip>
+                  )}
+                  {identifyMark(it.v.identifyState) === '?' && (
+                    <Tooltip title="Several places here — open it to pick which one">
+                      <Typography
+                        variant="caption"
+                        aria-label="Not sure which place"
+                        sx={{ color: tokens.attention, fontWeight: 700, flexShrink: 0 }}
+                      >
+                        ?
+                      </Typography>
+                    </Tooltip>
+                  )}
+                </Box>
                 <Typography variant="caption" sx={{ color: tokens.textMuted }}>
                   {formatWhen(it.v.startTime)} ·{' '}
                   {formatDuration((Date.parse(it.v.endTime) - Date.parse(it.v.startTime)) / 1000)}
