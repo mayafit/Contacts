@@ -136,6 +136,8 @@ public class AtlasFusionWorker : BackgroundService
                 {
                     break;
                 }
+
+                await Task.Delay(TimeSpan.FromMilliseconds(400), ct);
             }
 
             Guid? after = null;

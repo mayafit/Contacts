@@ -173,8 +173,6 @@ const useFiltered = <T,>(
       clearTimeout(t);
       abort.abort();
     };
-    // load and what are fixed per caller
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, key, reloadKey]);
   return { data, loading };
 };
@@ -461,8 +459,40 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
   // The open activity's or place's photos that have a position, a few spread over its time
   const pins = useMemo(() => {
     const placed = (photos ?? []).filter((p) => isSet(p.lat) && isSet(p.lon));
-    return spread(placed, PHOTO_PINS).map((p) => ({ p, index: (photos ?? []).indexOf(p) }));
+    // Icons made once per list: a new icon on each render would reload every thumbnail
+    return spread(placed, PHOTO_PINS).map((p) => ({
+      p,
+      index: (photos ?? []).indexOf(p),
+      icon: photoPin(p),
+    }));
   }, [photos]);
+  // The layer's markers are built when its photos change, not on every render (thousands)
+  const openPhotoRef = useRef(onOpenPhoto);
+  openPhotoRef.current = onOpenPhoto;
+  const layerMarkers = useMemo(
+    () =>
+      photoLayer && layerPhotos
+        ? layerPhotos.photos.map((p, i) =>
+            isSet(p.lat) && isSet(p.lon) ? (
+              <CircleMarker
+                key={p.id}
+                center={[p.lat, p.lon]}
+                radius={4}
+                pathOptions={{
+                  color: '#0e1116',
+                  weight: 1,
+                  fillColor: PHOTO_COLOR,
+                  fillOpacity: 0.9,
+                }}
+                eventHandlers={{ click: () => openPhotoRef.current?.(layerPhotos.photos, i) }}
+              >
+                <Tooltip>{takenText(p.takenAt)}</Tooltip>
+              </CircleMarker>
+            ) : null,
+          )
+        : null,
+    [photoLayer, layerPhotos],
+  );
   // Bumped by the "Show all results" button
   const [fitAll, setFitAll] = useState(0);
   const styleDef = MAP_STYLES.find((m) => m.value === mapStyle) ?? MAP_STYLES[0];
@@ -608,30 +638,12 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
               </Tooltip>
             </CircleMarker>
           ))}
-        {photoLayer &&
-          layerPhotos?.photos.map((p, i) =>
-            isSet(p.lat) && isSet(p.lon) ? (
-              <CircleMarker
-                key={p.id}
-                center={[p.lat, p.lon]}
-                radius={4}
-                pathOptions={{
-                  color: '#0e1116',
-                  weight: 1,
-                  fillColor: PHOTO_COLOR,
-                  fillOpacity: 0.9,
-                }}
-                eventHandlers={{ click: () => onOpenPhoto?.(layerPhotos.photos, i) }}
-              >
-                <Tooltip>{takenText(p.takenAt)}</Tooltip>
-              </CircleMarker>
-            ) : null,
-          )}
-        {pins.map(({ p, index }) => (
+        {layerMarkers}
+        {pins.map(({ p, index, icon }) => (
           <Marker
             key={`pin-${p.id}`}
             position={[p.lat!, p.lon!]}
-            icon={photoPin(p)}
+            icon={icon}
             eventHandlers={{ click: () => onOpenPhoto?.(photos ?? [], index) }}
           >
             <Tooltip>{takenText(p.takenAt)}</Tooltip>

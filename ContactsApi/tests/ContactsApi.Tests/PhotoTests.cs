@@ -106,6 +106,30 @@ public class PhotoClockTests
     }
 
     [Fact]
+    public void The_local_offset_follows_the_place_and_daylight_saving()
+    {
+        Assert.Equal(180, PhotoClock.LocalOffset(31.8, 34.8, new DateTime(2026, 9, 13, 12, 0, 0)));
+        Assert.Equal(120, PhotoClock.LocalOffset(31.8, 34.8, new DateTime(2026, 12, 13, 12, 0, 0)));
+        Assert.Equal(60, PhotoClock.LocalOffset(51.5, -0.12, new DateTime(2026, 7, 1, 12, 0, 0)));
+        Assert.Equal(0, PhotoClock.LocalOffset(51.5, -0.12, new DateTime(2026, 1, 1, 12, 0, 0)));
+    }
+
+    [Fact]
+    public void A_photo_whose_UTC_reading_is_merely_unknown_does_not_vote()
+    {
+        // 40-minute visits every 75 minutes: each photo fits its visit at the local reading,
+        // and its time as it is falls between visits (unknown, not contradicted)
+        var at = (int i) => Day.AddMinutes(360 + 75 * i);
+        var history = new PhotoClock.History(Enumerable.Range(0, 8)
+            .Select(i => new PhotoClock.Fix(at(i), at(i).AddMinutes(40), 32.05 + i * 0.05, 34.8, 32.05 + i * 0.05, 34.8)));
+        var photos = Enumerable.Range(0, 8)
+            .Select(i => new PhotoClock.Sample(at(i).AddMinutes(20).AddHours(3), 32.05 + i * 0.05, 34.8, false)).ToList();
+        var r = PhotoClock.Decide(photos, history);
+        Assert.Equal(0, r.LocalVotes + r.UtcVotes);
+        Assert.False(r.LocalClock);
+    }
+
+    [Fact]
     public void Staying_put_says_nothing()
     {
         var history = new PhotoClock.History(new[] { new PhotoClock.Fix(Day, Day.AddHours(23), 32.0, 34.8, 32.0, 34.8) });
@@ -219,7 +243,8 @@ public class PhotoDbTests
         await db.Database.MigrateAsync();
         var owner = "clock-" + Guid.NewGuid();
         var svc = new AtlasService(db, NullLogger<AtlasService>.Instance);
-        var t0 = DateTime.UtcNow.Date.AddDays(-2).AddHours(6);
+        // Israel summer time: the camera's clock is three hours ahead of UTC
+        var t0 = new DateTime(2026, 9, 10, 6, 0, 0, DateTimeKind.Utc);
 
         // Home before and after; visits 5 km apart every hour in between
         var visits = new List<VisitInput> { new("home1", t0.AddHours(-6), t0, 31.80, 34.80) };

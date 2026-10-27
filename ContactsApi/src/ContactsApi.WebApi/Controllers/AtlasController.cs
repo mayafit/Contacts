@@ -259,7 +259,13 @@ public class AtlasController : ControllerBase
         }
         catch (OneDriveException ex)
         {
-            return StatusCode(StatusCodes.Status502BadGateway, ApiResponse<object>.ErrorResponse(ex.Code, ex.Message));
+            if (ex.Code == "ONEDRIVE_BUSY")
+            {
+                Response.Headers.RetryAfter = "5";
+            }
+
+            return StatusCode(ex.Code == "ONEDRIVE_BUSY" ? StatusCodes.Status503ServiceUnavailable : StatusCodes.Status502BadGateway,
+                ApiResponse<object>.ErrorResponse(ex.Code, ex.Message));
         }
     }
 
@@ -388,7 +394,12 @@ public class AtlasController : ControllerBase
         }
         catch (OneDriveException ex)
         {
-            return BadRequest(ApiResponse<object>.ErrorResponse(ex.Code, ex.Message));
+            return ex.Code switch
+            {
+                "ONEDRIVE_FAILED" => StatusCode(StatusCodes.Status502BadGateway, ApiResponse<object>.ErrorResponse(ex.Code, ex.Message)),
+                "ONEDRIVE_BUSY" => StatusCode(StatusCodes.Status503ServiceUnavailable, ApiResponse<object>.ErrorResponse(ex.Code, ex.Message)),
+                _ => BadRequest(ApiResponse<object>.ErrorResponse(ex.Code, ex.Message))
+            };
         }
         catch (ArgumentException ex)
         {

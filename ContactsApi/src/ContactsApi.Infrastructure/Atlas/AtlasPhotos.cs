@@ -1,201 +1,12 @@
 /**
- * @fileoverview Photos of a connected library: keeping their details, finding out
- * whether the library's times are UTC or the camera's local time, placing each one
- * at the activity or visit it was taken during, and the queries the app makes
+ * @fileoverview Photos of a connected library: keeping their details, correcting
+ * their times (see PhotoClock), placing each one at the activity or visit it was
+ * taken during, and the queries the app makes
  * @module ContactsApi.Infrastructure.Atlas
  */
 using Microsoft.EntityFrameworkCore;
 
 namespace ContactsApi.Infrastructure.Atlas;
-
-/// <summary>
-/// Whether the library's photo times are UTC or the camera's clock (local time
-/// written as if it were UTC). Photos with a position say which: the user's own
-/// history (visits and activities) puts them where the photo was taken at only one
-/// of the two readings, unless they stayed in one place all along.
-/// </summary>
-public static class PhotoClock
-{
-    /// <summary>Offsets tried: −12 h to +14 h in half hours (minutes)</summary>
-    public static readonly int[] Offsets = Enumerable.Range(-24, 53).Select(i => i * 30).ToArray();
-
-    /// <summary>Within this distance the history agrees with the photo</summary>
-    public const double AgreeM = 1000;
-
-    /// <summary>Where the user was over a time (a visit's point, or an activity's area)</summary>
-    public record Fix(DateTime Start, DateTime End, double MinLat, double MinLon, double MaxLat, double MaxLon);
-
-    /// <summary>A photo as the clock check needs it</summary>
-    public record Sample(DateTime Raw, double? Lat, double? Lon, bool IsVideo);
-
-    /// <summary>How the times were read, and what said so</summary>
-    public record Result(int[] Offsets, int LocalVotes, int UtcVotes, bool LocalClock, bool VideoLocalClock);
-
-    /// <summary>The user's whereabouts, by time</summary>
-    public class History
-    {
-        private readonly List<Fix> _fixes;
-        private readonly TimeSpan _longest;
-
-        /// <summary>Creates it (fixes longer than a day say little and are left out)</summary>
-        public History(IEnumerable<Fix> fixes)
-        {
-            _fixes = fixes.Where(f => f.End >= f.Start && f.End - f.Start <= TimeSpan.FromDays(1)).OrderBy(f => f.Start).ToList();
-            _longest = _fixes.Count == 0 ? TimeSpan.Zero : _fixes.Max(f => f.End - f.Start);
-        }
-
-        /// <summary>The distance from the point to where the user was at the time; null when unknown</summary>
-        public double? DistanceAt(DateTime t, double lat, double lon)
-        {
-            // Last fix starting at or before t, then back while one could still cover t
-            int lo = 0, hi = _fixes.Count - 1, last = -1;
-            while (lo <= hi)
-            {
-                var mid = (lo + hi) / 2;
-                if (_fixes[mid].Start <= t)
-                {
-                    last = mid;
-                    lo = mid + 1;
-                }
-                else
-                {
-                    hi = mid - 1;
-                }
-            }
-
-            double? best = null;
-            for (var i = last; i >= 0 && _fixes[i].Start >= t - _longest; i--)
-            {
-                var f = _fixes[i];
-                if (f.End < t)
-                {
-                    continue;
-                }
-
-                var d = Geo.Haversine(lat, lon, Math.Clamp(lat, f.MinLat, f.MaxLat), Math.Clamp(lon, f.MinLon, f.MaxLon));
-                best = best.HasValue ? Math.Min(best.Value, d) : d;
-            }
-
-            return best;
-        }
-    }
-
-    /// <summary>
-    /// The offset of each photo (minutes to subtract from its time). Photos and
-    /// videos are judged apart (phones write their times differently). A photo
-    /// votes for UTC when the history agrees with its time as it is and not an hour
-    /// or more off; for the camera's clock when it agrees only with a shifted time.
-    /// The camera's clock needs a clear majority; then each photo takes its own
-    /// shift, or that of the nearest photo in time that has one (travel, DST).
-    /// </summary>
-    public static Result Decide(IReadOnlyList<Sample> photos, History history)
-    {
-        var offsets = new int[photos.Count];
-        int localVotes = 0, utcVotes = 0;
-        var local = new bool[2];
-        foreach (var video in new[] { false, true })
-        {
-            var group = Enumerable.Range(0, photos.Count).Where(i => photos[i].IsVideo == video).ToList();
-            var own = new Dictionary<int, int>();
-            int l = 0, u = 0;
-            foreach (var i in group)
-            {
-                var p = photos[i];
-                if (p.Lat is not { } lat || p.Lon is not { } lon)
-                {
-                    continue;
-                }
-
-                var agree = new List<int>();
-                var known = 0;
-                foreach (var k in Offsets)
-                {
-                    var d = history.DistanceAt(p.Raw.AddMinutes(-k), lat, lon);
-                    if (d == null)
-                    {
-                        continue;
-                    }
-
-                    known++;
-                    if (d <= AgreeM)
-                    {
-                        agree.Add(k);
-                    }
-                }
-
-                // Nothing to tell readings apart: no agreement, or everything agrees (stayed put)
-                if (agree.Count == 0 || agree.Count == known)
-                {
-                    continue;
-                }
-
-                if (agree.Contains(0))
-                {
-                    if (!agree.Any(k => Math.Abs(k) >= 60))
-                    {
-                        u++;
-                    }
-                }
-                else
-                {
-                    l++;
-                    own[i] = Pick(agree);
-                }
-            }
-
-            localVotes += l;
-            utcVotes += u;
-            var isLocal = l >= 5 && l > 3 * u;
-            local[video ? 1 : 0] = isLocal;
-            if (!isLocal || own.Count == 0)
-            {
-                continue;
-            }
-
-            // Each photo: its own shift, else the nearest one in time (within 3 days), else the usual one
-            var usual = own.Values.GroupBy(v => v).OrderByDescending(g => g.Count()).First().Key;
-            var known2 = own.Keys.OrderBy(i => photos[i].Raw).ToList();
-            var times = known2.Select(i => photos[i].Raw).ToList();
-            foreach (var i in group)
-            {
-                if (own.TryGetValue(i, out var k))
-                {
-                    offsets[i] = k;
-                    continue;
-                }
-
-                var at = times.BinarySearch(photos[i].Raw);
-                if (at < 0)
-                {
-                    at = ~at;
-                }
-
-                var best = usual;
-                var bestGap = TimeSpan.FromDays(3);
-                foreach (var j in new[] { at - 1, at })
-                {
-                    if (j >= 0 && j < times.Count && (times[j] - photos[i].Raw).Duration() <= bestGap)
-                    {
-                        bestGap = (times[j] - photos[i].Raw).Duration();
-                        best = own[known2[j]];
-                    }
-                }
-
-                offsets[i] = best;
-            }
-        }
-
-        return new Result(offsets, localVotes, utcVotes, local[0], local[1]);
-    }
-
-    /// <summary>The likeliest of the agreeing shifts: whole hours first, then the middle of the range</summary>
-    private static int Pick(List<int> agree)
-    {
-        var mid = (agree.Min() + agree.Max()) / 2.0;
-        var hours = agree.Where(k => k % 60 == 0).ToList();
-        return (hours.Count > 0 ? hours : agree).OrderBy(k => Math.Abs(k - mid)).ThenBy(Math.Abs).First();
-    }
-}
 
 public partial class AtlasService
 {
@@ -229,8 +40,10 @@ public partial class AtlasService
                 _db.Photos.Add(row);
                 existing[p.Id] = row;
             }
-            else if (row.TakenAtRaw == p.TakenAt && row.Lat == p.Lat && row.Lon == p.Lon && row.Name == p.Name
-                     && row.WebUrl == p.WebUrl && row.Folder == p.Folder && row.Width == p.Width && row.Height == p.Height)
+            else if (row.TakenAtRaw == p.TakenAt && row.Lat == p.Lat && row.Lon == p.Lon && row.Altitude == p.Altitude
+                     && row.Name == p.Name && row.WebUrl == p.WebUrl && row.Folder == p.Folder && row.Width == p.Width
+                     && row.Height == p.Height && row.Size == p.Size && row.MimeType == p.MimeType && row.IsVideo == p.IsVideo
+                     && row.CameraMake == p.CameraMake && row.CameraModel == p.CameraModel)
             {
                 continue;
             }
@@ -317,6 +130,7 @@ public partial class AtlasService
 
         var history = await HistoryAsync(owner, ct);
         var result = PhotoClock.Decide(photos.Select(p => new PhotoClock.Sample(p.TakenAtRaw, p.Lat, p.Lon, p.IsVideo)).ToList(), history);
+        var now = DateTime.UtcNow;
         var changes = photos.Select((p, i) => (p.Id, Old: p.ClockOffsetMin, New: result.Offsets[i]))
             .Where(c => c.Old != c.New).GroupBy(c => c.New);
         foreach (var g in changes)
@@ -328,7 +142,8 @@ public partial class AtlasService
                     .ExecuteUpdateAsync(s => s
                         .SetProperty(p => p.ClockOffsetMin, offset)
                         .SetProperty(p => p.TakenAt, p => p.TakenAtRaw.AddMinutes(-offset))
-                        .SetProperty(p => p.Placed, false), ct);
+                        .SetProperty(p => p.Placed, false)
+                        .SetProperty(p => p.UpdatedAt, now), ct);
             }
         }
 
@@ -368,6 +183,7 @@ public partial class AtlasService
             .OrderBy(p => p.OwnerId).ThenBy(p => p.TakenAt).Take(limit)
             .Select(p => new { p.Id, p.OwnerId, p.TakenAt, p.Lat, p.Lon, p.UpdatedAt })
             .ToListAsync(ct);
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
         foreach (var group in batch.GroupBy(p => p.OwnerId))
         {
             var owner = group.Key;
@@ -429,6 +245,7 @@ public partial class AtlasService
             }
         }
 
+        await tx.CommitAsync(ct);
         return batch.Count;
     }
 

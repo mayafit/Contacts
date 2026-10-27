@@ -21,6 +21,9 @@ export interface OneDriveTabProps {
 /** How often the connection is re-read while a sync runs */
 const POLL_MS = 2000;
 
+/** After a sync, the map reloads again this much later (the photos are placed by then) */
+const PLACED_MS = 20000;
+
 /** Status chip text and colour */
 const STATUS: Record<
   SourceConnection['status'],
@@ -77,12 +80,17 @@ const OneDriveTab: React.FC<OneDriveTabProps> = ({ open, onChanged }) => {
     return () => window.clearInterval(timer);
   }, [open, status]);
 
-  // A finished sync brought photos in: reload the map
+  // A finished sync brought photos in: reload the map, and again once the server has
+  // placed them on the tracks and visits (it does that right after the sync)
   useEffect(() => {
     if (lastStatus.current === 'syncing' && status !== 'syncing') {
       onChanged();
+      const again = window.setTimeout(onChanged, PLACED_MS);
+      lastStatus.current = status;
+      return () => window.clearTimeout(again);
     }
     lastStatus.current = status;
+    return undefined;
   }, [status, onChanged]);
 
   const run = async (action: () => Promise<void>, failed: string) => {

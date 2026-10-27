@@ -69,6 +69,30 @@ public class OneDriveTokenCache
     /// <summary>Remembers a fresh sign-in's token</summary>
     public void Put(string owner, OneDriveTokens tokens) => _tokens[owner] = tokens;
 
+    /// <summary>
+    /// Holds the owner's token lock (a new sign-in is stored under it, so a renewal
+    /// running meanwhile cannot write the previous sign-in's token over it)
+    /// </summary>
+    public async Task<IDisposable> LockAsync(string owner, CancellationToken ct)
+    {
+        var gate = _locks.GetOrAdd(owner, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
+        return new Release(gate);
+    }
+
+    private sealed class Release(SemaphoreSlim gate) : IDisposable
+    {
+        private int _done;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _done, 1) == 0)
+            {
+                gate.Release();
+            }
+        }
+    }
+
     /// <summary>Forgets the owner's token</summary>
     public void Forget(string owner) => _tokens.TryRemove(owner, out _);
 
@@ -207,6 +231,7 @@ public class OneDrivePhotoService
             // The name is only shown; the connection works without it
         }
 
+        using var held = await _tokens.LockAsync(owner, ct);
         var conn = await _db.Connections.FirstOrDefaultAsync(c => c.OwnerId == owner && c.Provider == Provider, ct);
         if (conn == null)
         {
@@ -260,8 +285,10 @@ public class OneDrivePhotoService
     public async Task<bool> DisconnectAsync(string owner, CancellationToken ct)
     {
         _tokens.Forget(owner);
+        // The connection first: a sync running meanwhile sees it gone and stops (and clears up)
+        var removed = await _db.Connections.Where(c => c.OwnerId == owner && c.Provider == Provider).ExecuteDeleteAsync(ct) > 0;
         await _atlas.DeleteAllPhotosAsync(owner, Provider, ct);
-        return await _db.Connections.Where(c => c.OwnerId == owner && c.Provider == Provider).ExecuteDeleteAsync(ct) > 0;
+        return removed;
     }
 
     /// <summary>A photo's thumbnail from OneDrive: small, medium, large</summary>
@@ -296,12 +323,14 @@ public class OneDrivePhotoService
         }
 
         var id = conn.Id;
-        int done = 0, imported = 0;
+        var account = conn.Account;
+        int done = 0, imported = 0, removed = 0;
         string status = "syncing";
         string? error = null;
         var lastSync = conn.LastSyncAt;
         var cursor = conn.Cursor;
-        Task Progress(int? total = null) => _db.Connections.Where(c => c.Id == id).ExecuteUpdateAsync(s => s
+        // Written only while the connection is still this account's (not after a disconnect or a new sign-in)
+        Task<int> Progress(int? total = null) => _db.Connections.Where(c => c.Id == id && c.Account == account).ExecuteUpdateAsync(s => s
             .SetProperty(c => c.Status, status)
             .SetProperty(c => c.ItemsDone, done)
             .SetProperty(c => c.ItemsImported, imported)
@@ -315,6 +344,7 @@ public class OneDrivePhotoService
         try
         {
             var token = await AccessTokenAsync(owner, false, ct);
+            var renewed = false;
             // Listing from the start: what it does not list any more is gone
             HashSet<string>? seen = cursor == null ? new() : null;
             var link = cursor;
@@ -325,9 +355,11 @@ public class OneDrivePhotoService
                 {
                     page = await _client.DeltaAsync(token, link, ct);
                 }
-                catch (OneDriveException ex) when (ex.Code == "ONEDRIVE_TOKEN_EXPIRED")
+                catch (OneDriveException ex) when (ex.Code == "ONEDRIVE_TOKEN_EXPIRED" && !renewed)
                 {
+                    // Once per page: a token refused right after renewal is a real refusal
                     token = await AccessTokenAsync(owner, true, ct);
+                    renewed = true;
                     continue;
                 }
                 catch (OneDriveException ex) when (ex.Code == "ONEDRIVE_RESYNC" && link != null)
@@ -338,8 +370,15 @@ public class OneDrivePhotoService
                     continue;
                 }
 
+                renewed = false;
+                if (!await StillConnectedAsync(id, account, ct))
+                {
+                    logger.LogInformation("OneDrive was disconnected or connected to another account during the sync; it stops");
+                    return;
+                }
+
                 imported += await _atlas.UpsertPhotosAsync(owner, Provider, page.Photos, ct);
-                await _atlas.RemovePhotosAsync(owner, Provider, page.Removed, ct);
+                removed += await _atlas.RemovePhotosAsync(owner, Provider, page.Removed, ct);
                 if (seen != null)
                 {
                     seen.UnionWith(page.Photos.Select(p => p.Id));
@@ -361,13 +400,20 @@ public class OneDrivePhotoService
             {
                 var known = await _db.Photos.AsNoTracking().Where(p => p.OwnerId == owner && p.Provider == Provider)
                     .Select(p => p.ExternalId).ToListAsync(ct);
-                await _atlas.RemovePhotosAsync(owner, Provider, known.Where(k => !seen.Contains(k)).ToList(), ct);
+                removed += await _atlas.RemovePhotosAsync(owner, Provider, known.Where(k => !seen.Contains(k)).ToList(), ct);
             }
 
-            var clock = await _atlas.CalibratePhotoClocksAsync(owner, ct);
-            logger.LogInformation(
-                "OneDrive sync: {Items} items, {Imported} photos new or changed; clock votes local {Local} / UTC {Utc} → photos {Photos}, videos {Videos}",
-                done, imported, clock.LocalVotes, clock.UtcVotes, clock.LocalClock ? "local" : "UTC", clock.VideoLocalClock ? "local" : "UTC");
+            // The clock check reads the whole library: when photos changed, else once a day (the history grows)
+            if (imported > 0 || removed > 0 || !Calibrated.TryGetValue(owner, out var at) || at < DateTime.UtcNow.AddDays(-1))
+            {
+                var clock = await _atlas.CalibratePhotoClocksAsync(owner, ct);
+                Calibrated[owner] = DateTime.UtcNow;
+                logger.LogInformation(
+                    "OneDrive clock check: votes local {Local} / UTC {Utc} → photos {Photos}, videos {Videos}",
+                    clock.LocalVotes, clock.UtcVotes, clock.LocalClock ? "local" : "UTC", clock.VideoLocalClock ? "local" : "UTC");
+            }
+
+            logger.LogInformation("OneDrive sync: {Items} items, {Imported} photos new or changed, {Removed} removed", done, imported, removed);
             status = "idle";
             lastSync = DateTime.UtcNow;
         }
@@ -383,8 +429,19 @@ public class OneDrivePhotoService
             logger.LogError(ex, "OneDrive sync failed");
         }
 
-        await Progress((await _atlas.PhotoCountsAsync(owner, CancellationToken.None)).Total);
+        if (await Progress((await _atlas.PhotoCountsAsync(owner, CancellationToken.None)).Total) == 0
+            && !await _db.Connections.AnyAsync(c => c.OwnerId == owner && c.Provider == Provider, CancellationToken.None))
+        {
+            // Disconnected meanwhile: what this sync added goes too
+            await _atlas.DeleteAllPhotosAsync(owner, Provider, CancellationToken.None);
+        }
     }
+
+    /// <summary>When each owner's clock was last checked (the check reads the whole library)</summary>
+    private static readonly ConcurrentDictionary<string, DateTime> Calibrated = new();
+
+    private Task<bool> StillConnectedAsync(Guid id, string? account, CancellationToken ct) =>
+        _db.Connections.AnyAsync(c => c.Id == id && c.Account == account && c.SecretProtected != null, ct);
 }
 
 /// <summary>

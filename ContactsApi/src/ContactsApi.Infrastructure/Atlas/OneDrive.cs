@@ -12,7 +12,10 @@ namespace ContactsApi.Infrastructure.Atlas;
 /// <summary>A OneDrive call failed; Code says why (OneDrive codes in <see cref="OneDriveClient"/>)</summary>
 public class OneDriveException : Exception
 {
-    /// <summary>ONEDRIVE_SIGNIN_INVALID (sign in again), ONEDRIVE_RESYNC (start the listing over), ONEDRIVE_FAILED</summary>
+    /// <summary>
+    /// ONEDRIVE_SIGNIN_INVALID (sign in again), ONEDRIVE_TOKEN_EXPIRED (renew the access token),
+    /// ONEDRIVE_RESYNC (start the listing over), ONEDRIVE_BUSY (throttled), ONEDRIVE_NOT_CONFIGURED, ONEDRIVE_FAILED
+    /// </summary>
     public string Code { get; }
 
     /// <summary>Creates the exception</summary>
@@ -228,10 +231,16 @@ public class OneDriveClient
     /// </summary>
     public async Task<(byte[] Bytes, string ContentType)?> ThumbnailAsync(string accessToken, string itemId, string size, CancellationToken ct)
     {
-        using var res = await SendAsync(accessToken, $"{Graph}/me/drive/items/{Uri.EscapeDataString(itemId)}/thumbnails/0/{size}/content", ct);
+        using var res = await SendAsync(accessToken, $"{Graph}/me/drive/items/{Uri.EscapeDataString(itemId)}/thumbnails/0/{size}/content", ct,
+            retries: 0);
         if (res.StatusCode == HttpStatusCode.NotFound)
         {
             return null;
+        }
+
+        if (res.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable)
+        {
+            throw new OneDriveException("ONEDRIVE_BUSY", "OneDrive is busy. Try again in a moment.");
         }
 
         Check(res);
@@ -251,7 +260,7 @@ public class OneDriveClient
     }
 
     /// <summary>A GET with the token; waits and retries when Graph is busy (429/503/504)</summary>
-    private async Task<HttpResponseMessage> SendAsync(string accessToken, string url, CancellationToken ct)
+    private async Task<HttpResponseMessage> SendAsync(string accessToken, string url, CancellationToken ct, int retries = 4)
     {
         for (var attempt = 0; ; attempt++)
         {
@@ -259,7 +268,7 @@ public class OneDriveClient
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
             var res = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
             var busy = res.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable or HttpStatusCode.GatewayTimeout;
-            if (!busy || attempt >= 4)
+            if (!busy || attempt >= retries)
             {
                 return res;
             }
