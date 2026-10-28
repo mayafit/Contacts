@@ -28,6 +28,8 @@ public class AtlasActivity : ISourced
 
     /// <summary>ride, hike, run, walk, drive, flight, transit, ski, swim, other</summary>
     public string Type { get; set; } = "other";
+    /// <summary>The source's own type text before normalising (in_bus, in_train…); written only by import</summary>
+    public string? SourceType { get; set; }
     public string? Name { get; set; }
     public string? Notes { get; set; }
     public DateTime StartTime { get; set; }

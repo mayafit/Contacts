@@ -253,6 +253,8 @@ public partial class AtlasService
                 activity.Name ??= Trim(a.Name, 300);
             }
 
+            // The source's own type, as received (tells a bus from a train); a re-import fills it in
+            activity.SourceType = Trim(a.Type, 64) ?? activity.SourceType;
             activity.Notes ??= Trim(a.Notes, 4000);
             activity.StartTime = a.StartTime.HasValue ? Utc(a.StartTime.Value) : default;
             activity.EndTime = a.EndTime.HasValue ? Utc(a.EndTime.Value) : default;
@@ -1138,8 +1140,10 @@ public partial class AtlasService
         removed += await _db.Places.Where(x => x.OwnerId == owner && x.ImportId == importId).ExecuteDeleteAsync(ct);
         await _db.Imports.Where(i => i.Id == importId && i.OwnerId == owner).ExecuteDeleteAsync(ct);
         // Records whose fused activity's primary was deleted stand alone until re-fused
+        // (UpdatedAt moves: their fused type and drawn track change, so the route feed sees them)
+        var now = DateTime.UtcNow;
         await _db.Activities.Where(x => x.OwnerId == owner && x.ClusterId != null && !_db.Activities.Any(p => p.Id == x.ClusterId))
-            .ExecuteUpdateAsync(s => s.SetProperty(x => x.ClusterId, (Guid?)null), ct);
+            .ExecuteUpdateAsync(s => s.SetProperty(x => x.ClusterId, (Guid?)null).SetProperty(x => x.UpdatedAt, now), ct);
         _logger.LogInformation("Deleted import with {Count} items", removed);
         await QueueFusionAsync(owner, null, null, CancellationToken.None);
         return removed;
