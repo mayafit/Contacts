@@ -8,7 +8,7 @@ scope: 'Echo: the Contacts and Atlas Areas as built, plus the Connect layer, Uni
 status: draft-for-owner-review
 created: '2026-10-28'
 updated: '2026-10-28'
-binds: [FR-01..FR-50, NFR-01..NFR-17, P-1..P-9, T0..T4]
+binds: [FR-01..FR-54, NFR-01..NFR-19, P-1..P-9, T0..T4]
 sources:
   - prd.md
   - prd-addendum.md
@@ -27,9 +27,9 @@ This is the brownfield architecture for **Echo**, derived from the PRD ([prd.md]
 2. It fixes the **invariants** that every future Echo feature must keep (§3). These are binding.
 3. It defines the **target architecture** for the Proposed and Planned requirements (§4, §5).
 
-Every decision is an `AD-n` block. Its **Binds / Prevents / Rule** lines are the contract. **Context / Decision / Alternatives / Consequences** give the ADR record. `[ADOPTED]` means the existing code already settled it, and the decision ratifies it. Where a PRD Open Question blocks a decision, the AD states the **default** chosen and how to **reverse** it. AD ids are stable: amend a Rule in place and never renumber.
+Every decision is an `AD-n` block. Its **Binds / Prevents / Rule** lines are the contract. **Context / Decision / Alternatives / Consequences** give the ADR record. `[ADOPTED]` means the existing code already settled it, and the decision ratifies it. Where a PRD Open Question blocks a decision, the AD states the **default** chosen and how to **reverse** it. AD ids are stable: amend a Rule in place and never renumber. AD-28 to AD-31 were added after the Owner's answers of 2026-10-28 and sit in the section they belong to, not in id order.
 
-The system has one user, called **the Owner** (they/them). No secret value appears here. Secrets are named by their Vault path only.
+Echo has **several users** (PRD Q-1, answered 2026-10-28). Each one is **the Owner** (they/them) of their own data, and no user sees another's. The first Owner is also the **admin** (manages the allowlist) and the **operator** (runs the cluster and the system backups). Tenancy is a first-class invariant (AD-28). No secret value appears here. Secrets are named by their Vault path only.
 
 ## 1. Design Paradigm
 
@@ -94,7 +94,7 @@ flowchart LR
 | Backend | `ContactsApi` on `net9.0`: Core / Infrastructure / WebApi; Swagger at `/`; `/health`; Serilog compact JSON to the console and to files |
 | Frontend | WebKit/BlueFiber template running standalone: React 18.3.1, TS 5.7.2 strict, MUI 6, Redux Toolkit 2.4 (Contacts), `useState` in `AtlasHome.tsx` (Atlas), react-router 7, one `BackendApiClient` |
 | Shell | `SiteShell` with a rail for `/contacts` and `/atlas`; `/` opens the last Area used |
-| Identity | Google OAuth code flow on the server; the `sub` is the Owner id; a 7-day Redis session; `app.UseAuthentication()` is commented out, and each controller resolves the Owner through `GoogleTokenService` |
+| Identity | Google OAuth code flow on the server; the `sub` is the Owner id; a 7-day Redis session; `app.UseAuthentication()` is commented out, and each controller resolves the Owner through `GoogleTokenService`; any Google account that completes sign-in gets a session (no allowlist, no roles) |
 | Contacts store | Google People API, with no local copy. Per-owner state is in Redis under `refresh-token:`, `optins:`, `activity:` and `self-emails:` keys; dismissals are in localStorage |
 | Atlas store | Postgres schema `atlas`: 16 migrations, `OwnerId` on every row, indexes that lead with `OwnerId`, no PostGIS, EF history table `atlas.__ef_migrations`; `AtlasMigrator` applies migrations at startup |
 | Workers | `ActivityWorker` (Gmail/Calendar scans, 3 at once); `AtlasFusionWorker` (fusion queue, then idle tasks: photo placement 500 per batch with 400 ms pauses, efforts, place identification); `AtlasSyncWorker` (Sports Tracker); `PhotoSyncWorker` (OneDrive delta every 30 min) |
@@ -150,7 +150,7 @@ An arrow means "may call or reference". There is no reverse edge. In particular,
 - **Binds:** all modules; FR-31 to FR-50; NFR-09, NFR-10.
 - **Prevents:** a feature team adding its own service, database or auth path, which would split the Owner's session and identity, and add a third container to a 3.7 GiB node (AA-11).
 - **Rule:** New capability is a module inside `ContactsApi`, with its own folder in `Infrastructure/` and controllers or workers in `WebApi/`. A new deployable needs a new AD. The only one sanctioned so far is the face worker (AD-20).
-- *Context:* Contacts and Atlas already share one process, session, shell and Gemini proxy. *Alternatives:* microservices per Area (rejected: memory, auth duplication, no operational benefit for one Owner). *Consequences:* one release unit; a heavy feature competes for the same 500m CPU, which AD-8 governs.
+- *Context:* Contacts and Atlas already share one process, session, shell and Gemini proxy. *Alternatives:* microservices per Area (rejected: memory, auth duplication, no operational benefit at a handful of users). *Consequences:* one release unit; a heavy feature competes for the same 500m CPU, which AD-8 governs.
 
 ### AD-2 — Module boundaries and cross-module contracts
 
@@ -169,7 +169,7 @@ An arrow means "may call or reference". There is no reverse edge. In particular,
   1. Every stored row carries `OwnerId` (the Google `sub`), and every index leads with it.
   2. The Owner is resolved **only** from the session (REST) or from the token (MCP), never from input.
   3. In Phase 0, authentication becomes middleware. Two schemes are registered, `EchoSession` (the Redis session cookie) and `EchoPat` (the `atl_` bearer token), and `app.UseAuthentication()` and `UseAuthorization()` are enabled; Phase 2 adds a third, `EchoService` (AD-20). A **fallback policy requires an authenticated principal** on `/api/**` **and** `/internal/**`. Only `api/auth/*`, `/health` and the legal pages are marked `[AllowAnonymous]`; nothing under `/internal/**` ever is. The `EchoPat` scheme is accepted only on `/api/mcp`. `/internal/**` accepts only `EchoService`, and `EchoService` is accepted nowhere else. A test enumerates every endpoint and fails if one under `/api/**` or `/internal/**` lacks a policy.
-  4. A test fixture with two Owners proves that neither a session nor a token can read the other Owner's rows. It runs for every module (NFR-07).
+  4. A test fixture with two Owners proves that neither a session nor a token can read or change the other Owner's rows, and that the `EchoAdmin` policy (AD-29) reads no Owner's data. It runs for every module, route, MCP tool, worker queue and cache (AD-28). It is a **hard gate** (NFR-07): it runs on every PR, blocks the merge on a failure, and must pass before any user other than the first Owner is allowlisted.
 - *Context:* today the scoping is correct, but it is enforced per controller by hand. *Alternatives:* keep the per-controller helpers (rejected: a new route can silently skip them). *Consequences:* `GoogleTokenService.UserIdKey` becomes a claim; MCP owner resolution moves from inline middleware into the `EchoPat` handler.
 
 ### AD-4 — Three data tiers: Source, Derived, Decision [ADOPTED for fusion]
@@ -222,7 +222,8 @@ An arrow means "may call or reference". There is no reverse edge. In particular,
 - **Prevents:** a background job that starves interactive requests; a design that assumes PostGIS, a GPU or more memory.
 - **Rule:**
   - No PostGIS and no Postgres extensions beyond core. Use bounding-box and `(OwnerId, Lat, Lon)` index pre-filters with exact distance in C#, as `Geo.cs` does.
-  - Background work runs in **bounded batches with pauses** (the reference is 500 items with 400 ms pauses). It is single-flight per Owner, resumable from persisted progress, and yields while an interactive request for the same Owner is in flight.
+  - Background work runs in **bounded batches with pauses** (the reference is 500 items with 400 ms pauses). It is single-flight per Owner, resumable from persisted progress, shared **round-robin across Owners** (AD-30), and yields while an interactive request for any Owner is in flight.
+  - Echo is sized for **a handful of users** (PRD A-10, default allowlist maximum 10). Adding users beyond that is an architecture update, not an allowlist edit.
   - Every list endpoint and tool has a hard cap (§6).
   - Compute that needs more than 256 MiB of working set, or minutes of CPU per item, runs outside the API pod (AD-20).
   - Every new pod declares requests and limits and fits the node budget recorded in `raspberry_deployment`.
@@ -235,7 +236,7 @@ An arrow means "may call or reference". There is no reverse edge. In particular,
 - **Rule:**
   - REST answers use `ApiResponse<T>` `{success, data, error{code, message, details, timestamp}}`.
   - Codes are `UPPER_SNAKE`, unique across modules, and documented beside the existing ones.
-  - New codes: `TIER_NOT_GRANTED` (403), `DECISION_CONFLICT` (409, a decision made against a stale derived state), `EXPORT_IN_PROGRESS` (409), `FACES_DISABLED` (403), `DERIVATION_NOT_READY` (503).
+  - New codes: `TIER_NOT_GRANTED` (403), `DECISION_CONFLICT` (409, a decision made against a stale derived state), `EXPORT_IN_PROGRESS` (409), `FACES_DISABLED` (403), `DERIVATION_NOT_READY` (503), `NOT_INVITED` (403, sign-in by an account not on the allowlist, AD-29), `USER_CAP_REACHED` (409, the allowlist maximum, AD-29), `OWNER_QUOTA_EXCEEDED` (429, a per-Owner cap, AD-30).
   - MCP keeps MCP-native tool errors, with the same code strings in the message text.
   - Unavailability is 503 with `Retry-After`, never a sign-out.
 
@@ -289,6 +290,35 @@ An arrow means "may call or reference". There is no reverse edge. In particular,
   - A K8s Secret volume or file-backed ring (rejected: keys could not roll, and a file on a local-path PVC pins the backend to one node).
   - Vault Transit (rejected for now: no transit engine is set up; reconsider if one is).
 - *Consequences:* losing Redis no longer loses data, and losing Postgres no longer stops Contacts. Losing the Vault certificate loses data, so the Vault backup becomes part of NFR-05. The Redis mirror holds only wrapped keys, which are useless without the Vault certificate (NFR-08 holds).
+
+### AD-28 — Tenancy is a first-class invariant: everything is scoped to one Owner
+
+- **Binds:** every table, Redis key, worker queue, cache, MCP token, Assistant tool, file, log line and backup; every module; NFR-07, NFR-08; FR-01, FR-44, FR-46 to FR-49, FR-51; PRD §2.2 (Q-1).
+- **Prevents:** one Owner's data reaching another through a shared cache, a queue item processed under the wrong owner, a geocode or name cache keyed only by its input, a face template compared across Owners, or a file or export that mixes Owners.
+- **Rule:**
+  - **Tables.** Every table that holds user data has `OwnerId` (AD-3). The only tables without it are **system tables**, listed here and nowhere else: `platform.data_protection_keys`, `faces.data_protection_keys`, `platform.allowlist` and `platform.user_roles` (AD-29), and the EF history tables. A test fails if any other entity lacks `OwnerId`.
+  - **Redis.** Every key that holds user data starts with `echo:{OwnerId-hash}:` (sessions, rate-limit counters, name cache, any future cache). Purging an Owner is a prefix scan. Only the Data Protection mirror is unscoped.
+  - **Queues and jobs.** Every queue item and job (`fusion_queue`, `connect.derivation_queue`, `faces.jobs`, Touchpoints scans, source syncs) carries `OwnerId`, and the worker sets the ambient owner from the item, never from a previous item. A worker never holds two Owners' data in one batch.
+  - **Caches.** Caches are per Owner even where the input looks neutral: `connect.geocode_cache` is keyed by (OwnerId, text blind index), so one Owner's lookups never reveal another's addresses.
+  - **Tokens and grants.** PATs, Google grants, Microsoft grants and Sports Tracker sessions are per Owner and resolve to exactly that Owner (AD-3, AD-18).
+  - **Faces.** Clustering and matching run over one Owner's templates at a time. No query or job compares templates across Owners (AD-20).
+  - **Files.** Exports are streamed per Owner (AD-19). No user data is written to shared disk.
+  - **Backups** are system-level: one encrypted dump holds every Owner's data (AD-24). A restore is all-or-nothing, and re-applies every Owner's consent ledger and erase receipts before serving (AD-24).
+  - **Logs** carry the Owner id hashed, never in clear (§6).
+  - **Admin is not an Owner role.** The admin role (AD-29) manages the allowlist and reads usage counters. It never reads another Owner's rows.
+- *Context:* the code is already scoped per `sub` (AD-3), but with one Owner a leak had nowhere to go. *Alternatives:* a schema or a database per Owner (rejected: migrations multiply and the Pi's memory does not allow it at a handful of users; row scoping plus the hard-gate tests suffices); Postgres row-level security (deferred: a second line of defence worth adding if a leak is ever found, but EF Core with one app role does not need it to pass NFR-07). *Consequences:* a shared cache that is "obviously harmless" still needs the owner prefix.
+
+### AD-30 — Per-Owner fairness and caps in workers and egress
+
+- **Binds:** every hosted worker and idle task, the face worker, the egress registry (AD-7), `GeminiService`; NFR-09, NFR-11, NFR-18; FR-28, FR-52.
+- **Prevents:** one Owner's first photo pass or full re-fusion starving everyone else on the Pi; one Owner using up the global Nominatim rate or the global Gemini cap.
+- **Rule:**
+  - **Round-robin.** Each worker keeps one queue per Owner and takes **one bounded batch per Owner per turn**, in round-robin order (the AD-8 batch size and pauses). An Owner with a large backlog gets no more than one batch per turn. A newly queued Owner is served on the next turn, which keeps a new import's start under 5 min (NFR-18).
+  - **Concurrency.** Touchpoints scans stay at 3 concurrent overall, at most 1 per Owner.
+  - **Caps.** Gemini (as today) and geocoder lookups have **per-Owner** per-minute and per-day caps, plus a global daily cap, counted in Redis under the owner prefix (AD-28) so they survive a pod restart. A cap returns `OWNER_QUOTA_EXCEEDED` (429) to that Owner only.
+  - **Shared rate.** The global Nominatim limit of 1 req/s is a single token bucket shared round-robin across Owners, so one Owner's backlog cannot hold it.
+  - **Scheduled syncs** (OneDrive every 30 min, Sports Tracker every 6 h, FR-52) are spread across Owners with jitter, not fired together.
+  - The admin page shows each Owner's queue depth and usage against caps (AD-29), not their data.
 
 ## 4. Target Echo Architecture
 
@@ -356,8 +386,8 @@ erDiagram
 - **Binds:** `AtlasFusionWorker` (renamed `DerivationWorker`), Connect, the Timeline; NFR-09, NFR-12, NFR-14; FR-19, FR-27, FR-33, FR-34, FR-36, FR-40.
 - **Prevents:** several hosted workers racing over the same Owner's data and the same CPU; Connect derivation reading half-fused Atlas data.
 - **Rule:**
-  - One hosted worker drains per-Owner queues. `fusion_queue` stays as it is, and `connect.derivation_queue` holds time windows plus a `full` flag, with backoff.
-  - When idle, it runs the registered `IIdleTask`s in a fixed order: fusion → photo clock and placement → efforts → place identification (gated by the AD-7 switch) → **Person Links → address matches → Encounters → Timeline digest**.
+  - One hosted worker drains per-Owner queues, round-robin across Owners (AD-30). `fusion_queue` stays as it is, and `connect.derivation_queue` holds time windows plus a `full` flag, with backoff.
+  - When idle, it runs the registered `IIdleTask`s in a fixed order: fusion → source clock calibration (AD-31) → photo clock and placement → efforts → place identification (gated by the AD-7 switch) → **Person Links → address matches → Encounters → Timeline digest**.
   - Producers enqueue windows through `IIngestWindowListener`: Atlas ingest, a OneDrive sync, a Touchpoints scan or refresh, a decision, or a settings change.
   - Each task follows AD-8 (batches, pauses, progress) and publishes to the job board (AD-25).
   - Fusion for a window always completes before Connect derives over it.
@@ -370,11 +400,11 @@ erDiagram
 - **Prevents:** a `UNION` over seven tables per request on the Pi; a cached day that still shows data from a revoked tier.
 - **Rule:**
   - `connect.timeline_days` holds (OwnerId, local_date, items JSON, built_at, rule_version). Each item has: kind, start and end, source module, source id, **tier**, and resourceNames. Names are not stored. Item kinds: Activity, Visit, Encounter, meeting, email-touchpoint aggregate, photo group, health highlight.
-  - Email touchpoints are a **count per Person per day**. Message rows are never stored (Q-6 default; reverse by adding an `email` item kind under T1).
+  - Email touchpoints are a **count per Person per day**. Message rows are never stored (Q-6, answered 2026-10-28: the Owner chose the count).
   - Days are cut in the Owner's configured time zone, default `Asia/Jerusalem`, stored in `connect.settings`.
   - The worker rebuilds the days touched by each queued window.
   - `GET /api/timeline/days?from&to&person&place&type&area` (≤ 31 days per call) reads the digest, **drops items whose tier is not granted now** (AD-6), and resolves names from the client's loaded Contacts or from a short Redis cache.
-  - **Name cache.** Key `echo:names:{OwnerId-hash}:{resourceName}`, value = display name and phonetic name only, **encrypted with the protector `Echo.Connect.NameCache.v1`** (AD-11: third-party names are never stored in plain text, Redis included), **TTL 15 minutes**, no sliding. It is a cache only (AD-10): a miss reads People API. It is purged per Owner on sign-out, on T0 revocation and by erase (AD-19), and it is never exported.
+  - **Name cache.** Key `echo:{OwnerId-hash}:names:{resourceName}` (AD-28 prefix), value = display name and phonetic name only, **encrypted with the protector `Echo.Connect.NameCache.v1`** (AD-11: third-party names are never stored in plain text, Redis included), **TTL 15 minutes**, no sliding. It is a cache only (AD-10): a miss reads People API. It is purged per Owner on sign-out, on T0 revocation and by erase (AD-19), and it is never exported.
   - Detail views are fetched from the owning Area's API.
 - *Alternatives:* a `UNION` query with time paging (rejected under NFR-09); a SQL materialised view (rejected: a full refresh, no per-day rebuild). *Consequences:* the Timeline lags ingest by one worker cycle (≤ 5 min idle wake), and shows "building" through `DERIVATION_NOT_READY` until a day exists.
 
@@ -407,9 +437,10 @@ sequenceDiagram
   - **Links** use one scheme, routed by a single `linkRouter`: `contact:<resourceName>`, `atlas:activity/<id>`, `atlas:place/<id>`, `atlas:visit/<id>`, `timeline:<yyyy-mm-dd>`.
   - Writes remain Proposals (AD-5).
   - The Gemini disclosure text is extended per FR-31.
-  - The Gemini rate-limit counters move from memory to Redis, so they survive a pod restart.
+  - **Per-Owner switch (Q-5).** `connect_*` tools read the Owner's "Let Gemini word answers about people and places" entry in the consent ledger (AD-19, default on). With it off, the tool result is rendered in the UI as plain cards with citations and is **not** returned to the model; the model receives only "results shown to the user".
+  - The Gemini rate-limit counters move from memory to Redis, per Owner (AD-30), so they survive a pod restart.
   - A unit test fails if the serialised declarations of the composed registry are larger than 2× the largest single-Area toolset at `1e05abc` (a proxy for NFR-11). The real per-question tokens are recorded in `privacy.disclosure_counters`.
-- *Alternatives:* moving the agent loop to the server (deferred: larger change, no requirement needs it yet); router-selected tool subsets per question (deferred until the 2× budget is breached). *Default for Q-5:* the model sees matched results. *Reverse* by rendering `answers/*` results as a template in the UI, with no model call.
+- *Alternatives:* moving the agent loop to the server (deferred: larger change, no requirement needs it yet); router-selected tool subsets per question (deferred until the 2× budget is breached). *Q-5 (answered 2026-10-28):* the model sees matched results only, and each Owner can switch that off (plain cards, above).
 
 ### AD-18 — MCP tokens carry scopes; people and Connect are read-only over MCP
 
@@ -465,12 +496,13 @@ sequenceDiagram
 - **Binds:** the Privacy module (`privacy` schema), every module that stores Owner data; FR-46, FR-47, FR-48, FR-49, FR-50; NFR-04, NFR-08; P-6.
 - **Prevents:** a new table that export or delete forgets; revocation that deletes data but leaves the Google grant, or the reverse; an export left on disk.
 - **Rule:**
-  - **Consent ledger.** `privacy.consent_events` is append-only: tier, action, scopes, at, actor. `privacy.tier_state` is its current projection. The background-lookup switch, the address-lookup switch (off by default, AD-14) and per-source connections are entries in the same ledger.
+  - **Consent ledger (per Owner).** `privacy.consent_events` is append-only and keyed by `OwnerId`: tier, action, scopes, at, actor. `privacy.tier_state` is its current projection per Owner. The background-lookup switch, the address-lookup switch (off by default, AD-14), the Gemini-wording switch (on by default, AD-17) and per-source connections are entries in the same ledger. One Owner's ledger never changes another's state.
   - **Revoking a tier** runs its handlers (AD-6), then, if the tier is a Google one, **revokes the whole Google grant** (Google does not revoke scopes one by one) and asks the Owner to re-consent T0 plus the tiers that remain. It writes a receipt to `privacy.receipts`.
   - **Register.** The Privacy Center reads `privacy.disclosure_counters` (AD-7), PAT metadata and source connections. It never reads content.
   - **Contributors.** Each module implements `IOwnerDataContributor` with `ExportAsync(owner, ZipWriter)` and `EraseAsync(owner)`. A **test enumerates every EF entity type with an `OwnerId` across all DbContexts** and fails unless its module's contributor covers it.
   - **Export (FR-48).** `GET /api/privacy/export` **streams** a zip to the browser: JSON per table, GPX per Activity, CSV for health, and `manifest.json` with counts and a note on where Contacts and Photos live (Google Takeout, OneDrive). Nothing is written to disk on the server. Secrets, token hashes and blind indexes are excluded. Face data is included only with `?faces=true` (AD-20). nginx gets a dedicated `location /api/privacy/export` with `proxy_buffering off` and a 600 s timeout.
-  - **Erase (FR-49, Phase 3).** Erase runs every contributor's `EraseAsync` in dependency order, then revokes the Google and Microsoft grants, deletes the PATs and the session, and returns a receipt. The receipt's `OwnerId` hash is the only row kept.
+  - **Export is per Owner (FR-48).** It contains only the calling Owner's rows; the contributor test also checks that a two-Owner fixture exports nothing of the other Owner (AD-28).
+  - **Erase (FR-49, Phase 1).** Erase runs every contributor's `EraseAsync` for one Owner in dependency order, then revokes that Owner's Google and Microsoft grants and Sports Tracker session, deletes their PATs, sessions and Redis prefix (AD-28), and returns a receipt. The receipt's `OwnerId` hash is the only row kept, and a restore re-applies it (AD-24). The admin can start erase for a user removed from the allowlist (AD-29); the admin gets only the receipt.
   - **Legal pages (FR-50)** are static routes in the SPA (`/privacy-policy`, `/terms`), served by nginx without authentication.
 
 ### 4.6 People in Photos (Phase 2, T4)
@@ -492,21 +524,22 @@ flowchart LR
   priv -- set control flag; purge in one transaction --> db
 ```
 
-### AD-20 — Face recognition runs in its own worker, on the Owner's hardware, in a schema that can be dropped
+### AD-20 — Face recognition runs in its own worker, on Echo's own hardware, in a schema that can be dropped
 
 - **Binds:** the Faces module, the `faces` schema, the echo-faces image and Deployment, Connect (face-cluster links and face evidence), Privacy; FR-43, FR-44, FR-45, FR-48; NFR-08, NFR-09, NFR-12, NFR-14; PRD §5.3; A-4; Q-2.
-- **Prevents:** face compute starving the API pod or the 3.7 GiB node; templates leaving the Owner's infrastructure; face data surviving revocation in backups, derived rows or the export.
+- **Prevents:** face compute starving the API pod or the 3.7 GiB node; templates leaving Echo's infrastructure; face data surviving revocation in backups, derived rows or the export; unnamed faces kept beyond review; one Owner's faces matched against another's.
 - **Rule:**
   1. **Process.** A separate .NET worker (`EchoFaces`, same solution, image `contacts-faces`, arm64) uses Microsoft.ML.OnnxRuntime on the CPU. Default models: **YuNet** for detection and **SFace** for embeddings, from the OpenCV Zoo (MIT and Apache-2.0 licences). InsightFace weights are not used, because they are licensed for non-commercial research only. It runs at a low `PriorityClass` with requests of 50m CPU and 64Mi, limits of 1000m CPU and 1Gi, on a node chosen by a values key.
   2. **On and off without replica toggling.** Flux owns the replica count, so the app never scales the Deployment: a runtime scale would be reverted on the next reconcile. The faces subchart has `faces.enabled` (default `false`), set in `raspberry_deployment`; when enabled, `replicas: 1` is fixed. At runtime the worker is switched by a flag in the database: the T4 handler in the Privacy module writes `faces.control` (OwnerId, enabled, changed_at). The worker polls it every 60 s. While no Owner has `enabled = true`, it holds no models in memory, leases no jobs and causes no Graph traffic, so it stays within its 64Mi request. When T4 is granted it loads the models and starts leasing; on revocation, the purge (rule 7) runs first, then `enabled = false` makes the worker drop its in-memory state within one poll. The backend also refuses every `/internal/faces/*` call for an Owner without T4, so a worker that has not yet seen the flag gets nothing.
-  3. **Photos and pixels through the internal API only.** The worker never reads another module's tables. It gets photo ids from `GET /internal/faces/photos?after=&limit=` (ids, taken-at and video flag only, paged, ≤ 500) and pixels from `GET /internal/faces/thumbnail/{photoId}` (a medium thumbnail fetched through Graph). Both are **cluster-internal**, authenticated by the `EchoService` scheme with a service token (`secret/data/contacts`, key `Faces__ServiceToken`), and not routed by nginx (AD-3). Pixels exist only in memory and are never stored. Photos only by default; videos are excluded (Q-2). New photos reach the worker as jobs that the backend enqueues in `faces.jobs` through `IIngestWindowListener` after a OneDrive sync.
+  3. **Photos and pixels through the internal API only.** The worker never reads another module's tables. It gets photo ids from `GET /internal/faces/photos?after=&limit=` (ids, taken-at and video flag only, paged, ≤ 500) and pixels from `GET /internal/faces/thumbnail/{photoId}` (a medium thumbnail fetched through Graph). Both are **cluster-internal**, authenticated by the `EchoService` scheme with a service token (`secret/data/contacts`, key `Faces__ServiceToken`), and not routed by nginx (AD-3). Pixels exist only in memory and are never stored. **Photos only:** `/internal/faces/photos` never returns videos, and the worker never requests them (Q-2, answered). New photos reach the worker as jobs that the backend enqueues in `faces.jobs` through `IIngestWindowListener` after a OneDrive sync.
   4. **Database access.** A DB role `echo_faces` may read and write only the `faces` schema. It has **no** grant on `atlas`, `platform`, `people`, `connect` or `privacy`.
   5. **Its own key ring.** Face templates and suppression centroids are encrypted with a **separate Data Protection ring**: application name `EchoFaces`, persisted in `faces.data_protection_keys`, wrapped with a separate certificate (`secret/data/contacts-faces`, key `Faces__DataProtection__Certificate`), protector purpose `Echo.Faces.Templates.v1`. Only the face worker and the backend's Faces module can unwrap it. The worker never sees the main ring (AD-12), so it cannot decrypt tokens, snapshots or Connect columns. Dropping the Owner's `faces` rows deletes the ring's ciphertext with them.
-  6. **Jobs and storage.** Jobs are leased from `faces.jobs` in batches of 50 with pauses, and are resumable. Progress goes to the job board. Clusters are never linked to a Contact without an Owner action. Naming a cluster writes `faces.cluster_names` and a `face_cluster` Person Link in `faces.person_links`. Encounters with face evidence are written to `faces.encounters` by the derivation worker through the Faces module (AD-14). "Never recognize" deletes the cluster and keeps only a minimal suppression centroid inside `faces`.
+  6. **Jobs and storage.** Jobs are leased from `faces.jobs` in batches of 50 with pauses, round-robin across Owners (AD-30), and are resumable. Progress goes to the job board. Clustering runs over one Owner's templates only; no job or query compares templates across Owners (AD-28). Clusters are never linked to a Contact without an Owner action. Naming a cluster writes `faces.cluster_names` and a `face_cluster` Person Link in `faces.person_links`. Encounters with face evidence are written to `faces.encounters` by the derivation worker through the Faces module (AD-14). "Never recognize" deletes the cluster and keeps only a minimal suppression centroid inside `faces`.
+     - **Named people only (Q-2, answered).** New unnamed clusters are offered in a **review session** (`faces.review_sessions`: OwnerId, opened_at, closed_at). When the Owner closes the session, or 30 days after it opened if it is left open, every cluster from it that was not named is deleted with its detections and templates, and its photos are marked scanned. Only named clusters, their faces and suppression centroids remain.
   7. **Revocation** is **synchronous**, in one transaction over the `faces` schema: delete every Owner row (detections, templates, clusters, names, suppressions, face Person Links, face Encounters and their decisions, jobs), and set `faces.control.enabled = false`. Then rebuild the affected Timeline days without face items and write a receipt. Nothing in `connect` holds face data, so nothing there needs purging. This is far inside the 24 h window.
   8. **Backups exclude the `faces` schema** (`pg_dump --exclude-schema=faces`). Because every face-derived row lives there (rule 6, AD-14), no backup holds face data, and deletion is complete when the receipt is written. The schema can be rebuilt from Photos plus consent.
   9. Faces never pass through AD-7 egress, Gemini or MCP.
-- *Alternatives:* running inside the API pod (rejected: the 512Mi limit, AD-8); cloud face APIs (rejected by the PRD); Python with insightface (rejected: the licence, plus a second runtime and crypto stack); scaling the Deployment between 0 and 1 from the app (rejected: Flux reverts it, and the app would need RBAC on its own Deployment); sharing the main key ring and SELECT on `atlas.photos` (rejected: the worker could decrypt all of Echo's secrets and would bypass AD-2); keeping face links and face Encounters in `connect` and purging them (rejected: `connect` is backed up, so copies would outlive revocation by up to the 8-week retention of AD-24). *Default for "offload":* on the cluster. *Reverse* by running the same image on an Owner-owned machine joined to the headscale tailnet, with Postgres reachable only over the tailnet. That still counts as the Owner's infrastructure. *Consequences:* the first pass over 157k Photos is a sizing assumption to validate with a 1,000-photo spike before Phase 2 is committed (a few days at about 1 Photo/s, including the Graph fetch).
+- *Alternatives:* running inside the API pod (rejected: the 512Mi limit, AD-8); cloud face APIs (rejected by the PRD); Python with insightface (rejected: the licence, plus a second runtime and crypto stack); scaling the Deployment between 0 and 1 from the app (rejected: Flux reverts it, and the app would need RBAC on its own Deployment); sharing the main key ring and SELECT on `atlas.photos` (rejected: the worker could decrypt all of Echo's secrets and would bypass AD-2); keeping face links and face Encounters in `connect` and purging them (rejected: `connect` is backed up, so copies would outlive revocation by up to the 8-week retention of AD-24). *Default for "offload":* on the cluster. *Reverse* by running the same image on an operator-owned machine joined to the headscale tailnet, with Postgres reachable only over the tailnet. That still counts as Echo's own infrastructure. *Consequences:* the first pass over 157k Photos is a sizing assumption to validate with a 1,000-photo spike before Phase 2 is committed (a few days at about 1 Photo/s, including the Graph fetch).
 
 ## 5. Phase 0 Platform Decisions
 
@@ -551,14 +584,18 @@ flowchart LR
 
 ### AD-24 — Nightly encrypted off-node backups with a restore drill each phase
 
-- **Binds:** Platform operations, `raspberry_deployment`; NFR-05, NFR-10; Q-8; SM-6.
-- **Prevents:** losing data when a node or a local-path volume is lost; backups that cannot be decrypted (keys missing) or that resurrect face data.
+- **Binds:** Platform operations, `raspberry_deployment`; NFR-05, NFR-10; FR-49; PRD §5.2; Q-8 (answered 2026-10-28); SM-6.
+- **Prevents:** losing data when a node or a local-path volume is lost; backups that cannot be decrypted (keys missing) or that resurrect face data or erased users; the backup key sitting beside the backups.
 - **Rule:**
-  - A CronJob runs `pg_dump -Fc --exclude-schema=faces` at 03:00 Asia/Jerusalem, encrypts the dump with `age` (the recipient key is in Vault `secret/data/contacts-backup`; the private key is held offline by the Owner), and uploads it to the **default target, the Owner's OneDrive** (an app folder, through rclone). It keeps 14 daily and 8 weekly copies, so any backup expires at most about 8 weeks after it was taken. This OneDrive upload is a Microsoft disclosure listed in PRD §5.2 and registered as an egress party (AD-7).
-  - **What erasure means for backups.** Face data never enters a backup (AD-20). Other data deleted by a tier revocation or by erase (FR-49) stays in older backups until they expire, at most about 8 weeks later. A restore re-applies the consent ledger before the backend serves anything: every tier revoked after the backup was taken has its handlers re-run, so restored data from a revoked tier is purged again and never served.
-  - The Vault data and its unseal material are backed up separately. They hold the DP certificate (AD-12) and the blind-index key (AD-11).
+  - **System-level, not per user.** One backup job, run by the operator, dumps the whole database, so each backup holds every Owner's data, encrypted (AD-28). Owners do not configure or see backups.
+  - A CronJob runs `pg_dump -Fc --exclude-schema=faces` at 03:00 Asia/Jerusalem and encrypts the dump with `age` before it leaves the pod. The CronJob holds only the `age` **recipient** (public key). The `age` **identity** (private key) is held in Vault, `secret/data/contacts-backup`, and is **never stored in Drive**.
+  - It uploads to the **operator's Google Drive** through rclone, into one backup folder. It keeps 14 daily and 8 weekly copies, so any backup expires at most about 8 weeks after it was taken.
+  - **Drive access (decision, logged 2026-10-28): OAuth with the `drive.file` scope**, not a service account. `drive.file` reaches only the files the backup job created, not the rest of the operator's Drive, and is a non-sensitive scope, so it needs no Google verification. It uses a **separate OAuth client** from Echo's sign-in client, so the Drive scope never appears on any user's consent screen and is never mixed with the exact-scope sign-in (AD-26). The operator consents once; the refresh token is stored in Vault (`secret/data/contacts-backup`). A service account was rejected: it has no Drive storage of its own outside a Workspace shared drive, so it cannot simply write into a personal Drive.
+  - The upload is a Google Drive disclosure, listed in PRD §5.2 and registered as a system egress party (AD-7), counted under a system owner, not under any user.
+  - **What erasure means for backups.** Face data never enters a backup (AD-20). Other data deleted by a tier revocation or by erase (FR-49) stays in older backups until they expire, at most about 8 weeks later. A restore re-applies, before the backend serves anything, every Owner's consent ledger (every tier revoked after the backup was taken has its handlers re-run) and every erase receipt (that Owner's rows are erased again). Restored data from a revoked tier or an erased Owner is purged again and never served.
+  - The Vault data and its unseal material are backed up separately, and **never to the same Drive folder**, so Drive alone never holds both ciphertext and key. Vault holds the DP certificate (AD-12), the blind-index key (AD-11) and the `age` identity.
   - A restore into a scratch namespace is run and recorded once per phase.
-- *Default for Q-8:* OneDrive. *Reverse* by changing the rclone remote (NAS or bucket). Nothing else changes.
+- *Alternatives:* OneDrive (replaced by the Owner's answer to Q-8); per-user backups into each user's own Drive (rejected by the Owner: backups are system-level); a NAS or a bucket (not chosen). *Reverse* by changing the rclone remote. Nothing else changes.
 
 ### AD-25 — Observability: delete the dead OTel config; make background jobs visible
 
@@ -571,10 +608,11 @@ flowchart LR
 
 ### AD-26 — Google OAuth in Production, unverified, with exact-scope requests [ADOPTED for scopes]
 
-- **Binds:** `AuthController`, `ScopePreferences`, the Google Cloud project; NFR-03; FR-01, FR-46, FR-47; Q-3; A-2.
+- **Binds:** `AuthController`, `ScopePreferences`, the Google Cloud project; NFR-03, NFR-19; FR-01, FR-46, FR-47, FR-51; Q-1, Q-3 (both answered 2026-10-28).
 - **Prevents:** the forced weekly re-consent caused by Testing mode; a token that carries both `gmail.metadata` and `gmail.readonly`, on which Gmail refuses content reads (T2 would break).
 - **Rule:**
-  - Publish the OAuth app to **Production, unverified** (the Owner alone sees the warning). This needs the FR-50 pages first. Keep `access_type=offline`.
+  - Publish the OAuth app to **Production, unverified**, in Phase 0 (Q-3). Every user sees Google's "unverified app" warning, and the app may have **at most 100 users in its lifetime**. This needs the FR-50 pages first. Keep `access_type=offline`.
+  - **Restricted scopes.** `gmail.metadata` (T1) and `gmail.readonly` (T2) are restricted. They stay available to invited users under the unverified warning. Verification plus a yearly CASA assessment is the gate before opening beyond the invited circle (NFR-19); AD-29's allowlist maximum keeps Echo well under the 100-user cap until then.
   - **Keep exact-scope requests [ADOPTED].** Every sign-in asks for exactly the scope set of the tiers the Owner holds, computed by `ScopePreferences.ScopesFor` (T0 base, plus T1, or T2 with `gmail.readonly` replacing `gmail.metadata`). **Do not set `include_granted_scopes`.** Adding a tier re-requests the full set, so no tier is dropped; the existing two-step "ask again for the missing scopes" flow in `AuthController` stays.
   - Revoking a tier revokes the whole grant and re-consents with the remaining set (AD-19), which follows from exact scopes.
   - The source of the tier set moves from `optins:` in Redis to `privacy.tier_state` (§4.4); the request logic does not change.
@@ -584,19 +622,42 @@ flowchart LR
   - One Google grant per tier, with separate refresh tokens (rejected: Google issues one grant per client and account, so a second consent replaces or merges the first; it would also double the revocation paths).
   - Dropping `gmail.metadata` and using `gmail.readonly` for T1 as well (rejected: T1 would then hold a permission that can read every message body, against PRD §5.1).
 - *Consequences:* Epic 7's claim that `include_granted_scopes` is used is **superseded**, not made true (§13; PRD NFR-06).
-- *Reverse* (Q-3 = verify): submit for verification of the Contacts and Calendar scopes. Gmail scopes would also need CASA, so T1 and T2 would stay "unverified" or would have to be dropped.
+- *Next step (NFR-19, not scheduled):* submit for verification of the Contacts and Calendar scopes, and pass CASA for the Gmail scopes, before Echo opens beyond the invited circle. If CASA is not pursued, T1 and T2 cannot be offered beyond that circle.
 
 ### AD-27 — "Echo" is the product name in the app only
 
-- **Binds:** the SPA shell, the signed-out home, `<title>`, the Assistant system prompt; FR-03; Q-4.
+- **Binds:** the SPA shell, the signed-out home, `<title>`, the Assistant system prompt; FR-03; Q-4 (answered 2026-10-28: in-app name only).
 - **Prevents:** a partial rename that breaks Flux, OAuth redirects or Vault paths.
-- **Rule:** The product name comes from one constant (`ECHO_PRODUCT_NAME`). The repository, chart, images, namespace, Vault path `secret/data/contacts`, the DP application name `ContactsApi`, cookie names and `global.publicUrl` (`https://contacts.mayaffit.com`) keep their names. *Reverse* by renaming the infrastructure later, with a chart version bump and a Vault path alias.
+- **Rule:** The product name comes from one constant (`ECHO_PRODUCT_NAME`). The repository, chart, images, namespace, Vault path `secret/data/contacts`, the DP application name `ContactsApi`, cookie names and `global.publicUrl` (`https://contacts.mayaffit.com`) keep their names. No infrastructure rename is planned (Owner decision, Q-4).
+
+### AD-29 — Invite-only sign-in: an allowlist and an admin role
+
+- **Binds:** `AuthController` (OAuth callback), the `EchoSession` scheme, a new `AdminController`, the `platform` schema; FR-01, FR-49, FR-51; NFR-07, NFR-18, NFR-19; PRD §2.2 (Q-1).
+- **Prevents:** any Google account getting a session; an admin role that can read users' data; the user count drifting toward Google's 100-user lifetime cap.
+- **Rule:**
+  - **Allowlist.** `platform.allowlist` (email encrypted + blind index, AD-11; status ∈ `invited | active | removed`; invited_by; invited_at; first_sub). It is a system table (AD-28). In the OAuth callback, before anything is stored, the backend checks the ID token's verified email against the blind index. If it is not `invited` or `active`, the callback revokes the grant it just received, stores nothing, and returns `NOT_INVITED` (403) to a static "invitation needed" page. On the first successful sign-in, `first_sub` is bound, and later sign-ins match on `sub`.
+  - **Admin role.** `platform.user_roles` (OwnerId, role = `admin`). The first admin is bootstrapped from configuration (`secret/data/contacts`, key `Echo__BootstrapAdminEmail`) on first sign-in; there is no UI to grant the role. An `EchoAdmin` authorization policy guards `/api/admin/**` only.
+  - **What the admin sees.** Allowlist entries, last sign-in, queue depth and usage against caps (from `privacy.disclosure_counters` and `platform.job_runs`), and the lifetime count of distinct users. Admin endpoints never call a module's data API, and the AD-3 isolation fixture asserts this.
+  - **Limits.** `Echo__MaxUsers` (default 10, PRD A-10) caps `invited + active` entries; adding beyond it returns `USER_CAP_REACHED` (409). The lifetime distinct-user count is kept because removed users still count toward Google's cap.
+  - **Removal.** Marking an entry `removed` deletes that Owner's sessions and Redis prefix, disables their PATs and stops their scheduled syncs. The admin can then start that Owner's erase (AD-19) and receives only the receipt.
+- *Alternatives:* open sign-up (rejected by the Owner, Q-1); Google Workspace domain restriction (not applicable to personal accounts); an allowlist in Helm values (rejected: every invite would be a deploy, and emails would sit in git).
+
+### AD-31 — Samsung Health times are calibrated against matched GPS sources
+
+- **Binds:** Atlas import (Samsung Health parser), `AtlasFusionService`, the derivation worker; FR-19, FR-26, FR-34, FR-53; P-1, P-9; AD-4.
+- **Prevents:** health trends and Encounters built on shifted times; correcting a source record in place, which would break P-1.
+- **Rule:**
+  - **Calibration set.** Fused pairs of a Samsung Health exercise session with a Sports Tracker or GPX track (fusion already records their start-time conflicts).
+  - **Detect.** Per Owner and per period (split at DST changes), the median signed start-time difference over the pairs. A median near a whole number of hours with a tight spread is taken as a clock offset (for example local time stored as UTC). Periods without pairs take the nearest period's offset, as `PhotoClock` does.
+  - **Store and apply.** Offsets live in `atlas.source_clock_offsets` (OwnerId, source, period start and end, offset, pair count, rule_version), a derived table (AD-4). The raw source time is never edited; the importer and fusion read the corrected time through one function. New imports apply the current offsets; a change in offsets enqueues re-fusion of the affected windows, so existing rows are corrected by recomputation.
+  - **Visible.** Each corrected record shows its raw and corrected time ("Why?", P-9), and the job board reports the median absolute difference vs matched GPS sources. The Phase 0 exit is under 60 s.
+  - It runs as an idle task right after fusion (AD-15) and never compares across Owners (AD-28).
 
 ## 6. Consistency Conventions
 
 | Concern | Convention |
 |---|---|
-| Owner id | `OwnerId` (string, Google `sub`), the first column of every index. Never accepted from input (AD-3) |
+| Owner id | `OwnerId` (string, Google `sub`), the first column of every index. Never accepted from input (AD-3). Redis keys start `echo:{OwnerId-hash}:`; queue items and jobs carry `OwnerId`; only the system tables in AD-28 lack it |
 | Person reference | `ResourceName` (`people/c…`) of the primary Contact (AD-13). No Echo person GUID |
 | Ids | Atlas and Connect rows use `Guid` PKs. Cross-schema references are plain columns, with no FK (AD-10) |
 | Time | Stored as UTC `timestamptz`. Local days are computed in the Owner's time zone setting (AD-16). API uses ISO 8601 with offset |
@@ -607,14 +668,14 @@ flowchart LR
 | Schemas | `atlas`, `people`, `connect`, `privacy`, `platform`, `faces`; snake_case table names; EF history table `__ef_migrations` in each schema |
 | Encryption | Data Protection purpose `Echo.<Module>.<Table>.<Column>.v<n>`; blind index column `<column>_bidx` (AD-11) |
 | Errors | `ApiResponse` envelope, `UPPER_SNAKE` codes (AD-9) |
-| Routes | `/api/<module>/…` (`/api/connect`, `/api/timeline`, `/api/privacy`, `/api/platform`); internal-only routes under `/internal/…`, never proxied by nginx |
+| Routes | `/api/<module>/…` (`/api/connect`, `/api/timeline`, `/api/privacy`, `/api/platform`); `/api/admin/…` under the `EchoAdmin` policy (AD-29); internal-only routes under `/internal/…`, never proxied by nginx |
 | Caps | Lists ≤ 2,000 per kind (as in Atlas); timeline ≤ 31 days per call; Connect answers ≤ 10 records; export streamed |
 | Assistant tools | Name prefix by Area (`contacts_`, `atlas_`, `connect_`, `timeline_`); each declares its tier (AD-17) |
 | Links | `contact:`, `atlas:activity/`, `atlas:place/`, `atlas:visit/`, `timeline:` (AD-17) |
 | Frontend state | New Areas (Timeline, Privacy) use Redux Toolkit slices and `BackendApiClient` with zod at the service layer, like Contacts. Atlas `useState` stays as it is |
 | Frontend routes | `/contacts`, `/atlas`, `/timeline`, `/privacy` in `SiteShell`; `/privacy-policy`, `/terms` public |
 | Logging | Serilog structured, with `OwnerId` hashed in log properties, never email addresses or names |
-| Tests | xUnit per module, including the two-Owner isolation fixture (AD-3) and the contributor coverage test (AD-19); Jest + jest-axe for every new view (NFR-15) |
+| Tests | xUnit per module, including the two-Owner isolation fixture (AD-3, a merge-blocking hard gate, NFR-07), the `OwnerId` coverage test (AD-28), the round-robin fairness test (AD-30) and the contributor coverage test (AD-19); Jest + jest-axe for every new view (NFR-15) |
 | Docs | Each PR that changes behaviour updates the as-built docs in the same PR (NFR-06) |
 
 ## 7. Stack
@@ -669,10 +730,10 @@ helm/contacts/charts/faces/          # Phase 2 subchart, faces.enabled: false by
 
 | Schema | Owner module | Tier gate | In backup | Phase |
 |---|---|---|---|---|
-| `atlas` | Atlas | T3 per source | yes | built |
+| `atlas` | Atlas | T3 per source (plus `source_clock_offsets`, AD-31) | yes | built |
 | `people` | Contacts / Touchpoints | T0 grants, T1 snapshot and events | yes | 0 |
 | `privacy` | Privacy | n/a | yes | 0–1 |
-| `platform` | Platform | n/a | yes (wrapped keys) | 0 |
+| `platform` | Platform | n/a (holds the system tables: DP keys, allowlist, user roles) | yes (wrapped keys) | 0 |
 | `connect` | Connect | inherits from its evidence; never holds face evidence | yes | 1 |
 | `faces` | Faces | T4 (also holds face Person Links, face Encounters and the faces key ring) | **no** | 2 |
 
@@ -682,7 +743,7 @@ helm/contacts/charts/faces/          # Phase 2 subchart, faces.enabled: false by
 
 | FR | Status | Lives in | Governed by | Phase |
 |---|---|---|---|---|
-| FR-01 Google sign-in | Built | `AuthController`, `EchoSession` scheme | AD-3, AD-26 | 0 (auth middleware) |
+| FR-01 Google sign-in | Built | `AuthController`, `EchoSession` scheme | AD-3, AD-26, AD-28, AD-29 | 0 (auth middleware, allowlist, Production unverified) |
 | FR-02 Area shell | Built | `SiteShell` | §6 routes | — |
 | FR-03 Echo branding | Proposed | SPA shell constant | AD-27 | 0 |
 | FR-04 Hebrew UI | Planned | SPA i18n layer (deferred) | §10 | 3 |
@@ -694,7 +755,7 @@ helm/contacts/charts/faces/          # Phase 2 subchart, faces.enabled: false by
 | FR-13 Reach out | Built; re-homed | dismissals → `people.dismissals` | AD-10 | 0 |
 | FR-14, FR-15 | Built | Touchpoints, `EnrichController` | AD-5, AD-7 | — |
 | FR-16 Relationship extras | Planned | Touchpoints; write tier deferred | AD-5, AD-6, §10 | 3 |
-| FR-17, FR-18 Imports and sources | Built | Atlas | AD-4, AD-7, AD-19 | — |
+| FR-17, FR-18 Imports and sources | Built | Atlas | AD-4, AD-7, AD-19, AD-28 | — |
 | FR-19, FR-20 Fusion | Built | Atlas, `AtlasFusionWorker` today (to be renamed `DerivationWorker` by AD-15 in Phase 1) | AD-4, AD-15 | — |
 | FR-21 Pin a field's source | Planned | `fusion_decisions` (new kind `pin`) | AD-4 | 3 |
 | FR-22 to FR-25, FR-27 | Built | Atlas | AD-8, AD-7 | — |
@@ -720,8 +781,12 @@ helm/contacts/charts/faces/          # Phase 2 subchart, faces.enabled: false by
 | FR-46 Per-feature opt-ins | Built; re-homed | `privacy.tier_state` | AD-6, AD-19 | 0–1 |
 | FR-47 Privacy Center | Proposed | Privacy module, `/privacy` | AD-19, AD-7, AD-6 | 1 |
 | FR-48 Export | Planned | `IOwnerDataContributor.ExportAsync` | AD-19 | 1 |
-| FR-49 Delete everything | Planned | `IOwnerDataContributor.EraseAsync` | AD-19 | 3 |
+| FR-49 Delete everything | Planned | `IOwnerDataContributor.EraseAsync`; admin-started erase | AD-19, AD-24, AD-28, AD-29 | 1 |
 | FR-50 Legal pages | Planned | SPA public routes | AD-19, AD-26 | 0 |
+| FR-51 Invite-only sign-up | Proposed | `platform.allowlist`, `platform.user_roles`, `AdminController` | AD-29, AD-3, AD-28 | 0 |
+| FR-52 Scheduled Sports Tracker sync | Planned | `AtlasSyncWorker` schedule, connection status | AD-8, AD-30, AD-25 | 1 |
+| FR-53 Samsung Health time alignment | Proposed | `atlas.source_clock_offsets`, calibration idle task | AD-31, AD-4, AD-15 | 0 |
+| FR-54 LinkedIn connections import | Planned | Atlas-style import into a `people` source table; Person Links of kind `linkedin` | AD-4, AD-13, AD-5 (P-7; detailed AD when scheduled) | 3 |
 
 ### 9.2 Non-Functional Requirements
 
@@ -731,21 +796,23 @@ helm/contacts/charts/faces/          # Phase 2 subchart, faces.enabled: false by
 | NFR-02 Automated build and test | Planned | AD-22, AD-23 | 0 |
 | NFR-03 Sign-in does not decay | Planned | AD-26 | 0 |
 | NFR-04 Durable Owner state | Planned | AD-10, §4.4 | 0 |
-| NFR-05 Backup and restore | Proposed | AD-24, AD-12 | 0 |
+| NFR-05 Backup and restore | Proposed | AD-24 (Google Drive, `drive.file`), AD-12 | 0 |
 | NFR-06 Docs match reality | Proposed | §13, §6 Docs convention (no AD) | 0 |
-| NFR-07 Owner isolation | Built for scoping; Proposed for tests | AD-3 | 0 |
+| NFR-07 Owner isolation (hard gate) | Built for scoping; Proposed for tests and the gate | AD-3, AD-28 | 0 |
 | NFR-08 Encryption at rest | Partial | AD-11, AD-12, AD-20 | 0–2 |
 | NFR-09 p95 ≤ 2 s on the Pi | Proposed | AD-8, AD-15, AD-16 | 1 |
 | NFR-10 Graceful degradation | Partial | AD-9, AD-10, AD-12, §4.4 | 0 (tests a, c, d), 1 (test b) |
-| NFR-11 Etiquette and cost caps | Partial | AD-7, AD-17 | 1 |
+| NFR-11 Etiquette and cost caps | Partial | AD-7, AD-17, AD-30 | 0 (per-Owner caps), 1 (budget) |
 | NFR-12 Recomputable derived data | Partial | AD-4, AD-15 | 1 |
 | NFR-13 Bilingual correctness | Partial | AD-13 (NameMatcher reuse) | 1 |
 | NFR-14 Background job observability | Partial | AD-25 | 0–2 |
 | NFR-15 Accessibility | Partial | §6 Tests convention (no AD) | 1–2 |
 | NFR-16 Security of external access | Partial | AD-3, AD-18 | 0–1 |
 | NFR-17 Supported runtimes | Proposed | AD-23 | 0 |
+| NFR-18 Per-user fairness and capacity | Proposed | AD-30, AD-8, AD-29 | 0 (caps, allowlist maximum), 1 (worker fairness) |
+| NFR-19 Google verification before opening up | Planned | AD-26, AD-29 | gate, not in a phase |
 
-**Coverage result:** all 50 FRs and 17 NFRs have an architectural home in this document. Most Proposed and Planned requirements map to at least one AD. The exceptions are governed by a convention or a deferral instead of an AD: **FR-04** (Hebrew UI, deferred in §10 until Phase 3 planning chooses an i18n library), **NFR-06** (the §6 Docs convention and the §13 correction list) and **NFR-15** (the §6 Tests convention). Each of these needs an AD only if its design turns out to constrain other modules.
+**Coverage result:** all 54 FRs and 19 NFRs have an architectural home in this document. FR-54 (LinkedIn, Phase 3) is governed by existing ADs and gets its own AD only when it is scheduled. Most Proposed and Planned requirements map to at least one AD. The exceptions are governed by a convention or a deferral instead of an AD: **FR-04** (Hebrew UI, deferred in §10 until Phase 3 planning chooses an i18n library), **NFR-06** (the §6 Docs convention and the §13 correction list) and **NFR-15** (the §6 Tests convention). Each of these needs an AD only if its design turns out to constrain other modules.
 
 ## 10. Deferred
 
@@ -756,40 +823,44 @@ helm/contacts/charts/faces/          # Phase 2 subchart, faces.enabled: false by
 | Tool subsets per question | Only needed if the 2× token budget test fails | the AD-17 budget test fails |
 | Hebrew UI (FR-04) | Phase 3; the data side is already bilingual | Phase 3 planning; choose an i18n library then |
 | Write tier above T2 (FR-16 actions) | PRD §5.1: not defined until scheduled | FR-16 actions are scheduled; needs a new tier under AD-6 |
-| Later sources (§4.11) | P-7: they map into Source tables of existing schemas | Q-7 is answered |
+| Later sources (§4.11) | P-7: they map into Source tables of existing schemas. LinkedIn (FR-54) is first (Q-7) | Phase 3 planning; LinkedIn first |
 | Replacing the Bitnami Postgres and Redis images | Pinned by digest, with no forced change today; the images are no longer maintained | a CVE, or the next Postgres major; candidates: official `postgres` and `redis` images or CloudNativePG |
-| Postgres HA or replication | One Owner; NFR-05 off-node backup covers node loss | RPO under 24 h is needed |
-| Sports Tracker scheduled sync (Q-9) | A product choice; it fits `AtlasSyncWorker` with no new AD | Q-9 is answered |
-| Samsung Health exclusion (Q-10) | A per-source flag in fusion and Connect settings | Q-10 is answered; default: kept as evidence and flagged unverified |
-| Multi-user (Q-1) | AD-3 keeps it possible | Q-1 turns yes |
+| Postgres HA or replication | A handful of users; NFR-05 off-node backup covers node loss | RPO under 24 h is needed |
+| Postgres row-level security | AD-28 row scoping plus the NFR-07 hard gate suffice at this scale | an isolation leak is ever found, or the user count grows |
+| Google verification and CASA (NFR-19) | Production, unverified covers the invited circle | Echo is to open beyond the invited circle, or the lifetime user count nears 100 |
 
 ## 11. Assumptions
 
 | Id | Assumption | Used by |
 |---|---|---|
-| AA-1 | Backups go to the Owner's OneDrive by default (Q-8). | AD-24 |
+| AA-1 | *Withdrawn 2026-10-28:* the Owner decided the backup target (Google Drive, Q-8). | — |
 | AA-2 | The face worker runs on the cluster by default, on the node with more free memory; rasp01's capacity is not recorded. | AD-20 |
 | AA-3 | Timeline days use `Asia/Jerusalem` unless the Owner sets another zone. | AD-16 |
-| AA-4 | Branding is in-app only (Q-4). | AD-27 |
+| AA-4 | *Withdrawn 2026-10-28:* the Owner decided that branding is in-app only (Q-4). | — |
 | AA-5 | The Redux store already spans the whole shell, so Contacts tools can load lazily in Atlas. | AD-17 |
 | AA-6 | YuNet and SFace give enough accuracy for family-scale clustering; a 1,000-photo spike confirms it before Phase 2. | AD-20 |
-| AA-7 | The PRD assumptions A-2 to A-9 are inherited as stated (A-1 was withdrawn in the PRD). A-4 and A-6 are validated by the Phase 2 spike and the Phase 1 p95 measurement. | AD-8, AD-14, AD-20, AD-26 |
+| AA-7 | The PRD assumptions A-3 to A-10 are inherited as stated (A-1 and A-2 were withdrawn in the PRD). A-4 and A-6 are validated by the Phase 2 spike and the Phase 1 p95 measurement; A-10 (a handful of users) by the allowlist maximum. | AD-8, AD-14, AD-20, AD-29, AD-30 |
 | AA-8 | A Google People sync token is enough to detect Contacts deleted outside Echo. | AD-13 |
 | AA-9 | Native `ubuntu-24.04-arm` GitHub runners are available to this private repository on the Owner's plan. Not checkable from the repository. | AD-22 |
 | AA-10 | Remote MCP clients pass a Cloudflare Access policy. The policy lives in Cloudflare, not in either repository (PRD A-9). | AD-18, NFR-16 |
 | AA-11 | rasp02 has 3.7 GiB of RAM and hosts Postgres and Redis. Taken from the live cluster, not from either repository. | §2.2, AD-1, AD-8, AD-20 |
 | AA-12 | Address lookup is off by default (PRD FR-36, FR-47, §5.2). With it off, event locations count as absent and address matches do not run, which lowers SM-2. | AD-14 |
+| AA-13 | The operator's Google Drive has room for 14 daily and 8 weekly encrypted dumps, and an rclone remote with the `drive.file` scope works with a separate OAuth client in Production without verification (`drive.file` is a non-sensitive scope). | AD-24 |
+| AA-14 | Samsung Health errors, if any, are systematic per period (time zone or DST), so a per-period offset is enough to reach the < 60 s target. If not, FR-53 needs a per-record method. | AD-31 |
 
 ## 12. Open Questions
 
-1. **Q-2 (PRD), faces.** Should T4 keep unnamed clusters after a review session, and should it include videos? The default is that unnamed clusters are kept until T4 is revoked, and videos are excluded. The licences of the YuNet and SFace models must be confirmed against the upstream LICENSE files before the Phase 2 spike.
-2. **Q-5 (PRD).** Does the Owner accept that Gemini sees the matched Connect results? AD-17 says how to reverse this.
-3. **Q-8 (PRD).** Confirm the backup target and who holds the `age` private key offline.
-4. **Node capacity.** Which node can host the face worker (1Gi) beside its current load? The other node's RAM is not recorded in `raspberry_deployment`.
+*All PRD questions (Q-1 to Q-10) were answered by the Owner on 2026-10-28. The ones this document had tracked are recorded first; the architecture's own open items follow.*
+
+1. **Q-2 (PRD), faces. — Answered (2026-10-28):** storing non-consenting people's faces is acceptable; only named people are kept (unnamed clusters are discarded when the review session ends); photos only; face data is per user and never matched across users (AD-20, AD-28). Still to do: confirm the YuNet and SFace licences against the upstream LICENSE files before the Phase 2 spike.
+2. **Q-5 (PRD). — Answered (2026-10-28):** Gemini receives the matched Connect results and their citations and writes the reply; a per-user switch shows them as plain cards instead (AD-17).
+3. **Q-8 (PRD). — Answered (2026-10-28):** Google Drive, system-level, encrypted with a key held in Vault and not in Drive; access through `drive.file` with a separate OAuth client (AD-24).
+4. **Node capacity.** Which node can host the face worker (1Gi) beside its current load? The other node's RAM is not recorded in `raspberry_deployment`. With several users, the face worker's first passes are serial per Owner (AD-30), so the time to finish all Owners grows with the user count.
 5. **Image controllers.** Can the Flux image-reflector and image-automation controllers (about 100 MiB in total) be enabled within the node budget? If not, the fallback is a CI job that opens a tag-bump PR in `raspberry_deployment`.
 6. **Bitnami images.** When should Postgres and Redis move off the unmaintained Bitnami images? Should it happen during Phase 0, while the backups are being set up?
 7. **Release trunk.** The process is feature → `dev` → `main`, and Flux tracks `main`. Confirm that the dev → main PR is the release approval (AD-22).
-8. **Q-3 (PRD).** Is Production-unverified acceptable (AD-26)?
+8. **Q-3 (PRD). — Answered (2026-10-28):** yes, Production, unverified, in Phase 0, with the multi-user constraints of PRD §2.2 (AD-26).
+9. **Q-1 (PRD). — Answered (2026-10-28):** multi-user, invite-only (AD-28, AD-29, AD-30). Q-4, Q-6, Q-7, Q-9 and Q-10 are answered too (AD-27, AD-16, §10, FR-52, AD-31).
 
 ## 13. Corrections to Earlier Documents
 

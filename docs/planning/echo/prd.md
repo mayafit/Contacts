@@ -11,20 +11,20 @@ updated: 2026-10-28
 
 ## 0. Document Purpose
 
-This PRD defines **Echo**, a personal intelligence system for one person, the Owner. It is written for the Owner, who decides scope, and for the downstream `bmad-architecture` and story workflows.
+This PRD defines **Echo**, a personal intelligence system. Each of its users is the **Owner** of their own data, and no user sees another's (§2.2). Echo began with one Owner and, since the Owner's answer to Q-1 (2026-10-28), serves a small invited circle. It is written for the first Owner, who is also the admin and decides scope, and for the downstream `bmad-architecture` and story workflows.
 
 Echo is not greenfield. Two Areas already run in production at https://contacts.mayaffit.com: **Contacts** (Epics 4–8) and **Atlas** (Epics 10–11). The PRD therefore describes Echo as one product, and it gives every functional requirement a **Status**:
 
 | Status | Meaning |
 |---|---|
 | **Built** | Runs in production today. Verified against the as-built inventories [contacts-as-built.md](contacts-as-built.md) and [atlas-as-built.md](atlas-as-built.md) (in this folder). |
-| **Planned** | Already in an epic document under `docs/planning/` (Epics 4–11) but not built. |
+| **Planned** | Already in an epic document under `docs/planning/` (Epics 4–11), or scheduled by an Owner decision recorded in §11, but not built. |
 | **Proposed** | New in this PRD, or only a one-line intent in an epic: mostly the Echo **Connect** layer, which joins people, places, time and photos, plus the platform realignment. Where an epic already named the intent, the FR cites it as its origin. |
 
 The rest of this document works as follows:
 - The Glossary (§3) fixes the vocabulary.
-- Features (§4) nest globally numbered requirements, FR-01 to FR-50.
-- Cross-cutting quality requirements are NFR-01 to NFR-17 (§6).
+- Features (§4) nest globally numbered requirements, FR-01 to FR-54. FR-51 to FR-54 were added after the Owner's answers of 2026-10-28, so they sit in the section they belong to, not in id order.
+- Cross-cutting quality requirements are NFR-01 to NFR-19 (§6).
 - Inferences are tagged `[ASSUMPTION]` and indexed in §13.
 - Technical "how" (mechanisms, storage, pipelines, remediation steps, and implementation details of Built behaviour such as error codes, scope names and thresholds) is in [prd-addendum.md](prd-addendum.md) for the architect.
 - The as-built inventories are the record of Built behaviour. The epics hold the original intent and detail, but in places they disagree with the code (NFR-06), so where they conflict, the as-built inventories win.
@@ -65,7 +65,7 @@ These are binding on every requirement. Downstream artifacts should cite them as
 - **P-5. The Owner has the last word.**
   - Manual merges, splits, confirmations and rejections persist across re-imports and re-computation.
   - A rejected link stays rejected.
-- **P-6. Private by default, opt-in by tier.** Each step that widens what Echo reads, or what leaves the Owner's infrastructure, is a separate, revocable opt-in (§5).
+- **P-6. Private by default, opt-in by tier.** Each step that widens what Echo reads, or what leaves Echo's infrastructure, is a separate, revocable opt-in (§5). Each Owner makes these choices for their own data only.
 - **P-7. Sources are pluggable.** A new source maps into the common records (contact, activity, visit, place, health sample, photo). The rest of Echo works unchanged.
 - **P-8. One entity per real-world thing** (from Epic 11).
   - One ride recorded by three sources is one Fused Activity.
@@ -87,11 +87,13 @@ These are binding on every requirement. Downstream artifacts should cite them as
 
 ### 2.1 The Owner
 
-There is one user, the **Owner**:
+Every user of Echo is the **Owner** of their own data. The **first Owner** is also the **admin** and the **operator**:
 - They are bilingual in Hebrew and English and live in Israel.
 - They ride bikes, hike and travel, and have decades of photos.
-- They self-host on a 2-node Raspberry Pi k3s cluster.
+- They self-host Echo on a 2-node Raspberry Pi k3s cluster, run its backups (NFR-05) and manage the allowlist of invited users (FR-51).
 - Their identity is their Google account.
+
+**Invited users** are a handful of friends and family whom the admin invites. Each one signs in with their own Google account, connects their own sources, and owns what Echo holds about them. Their jobs to be done are the same as the first Owner's.
 
 **Jobs to be done**
 - *Remember:* "When and where did I last see this person? Who was on that trip? What did we do that weekend?"
@@ -100,16 +102,23 @@ There is one user, the **Owner**:
 - *Understand myself:* training load, routines, places and trends, compared with the Owner's own history rather than generic norms.
 - *Own it:* know exactly what each third party sees, and be able to switch it off, export it or delete it.
 
-### 2.2 Multi-User Stance (decision)
+### 2.2 Multi-User Stance (decision, Q-1 answered 2026-10-28)
 
-**Echo is single-owner by design for the horizon of this PRD.**
-- There is no sign-up, sharing, tenant administration or family accounts.
-- The code is already scoped per owner (`OwnerId` = Google `sub` on every Atlas row, and every Redis key per `sub`), and that scoping **must be kept** (NFR-07). A second user is therefore never precluded by data design.
-- What *would* gate a second user is listed in Open Question Q-1. It includes Google OAuth verification, a CASA assessment for Gmail scopes, per-user cost caps, and consent from the people in a second user's data.
+**Echo supports more than one user. Each user owns their data, and no user ever sees another user's data.**
+- **Ownership.** Every record, setting, grant, consent, token, file and derived fact belongs to exactly one Owner. Nothing is shared, pooled or matched across Owners: not Contacts, not Places, not Encounters, not face data (FR-44). There are no family accounts, shared albums or shared views.
+- **Sign-up policy (FR-51).** **Default (logged 2026-10-28): invite-only.** Only a Google account on the allowlist can sign in. The allowlist is managed by the **admin**, who is the first Owner. There is no public sign-up. The admin role manages the allowlist only: it gives no access to any other user's data.
+- **Scale.** Echo is sized for **a handful of users** (A-10) on the operator's Raspberry Pi cluster. Pi capacity is a real limit (NFR-18), and the allowlist has a configurable maximum that stays well below Google's limit below.
+- **Per-user everything.** Each user has their own cost and rate caps (Gemini, geocoders; NFR-11, NFR-18), their own consent ledger and tiers (FR-46, FR-47), their own Google, OneDrive and Sports Tracker grants (FR-18, FR-46), their own export and erase (FR-48, FR-49), and isolation tests are a hard gate (NFR-07).
+- **The Google OAuth reality.** Echo signs users in with Google, and the Touchpoint tiers use Gmail. Plainly:
+  - Phase 0 moves the Google app to **Production, unverified** (Q-3). Every user sees Google's "unverified app" warning at sign-in, and Google allows such an app **at most 100 users over its lifetime** (users who are removed still count).
+  - The Gmail scopes that T1 and T2 use (`gmail.metadata`, `gmail.readonly`) are **restricted** scopes. Beyond test use, Google requires app verification **plus a yearly CASA security assessment** for them.
+  - **Plan:** while Echo serves the Owner and a small invited circle (at most 100 users in all), it stays Production, unverified. The Gmail-based tiers (T1, T2) stay available to invited users under the unverified warning. Full verification and CASA are a **gate before Echo opens beyond an invited circle** (NFR-19).
+- **People in other users' data.** Each invited user's contacts, photos and calendars describe people who never signed up. Each user is responsible for their own data, as the first Owner is for theirs; Echo's protections (tiers, T4 consent, "never recognize", erase) apply per user.
 
 ### 2.3 Non-Users
 
-- Other people in the Owner's life. They appear as **data**, not as users. They have no login, no view and no notification.
+- Other people in an Owner's life who are not invited. They appear as **data**, not as users. They have no login, no view and no notification. Being invited does not change this: a user who also appears in another user's data never sees that data.
+- Anyone not on the allowlist.
 - Anyone wanting a hosted SaaS, a social network or a shared family album.
 
 ### 2.4 Key User Journeys
@@ -135,20 +144,30 @@ There is one user, the **Owner**:
   - Realizes FR-39, FR-40.
 - **UJ-5. The Owner turns on People in Photos.** *(Proposed, Phase 2)*
   - The Owner opens Privacy, reads the biometric notice, and turns on face recognition.
-  - Echo works through the photo library on the Owner's own cluster. It then presents unnamed face clusters, and the Owner links clusters to contacts: their kids, Dana, Yoni.
+  - Echo works through the Owner's photos (not videos) on Echo's own cluster. It then presents unnamed face clusters in a review session, and the Owner links clusters to contacts: their kids, Dana, Yoni.
   - They mark one acquaintance as "never recognize". Their cluster is deleted and is not rebuilt.
+  - When the review session ends, the clusters the Owner did not name are discarded. Only named people are kept.
   - **Edge case:** they later turn the opt-in off. All face data is deleted, and Encounters that relied only on faces disappear.
   - Realizes FR-43 to FR-45.
 - **UJ-6. The Owner audits what leaves home.** *(Proposed)*
   - The Owner opens the Privacy Center. It shows each opt-in tier, its state, and the third parties that receive data and what they receive.
-  - They turn off automatic background place lookup, then export all of Echo's data as an archive.
+  - They turn off automatic background place lookup, then export all of their Echo data as an archive.
   - Realizes FR-47, FR-48.
+- **UJ-7. The admin invites a friend.** *(Proposed, Phase 0)*
+  - The admin adds Yoni's Google address to the allowlist.
+  - Yoni signs in with Google, sees Google's "unverified app" warning, continues, and lands in an empty Echo of their own: their own Contacts, no Atlas data yet, every tier off.
+  - Yoni connects their own sources and opts into tiers. Nothing of the admin's data is visible to Yoni, and nothing of Yoni's is visible to the admin.
+  - **Edge case:** someone not on the allowlist signs in. Echo refuses, stores nothing about them, and withdraws the Google permission they just gave.
+  - Realizes FR-01, FR-51.
 
 ## 3. Glossary
 
 *Downstream documents use these terms exactly.*
 
-- **Owner:** the single person Echo serves. Identified by a Google account `sub`. Every record belongs to exactly one Owner.
+- **Owner:** the user who owns the data. Identified by a Google account `sub`. Echo has several users, and each one is the Owner of their own data. Every record belongs to exactly one Owner, and no Owner can see another Owner's records.
+- **Admin:** the first Owner, who manages the allowlist (FR-51). The role gives no access to any other Owner's data.
+- **Allowlist:** the list of Google accounts that may sign in to Echo (invite-only, FR-51).
+- **Operator:** whoever runs Echo's cluster and its system-level backups (NFR-05). Today this is the admin.
 - **Area:** a top-level section of Echo in the shell. Today there are two, **Contacts** and **Atlas**. The Unified Timeline is proposed as a third.
 - **Contact:** a person in the Owner's Google Contacts. Google People API is its store (P-1), and Echo holds no copy of its fields.
 - **Activity Snapshot:** Echo's per-Owner summary of Touchpoints per email address. It is metadata only and needs Tier T1. Despite the historical name, it has nothing to do with an Activity.
@@ -181,6 +200,7 @@ The Owner signs in once with Google and moves between Areas in one shell. Echo p
 The Owner can sign in with Google and reach every Area with one session.
 - The identity is the Google `sub`. The session lasts 7 days, and when it expires the Owner is sent to sign in again, not shown an error.
 - Every record Echo stores is scoped to that `sub` (see NFR-07).
+- *Proposed (Phase 0):* sign-in also requires the account to be on the allowlist (FR-51), and the Google app runs in Production, unverified (NFR-03, §2.2).
 
 #### FR-02: Area shell — Built
 The Owner can switch between Areas from a left rail (a bottom bar on phones). `/` opens the last Area used.
@@ -189,7 +209,16 @@ The Owner can switch between Areas from a left rail (a bottom bar on phones). `/
 #### FR-03: Echo branding — Proposed
 The Owner sees the product as **Echo**: in the shell, the signed-out home, the browser title and the assistant's self-description. The Areas keep their names.
 - The URL https://contacts.mayaffit.com is unchanged, and so are existing deep links.
-- **Out of scope:** renaming repositories, charts, images or the domain (architect's call, addendum §A1).
+- **Out of scope (Owner decision, Q-4):** renaming repositories, charts, images or the domain. Echo is the in-app name only, and contacts.mayaffit.com stays.
+
+#### FR-51: Invite-only sign-up with an admin-managed allowlist — Proposed (Phase 0)
+Only Google accounts on the allowlist can sign in. The admin (the first Owner) can add and remove allowlist entries from an admin page. Realizes UJ-7.
+- An account that is not on the allowlist is refused at sign-in. Echo stores nothing about it and withdraws the Google permission it just received.
+- A new user starts with an empty Echo: every tier off, no sources connected.
+- The admin page shows each user's allowlist entry, last sign-in and usage against their caps (NFR-18). It never shows any user's data.
+- Removing a user blocks their next sign-in and ends their sessions and tokens. The admin can then run that user's erase (FR-49) without seeing the data.
+- The allowlist has a configurable maximum (default 10, A-10). Because Google counts every user an unverified app has ever had, toward a lifetime cap of 100 (§2.2), the admin page shows that count too.
+- The admin role cannot be granted from the UI. The first admin is set in the deployment configuration.
 
 #### FR-04: Hebrew interface — Planned (Epic 9 §5)
 The Owner can switch the interface to Hebrew with right-to-left layout.
@@ -291,7 +320,8 @@ The Owner can import Google Timeline (on-device export and older Takeout), Googl
 The Owner can connect, sync and disconnect **Sports Tracker** (incremental; the password is used once and never stored) and **OneDrive photos** (Microsoft Graph delta, every 30 minutes and on demand).
 - Disconnecting OneDrive deletes all of its Photo metadata.
 - A refused token renewal marks the connection as expired and visible to the Owner.
-- `[NOTE FOR PM]` Sports Tracker has no periodic sync, and a sync cut short by a restart ends as an error. Whether it should sync on a schedule is open (Q-9).
+- Each Owner connects their own OneDrive and Sports Tracker accounts. A connection, its stored secret and its synced data belong to that Owner only.
+- Today Sports Tracker syncs only on demand, and a sync cut short by a restart ends as an error. FR-52 adds a schedule (Q-9).
 
 #### FR-19: Fusion with provenance — Built
 Echo fuses Source Records that describe one real-world Activity into one Fused Activity. It uses per-source time and location tolerances and a match threshold, and the Owner can change both (saving them re-fuses everything). Realizes UJ-2.
@@ -304,6 +334,18 @@ The Owner can merge, split or change the type of an Activity. These decisions ar
 
 #### FR-21: Pin a field's source — Planned (Epic 11 Principle 5)
 The Owner can choose which source supplies a given field of a Fused Activity, and the choice survives re-fusion.
+
+#### FR-52: Scheduled Sports Tracker sync — Planned (Q-9, Phase 1)
+Once an Owner has connected Sports Tracker, Echo syncs it on a schedule, incrementally, as it does OneDrive: every few hours (default every 6 hours), plus on demand, at a polite request rate.
+- The Sports Tracker API is unofficial and may change or break without notice. A failed or interrupted sync is shown as the connection's status (for example "sync failed at 14:05, will retry", or "Sports Tracker changed; file import still works"), with backoff. It never crashes a worker or affects other sources or other Owners.
+- A sync cut short by a restart resumes on the next run instead of ending as an error.
+- File import (FR-17) stays available as the fallback.
+
+#### FR-53: Samsung Health time alignment is verified and fixed — Proposed (Q-10, Phase 0)
+Echo checks whether Samsung Health times are shifted and corrects them, so that Samsung data can be trusted in fusion, health trends and Encounters. Samsung Health is not excluded.
+- **Detect.** Fusion already pairs Samsung exercise sessions with the same outings from Sports Tracker or GPX tracks and records their start-time conflicts (FR-19). Echo uses these pairs to find any systematic offset, for example local time stored as UTC, or a one-hour DST shift, per period.
+- **Correct.** The offset found is applied to Samsung data on import and to the existing rows, as the photo clock calibration does for photos (FR-27). The raw source value is kept (P-1); the corrected time is what fusion, insights and Connect use. The Owner can see the correction applied to each record.
+- **Done when:** over the Owner's matched pairs, the median absolute start-time difference between Samsung Health and the matched GPS source is **under 60 s**. Echo reports this figure as a data-quality measure.
 
 ### 4.5 Atlas: Explore and Understand
 
@@ -336,7 +378,7 @@ For the current query, the Owner sees totals against the previous period, per-ty
 - Resting-HR trend.
 - "What could I improve" and "what I like", each compared with the Owner's own history.
 - Insight tools for the Assistant and MCP (places, activity).
-- `[NOTE FOR PM]` Samsung Health's time alignment is unverified (owner fact). It must be checked before health trends are trusted.
+- Health trends that use Samsung Health data rely on its corrected times (FR-53, Phase 0).
 
 ### 4.6 Atlas: Photos
 
@@ -358,7 +400,7 @@ In each Area, the Owner can chat with the Assistant in Hebrew or English. Answer
 - Usage is rate-limited per Owner per minute and per day, with a global daily cap. `[NOTE FOR PM]` Today a restart of the backend resets the counts, so the caps can be exceeded across restarts (addendum §A10).
 
 #### FR-29: MCP access with Personal Access Tokens — Built (Atlas only)
-The Owner can create and revoke Personal Access Tokens. External AI clients (MCP) can then search, read and edit Atlas data as that Owner. Their edits are direct writes, under the P-3 exception.
+The Owner can create and revoke Personal Access Tokens. External AI clients (MCP) can then search, read and edit Atlas data as that Owner. Their edits are direct writes, under the P-3 exception. A token reaches only its own Owner's data.
 - Echo stores only a hash of each token. Remote clients also pass through Cloudflare Access. `[ASSUMPTION A-9: the Cloudflare Access policy on remote MCP is configured outside this repository and was not checked here.]`
 - Today MCP exposes no Contacts, Photo or Connect data.
 
@@ -369,7 +411,8 @@ The Owner's conversations stream as they are generated and persist across sessio
 From any Area, the Owner can ask one question that needs Contacts, Atlas and Connect data together. The Assistant combines their tools in one conversation. Realizes UJ-3.
 - Links in an answer open the right Area: a contact card, an Activity, a Place or a day in the Unified Timeline.
 - The proposal rule (P-3) and the Gemini disclosure apply unchanged.
-- **Decision:** for a when, where or with-whom question, Gemini receives only the records that answer it and their citations, never bulk lists of people with locations. The disclosure says that results may name people together with places and times (Q-5 asks the Owner to confirm this).
+- **Decision (Owner, Q-5 answered 2026-10-28):** for a when, where or with-whom question, Echo computes the joins itself, and Gemini receives only the matched results and their citations, never bulk lists of people with locations. Gemini then writes the reply in natural language, as the Assistant already does for Contacts and Atlas. The disclosure says that results may name people together with places and times.
+- **Per-user switch.** Each Owner has a switch in the Privacy Center (FR-47), "Let Gemini word answers about people and places", **on by default**. With it off, the matched results are shown as plain cards with their evidence, and nothing about them is sent to Gemini.
 - If the Owner has not granted a tier the answer needs, the Assistant says so and does not work around it.
 - `[ASSUMPTION A-3: Gemini remains the model; this FR extends the existing disclosure rather than adding a provider.]`
 
@@ -432,7 +475,7 @@ In Atlas, the panels for an Activity, Visit and Place show the Persons met there
 The Owner can open a Unified Timeline: one chronological view, by day and by range, of:
 - Activities and Visits;
 - Encounters and meetings;
-- email touchpoints, aggregated per Person per day and never showing content;
+- email touchpoints, as a count per Person per day (Owner decision, Q-6). Individual messages are not shown, and content never is;
 - Photos;
 - health highlights.
 
@@ -449,25 +492,29 @@ For any Person Link or Encounter, the Owner can open "Why?" to see the exact rec
 
 ### 4.9 People in Photos (Proposed, Phase 2, Tier T4)
 
-Face recognition stores biometric data about the Owner and about people who never consented. It is therefore off by default, gated by its own explicit opt-in, and confined to the Owner's infrastructure.
+Face recognition stores biometric data about the Owner and about people who never consented. The first Owner has accepted storing face data of non-consenting friends and family (Q-2), on these terms: it is off by default, gated by its own explicit opt-in per Owner, confined to Echo's own infrastructure, kept only for people the Owner names, and computed from photos only, never videos. Each Owner's face data is their own: it is never shared with, shown to or matched against another Owner's.
 
 #### FR-43: Biometric opt-in — Proposed
 The Owner can turn on People in Photos only through a dedicated consent screen. The screen states:
 - what is computed (face detections and face templates);
-- where it is stored (only on the Owner's cluster);
+- where it is stored (only on Echo's own cluster, run by the operator);
 - that it covers other people;
+- that only people the Owner names are kept, and that only photos are scanned, not videos;
 - how to remove it.
 
 Realizes UJ-5.
 - Until the Owner gives this consent, no face detection runs on any Photo.
 - Turning the opt-in off deletes, within 24 hours, every face detection, template and Face Cluster, every Person Link to a Face Cluster, every Encounter that relied on faces, and the Owner's decisions about them. The Privacy Center confirms the deletion.
 - Face data and everything derived from it are never written to backups, so the deletion is complete when the Privacy Center confirms it. No backup copy has to expire.
-- `[ASSUMPTION A-4: detection and clustering can run in batch on the Owner's cluster; a first pass taking hours to days is acceptable.]`
+- `[ASSUMPTION A-4: detection and clustering can run in batch on Echo's cluster; a first pass taking hours to days is acceptable.]`
 
 #### FR-44: Face Clusters named by the Owner — Proposed
 Echo groups faces in the Owner's Photos into Face Clusters. The Owner names a cluster by linking it to a Contact, which creates a Person Link. No cluster is ever linked to a Contact without the Owner's action.
 - The Owner can split or merge clusters, remove a face from a cluster, and mark a cluster "never recognize". A cluster marked this way has its data deleted, and that person is not clustered again.
-- Face templates never leave the Owner's infrastructure, and no face data goes to Gemini or any other third party (§5).
+- **Named people only (Q-2).** Unnamed clusters are presented in a review session. When the session ends (or 30 days after it opened, if the Owner leaves it open), every cluster the Owner did not name is discarded with its detections and templates. Only named clusters are kept. A later scan of new photos can present new unnamed clusters in the next session.
+- **Photos only (Q-2).** Videos are never scanned.
+- **Per Owner.** Clustering runs over one Owner's photos at a time. Face templates and clusters are never compared, matched or merged across Owners, and no Owner can see another's face data.
+- Face templates never leave Echo's infrastructure, and no face data goes to Gemini or any other third party (§5).
 
 #### FR-45: People in Photos as evidence — Proposed
 Named Face Clusters make Photos evidence for Encounters (FR-34) and populate "Photos with X" in the contact card, Atlas and the Unified Timeline.
@@ -478,11 +525,12 @@ Named Face Clusters make Photos evidence for Encounters (FR-34) and populate "Ph
 #### FR-46: Per-feature opt-ins — Built
 - The Owner grants Gmail and Calendar metadata (T1) and email content (T2) through separate Google consents.
 - They connect each Atlas source separately.
+- Every grant (Google, OneDrive, Sports Tracker) is per Owner: one Owner's grant never gives Echo access to another Owner's accounts or data.
 - Each one can be undone in Echo: "forget my activity data" deletes the Activity Snapshot, disconnecting a source deletes its stored secret (and, for OneDrive, its Photo metadata), and deleting an import deletes its rows.
 - `[NOTE FOR PM]` Today Echo does not revoke the Google permissions themselves. That is done in the Google account, and the stored refresh token lasts up to 180 days (sliding). In-app revocation is part of FR-47.
 
 #### FR-47: Privacy Center — Proposed
-The Owner can open one Privacy page. Realizes UJ-6. It shows:
+The Owner can open one Privacy page, which covers their own data only. Realizes UJ-6. Each Owner has their own consent ledger: every grant, revocation and switch change they make is recorded for them, and never affects another Owner. The page shows:
 - each Opt-in Tier and its state;
 - each connected source;
 - each Personal Access Token;
@@ -490,9 +538,10 @@ The Owner can open one Privacy page. Realizes UJ-6. It shows:
 - From the Privacy Center, the Owner can revoke any tier, token or source. Revoking a Google tier deletes that tier's data and withdraws Echo's whole Google permission, because Google cannot withdraw one part of it. Echo then asks the Owner to sign in again and consent to the tiers they still want, so the new permission covers exactly those.
 - They can also turn off automatic background place lookups. Manual "Identify" still works.
 - They can turn **address lookup** on or off. It sends the text of calendar event locations and Contacts' postal addresses to OpenStreetMap (FR-34, FR-36). It is off by default.
+- They can turn "Let Gemini word answers about people and places" on or off (FR-31). It is on by default.
 
 #### FR-48: Export everything — Planned (Epic 9 §6)
-The Owner can export all data Echo holds for them as an archive of open formats (JSON, GPX, CSV), with a manifest. The archive covers:
+The Owner can export all data Echo holds for them as an archive of open formats (JSON, GPX, CSV), with a manifest. The archive holds that Owner's data only, never another Owner's. It covers:
 - Atlas records and their provenance;
 - import history;
 - Person Links and Encounters, with their decisions;
@@ -504,26 +553,34 @@ Realizes UJ-6.
 - Contact fields are not in the archive, because Google holds them. The manifest says so and points to Google Takeout.
 - Secrets and tokens are never exported.
 
-#### FR-49: Delete everything — Planned (Epic 9 §6)
+#### FR-49: Delete everything — Planned (Epic 9 §6; Phase 1)
 The Owner can delete all Echo-held data about themselves in one action, after a confirmation, and then gets a completion receipt.
-- Afterwards, no row with the Owner's `sub` exists in Echo's stores, and their Google and Microsoft grants are revoked.
+- Afterwards, no row with the Owner's `sub` exists in Echo's stores, and their Google and Microsoft grants and Sports Tracker connection are revoked. Other Owners' data is untouched.
+- The admin can run the same erase for a user removed from the allowlist (FR-51), without seeing that user's data.
 - Data in Google Contacts and OneDrive is not touched.
+- Older system backups still hold the erased data, encrypted, until they expire, at most about 8 weeks later (NFR-05). A restore re-applies the erase.
+- **Moved to Phase 1 (2026-10-28):** with invited users (Q-1), every user needs a way to leave Echo with their data deleted, and the admin needs one to remove a user cleanly.
 
 #### FR-50: Legal pages — Planned (Epic 9 §6)
-Echo publishes a privacy policy and terms page at stable URLs, as Google requires for an OAuth app in Production. They describe the tiers and the third parties in §5.
+Echo publishes a privacy policy and terms page at stable URLs, as Google requires for an OAuth app in Production. They describe the tiers and the third parties in §5, that Echo is invite-only and run by the operator, that each user's data is theirs and is not shared with other users, and that system backups hold every user's data, encrypted.
 
 ### 4.11 Later Sources — Planned
 
-All of these are in Epics 9–11 and are deferred past Phase 2. Each one maps into the common records (P-7), and none of them gets an FR yet:
-- LinkedIn Connections.csv;
+All of these are in Epics 9–11 and are deferred past Phase 2. Each one maps into the common records (P-7). The Owner chose LinkedIn as the first one (Q-7), so it has an FR; the others get one when they are scheduled.
+
+#### FR-54: LinkedIn connections import — Planned (Epic 9 S1; first source after Phase 2, Q-7)
+The Owner can import `Connections.csv` from their LinkedIn data export, and Echo links each connection to a Contact.
+- LinkedIn has no personal API, so this is an export import, like Google Timeline. Echo never scrapes LinkedIn or signs in to it (§7).
+- A connection whose email matches a Contact is linked automatically. A name or company match is only proposed, and the Owner confirms or rejects it (as for Person Links, FR-33). Contact fields are changed only through Proposals (P-3).
+- Re-importing a newer export updates connections without duplicates, flags job changes (company or title) as Proposals, and the import can be deleted like any other (FR-17).
+
+The remaining sources, in no fixed order yet:
 - a second Google account;
 - Microsoft 365 mail, calendar and contacts;
 - phone calls and SMS via Drive backups;
 - WhatsApp chat exports;
 - Strava and Garmin;
 - automatic web suggestions for Contacts (Programmable Search).
-
-Ordering them is Open Question Q-7.
 
 ## 5. Privacy Model
 
@@ -533,39 +590,42 @@ Privacy is a product pillar, not a compliance appendix. The requirements in §4.
 
 | Tier | What Echo reads | Default | Status |
 |---|---|---|---|
-| **T0: Base** | Google Contacts (read/write); the Owner's profile | On at sign-in | Built |
+| **T0: Base** | Google Contacts (read/write); the Owner's profile (and, from Phase 0, their email address, checked against the allowlist, FR-51) | On at sign-in | Built |
 | **T1: Touchpoints** | Gmail headers (From/To/Cc/date), Calendar events (time, attendees, title) | Off | Built |
 | **T2: Email content** | The permission (`gmail.readonly`, which replaces the T1 Gmail permission) allows reading the whole mailbox. Echo reads only the last 3 emails from each Contact the Owner chooses (up to 10), processes them in memory and never stores them. | Off | Built |
 | **T3: Life sources** | Each Atlas source connected or imported separately (Timeline, Sports Tracker, health exports, OneDrive photo metadata) | Off per source | Built |
 | **T4: Faces** | Face detections and templates computed from Photos | Off; separate biometric consent | Proposed |
 
+- Tiers are per Owner. One Owner's grants never widen what Echo reads for another.
 - The Connect layer needs no new tier, because it only joins data the Owner has already granted.
 - It never fills a gap in a tier the Owner has not granted (FR-31, FR-40).
-- Address lookup (FR-47) is not a tier, but it widens what leaves the Owner's infrastructure, so it is a separate switch and is off by default (P-6).
+- Address lookup (FR-47) is not a tier, but it widens what leaves Echo's infrastructure, so it is a separate switch and is off by default (P-6).
 - The Planned Assistant actions (FR-16) would need a further *write* tier above T2. It is not defined until those actions are scheduled.
 
 ### 5.2 Third-Party Disclosure Register
 
 | Third party | Receives | When | Owner control |
 |---|---|---|---|
-| **Google (People, Gmail, Calendar)** | API calls for the Owner's own data | T0–T2 | Revoke tier; Google account permissions |
-| **Google Gemini** | Assistant messages, the records the Assistant looks up (contacts and activities; with Connect, only matched results that name people with places and times, per FR-31), web search queries, and T2 email text for extraction | Only when the Owner uses the Assistant or enrichment | Do not use the Assistant; disclosure in the panel |
+| **Google (People, Gmail, Calendar)** | API calls for each Owner's own data, with that Owner's own grant | T0–T2 | Revoke tier; Google account permissions |
+| **Google Gemini** | Assistant messages, the records the Assistant looks up (contacts and activities; with Connect, only the matched results and citations that Echo computed, which name people with places and times, per FR-31 and Q-5), web search queries, and T2 email text for extraction | Only when the Owner uses the Assistant or enrichment; Connect results only while the Owner's switch is on (default on) | Do not use the Assistant; disclosure in the panel; switch "Let Gemini word answers about people and places" (FR-31, FR-47) |
 | **OpenStreetMap services** (Nominatim, Photon, Overpass) | Coordinates, including automatic background lookups of frequent Places (never home or work stays) | Manual Identify; background identification | Turn off background lookup (Proposed, FR-47) |
 | **OpenStreetMap Nominatim** (address lookup, Proposed) | Free text: the location text of calendar events (FR-34) and the postal addresses of Contacts (FR-36). Each text is sent once and the answer is cached. | Only while the address lookup switch is on; event locations also need T1 | Address lookup switch (FR-47); **off by default** |
 | **Map tile servers** (OpenFreeMap, OSM, Esri) | Viewed map areas | When the map is shown | none (inherent) |
 | **Microsoft Graph** | OneDrive listing and thumbnail requests | T3 OneDrive | Disconnect |
-| **Microsoft OneDrive** (backups, Proposed) | Nightly backups of Echo's database, encrypted before upload with a key Microsoft does not hold (NFR-05). Microsoft sees file names, sizes and times, not content. Face data is never in a backup. | Daily, once backups are set up (Q-8) | Choose another backup target (Q-8) |
-| **Sports Tracker** (unofficial API) | Login once; workout listing and downloads | T3 Sports Tracker | Disconnect |
+| **Google Drive** (backups, Proposed; Q-8) | Nightly system-level backups of Echo's database, holding **every user's data**, encrypted before upload with a key held in Vault and never in Drive (NFR-05). They go to the operator's Drive, through a scope that reaches only the files the backup job creates. Google sees file names, sizes and times, not content. Face data is never in a backup. | Daily, once backups are set up (Phase 0) | Operator only (system level); an Owner's erase (FR-49) reaches backups when they expire |
+| **Sports Tracker** (unofficial API) | Login once; workout listing and downloads, on a schedule (FR-52) | T3 Sports Tracker | Disconnect |
 | **Cloudflare** | All traffic (tunnel, Access) | Always | none (hosting choice) |
 
-**Never shared:** face data (T4), stored tokens and secrets, or the Owner's whole data set in bulk to any party.
+**Never shared:** face data (T4), stored tokens and secrets, or an Owner's whole data set in bulk to any party, apart from the encrypted backups above. **No Owner's data is ever shared with another Owner.**
 
 ### 5.3 Biometric Data
 
 - Face templates are biometric data, and they mostly describe people other than the Owner.
-- Echo processes them only with T4, only on the Owner's own infrastructure, and never for anyone the Owner has marked "never recognize".
+- Echo processes them only with T4, only on Echo's own infrastructure, only from photos (never videos), and never for anyone the Owner has marked "never recognize".
+- Only named people are kept. Unnamed clusters are discarded when the review session ends (FR-44).
+- Face data is per Owner. It is never shared with, shown to or matched against another Owner's.
 - They are deleted completely when T4 is revoked (FR-43, FR-44). Face data, and the links and Encounters derived from it, are kept out of backups, so no copy outlives the revocation.
-- `[NOTE FOR PM]` Whether personal-use processing of other people's faces is acceptable under Israeli privacy law, and to the Owner's own standards, is Open Question Q-2.
+- The first Owner has accepted storing face data of friends and family who have not consented (Q-2, answered 2026-10-28). Each invited user who turns on T4 makes the same choice for their own photos, through the same consent screen (FR-43).
 
 ## 6. Cross-Cutting Non-Functional Requirements
 
@@ -575,25 +635,28 @@ Privacy is a product pillar, not a compliance appendix. The requirements in §4.
 |---|---|---|---|
 | **NFR-01** | **No secrets in the repository.** | No credential, token or real password is in any tracked file; the currently committed values (a Vault dev token in `appsettings.json`, a default Postgres password in `values.yaml`) are rotated; a secret scan runs on every PR and blocks on a finding. | Proposed |
 | **NFR-02** | **Automated build and test.** | Every PR runs backend and frontend tests; a merge to the trunk produces arm64 images tagged by commit, with no hand build; the time from merge to running in the cluster is ≤ 30 min with at most one human approval. | Planned (Epic 9 §6) |
-| **NFR-03** | **Sign-in does not decay.** | The Owner's Google grant is not forced to expire on a 7-day cycle; after Phase 0 the Owner re-consents only when they change tiers or revokes access. `[ASSUMPTION A-2: Production-unverified is acceptable for a single Owner.]` | Planned (Epic 9 §6) |
+| **NFR-03** | **Sign-in does not decay.** | No Owner's Google grant is forced to expire on a 7-day cycle; after Phase 0 an Owner re-consents only when they change tiers or revoke access. Done by publishing the Google app to Production, unverified (Q-3), within the limits stated in §2.2: the unverified warning and at most 100 users in the app's lifetime. | Planned (Epic 9 §6) |
 | **NFR-04** | **Durable Owner state.** | Opt-ins, refresh tokens, the Activity Snapshot, own addresses, dismissals, Person Links and Encounters survive a restart or loss of the cache; losing the cache costs at most a sign-in. | Planned (Epic 9 §6) |
-| **NFR-05** | **Backup and restore.** | All Echo-held data is backed up daily to a location that does not share a node or disk with the cluster; recovery point ≤ 24 h; a restore is tested at least once per phase; losing one node does not lose data. | Proposed |
+| **NFR-05** | **Backup and restore.** | All Echo-held data (every user's) is backed up daily by the operator, as a system-level job, to the operator's **Google Drive** (Q-8), which shares no node or disk with the cluster. Each backup is encrypted before upload with a key held in Vault and never stored in Drive. Recovery point ≤ 24 h; a restore is tested at least once per phase; losing one node does not lose data. Face data is never backed up (FR-43). | Proposed |
 | **NFR-06** | **Docs match reality.** | Deployment, project-context and index documents describe the as-built system. Epic documents that disagree with the code are corrected or marked superseded by the as-built inventories. Examples: Epic 11's tolerances and table names; and Epic 7's claim that sign-in uses `include_granted_scopes`, which is false and stays false (the code asks for exact scopes on purpose, see addendum §A2), so that claim is marked superseded. Stale documents are fixed in Phase 0, and each later phase updates them in the same PR as the change. | Proposed |
-| **NFR-07** | **Owner isolation.** | Every stored record carries the Owner id and every query and MCP call is filtered by it; tests prove that a token or session cannot read another Owner's rows. | Built for scoping; Proposed for isolation tests (Phase 0) |
+| **NFR-07** | **Owner isolation (hard gate).** | Every stored record, cache entry, queue item, file, MCP token and Assistant tool result is scoped to one Owner, and every query and MCP call is filtered by it. Automated per-user isolation tests, with at least two Owners, prove for every module, REST route, MCP tool, worker and cache that one Owner's session or token can neither read nor change another Owner's data, and that the admin role reads no Owner's data. **Hard gate:** the tests run on every PR and block the merge on a failure, and no user other than the first Owner is added to the allowlist until they pass. | Built for scoping; Proposed for isolation tests and the gate (Phase 0) |
 | **NFR-08** | **Encryption at rest for sensitive data.** | Tokens, source secrets, the Activity Snapshot, own addresses and (T4) face templates are encrypted at rest; the key material is not stored with the data it protects. | Partial. Encryption of tokens and the Activity Snapshot is Built. Keeping the key ring apart from the data is Proposed for Phase 0, because today the key ring sits in the same Redis. Faces and Connect data are Proposed. |
-| **NFR-09** | **Responsive at personal scale on the Pi.** | With the Owner's real volume (157k Photos, years of tracks), the map, timeline, contact card Encounters and a Unified Timeline day each load at p95 ≤ 2 s; background work (fusion, photo placement, face clustering) never pushes interactive p95 above that. `[ASSUMPTION A-6: 2 s is achievable and adequate on the Pi at this scale.]` | Proposed |
+| **NFR-09** | **Responsive at personal scale on the Pi.** | With the first Owner's real volume (157k Photos, years of tracks) and the expected handful of users (A-10), the map, timeline, contact card Encounters and a Unified Timeline day each load at p95 ≤ 2 s; background work (fusion, photo placement, face clustering), for any Owner, never pushes interactive p95 above that. `[ASSUMPTION A-6: 2 s is achievable and adequate on the Pi at this scale.]` | Proposed |
 | **NFR-10** | **Graceful degradation.** | Done when these tests pass and are re-run each phase: **(a) Database down** (Postgres stopped, cache up, backend restarted while it is down): the Owner can sign in, list, search and edit Contacts. While the database is down, Echo may ask the Owner to sign in again when Google's short-lived access expires (about hourly), and that sign-in works. Atlas, Touchpoints, Connect, the Timeline and the Privacy Center each show a "temporarily unavailable" message within 5 s, and the Owner is not signed out. **(b) Third party down** (each of Gemini, OpenStreetMap, Microsoft Graph and Sports Tracker blocked in turn): only the features that use that party show an error that names it, and a smoke test of every other Area passes. **(c) Power cut** (both nodes power-cycled): every Echo service is Ready within 15 min of Vault being unsealed, with no other manual step. **(d) Database down and cache emptied at the same time:** Echo is down and says so, and it recovers with no data loss once the database returns. | Built in part (Contacts does not use the database today); Proposed for the rest: (a), (c) and (d) in Phase 0, (b) in Phase 1 |
-| **NFR-11** | **Third-party etiquette and cost caps.** | OSM usage policies are respected (Nominatim ≤ 1 req/s with an identifying User-Agent; answers cached); Gemini use stays within per-Owner and global daily caps; the cross-domain Assistant does not raise the per-question token cost by more than 2× compared with today. | Built for OSM and caps; Proposed for the budget |
+| **NFR-11** | **Third-party etiquette and cost caps.** | OSM usage policies are respected (Nominatim ≤ 1 req/s **across all users together**, with an identifying User-Agent; answers cached); Gemini and geocoder use each stay within **per-Owner** daily caps and a global daily cap (NFR-18); the cross-domain Assistant does not raise the per-question token cost by more than 2× compared with today. | Built for OSM and Gemini caps; Proposed for per-Owner geocoder caps and the budget |
 | **NFR-12** | **Recomputable derived data.** | Fusion, Person Links, Encounters and Face Clusters can be rebuilt from Source Records plus Owner decisions with no loss of Owner decisions. | Built for fusion; Proposed for the rest |
 | **NFR-13** | **Bilingual correctness.** | Search, sort, matching (names, Person Links, suggested emails) and Assistant answers handle Hebrew, English and mixed script; a Hebrew/English twin of one person is treated as one Person. Done when an automated suite with at least these cases passes: (1) "דנה כהן" and "Dana Cohen" with the same phone are one duplicate group, and, unmerged, one Person; (2) searching "דנה", "dana" or the phonetic name finds the same Contact; (3) a list of Hebrew and Latin names sorts Hebrew by Hebrew collation and Latin by Latin collation, with each in its own A–Z / א–ת section; (4) a mail display name in one script proposes a Contact whose name is in the other (suggested emails, attendee Person Links); (5) the same when/where/with-whom question in Hebrew and in English cites the same records. | Built for Contacts; Proposed for Connect |
 | **NFR-14** | **Observability of background work.** | The Owner can see the state of every background job (activity scan, source sync, fusion, photo placement, place identification, face clustering): queued, running, last success, last error. Logs are structured. A usage view shows scans, Assistant calls and their cost. | Built in part; usage view Planned (Epic 9 §6); Proposed for Connect and faces |
 | **NFR-15** | **Accessibility.** | Core views (contact table, card, Atlas panels, Unified Timeline, Privacy Center) are usable by keyboard and pass automated axe checks with no serious violations. | Built in part (jest-axe in Contacts); Proposed for new views |
 | **NFR-16** | **Security of external access.** | Personal Access Tokens are hashed, revocable and scoped (FR-32); remote MCP access requires Cloudflare Access (A-9); OAuth flows are protected with a state parameter; every REST route except sign-in, health and the legal pages requires authentication, enforced in one place rather than per route. | Built for Atlas; Proposed for central enforcement (Phase 0) and token scopes (Phase 1) |
 | **NFR-17** | **Supported runtimes only.** | Every runtime and framework Echo runs on (the .NET runtime, the Node.js build toolchain, the database server) is within its vendor's support window, and a move to a supported version is planned at least one month before support ends. Today the backend's runtime leaves support on 2026-11-10, so the move is part of Phase 0. | Proposed (Phase 0) |
+| **NFR-18** | **Per-user fairness and capacity on the Pi.** | Each Owner has their own caps on Gemini calls and on geocoder lookups (OpenStreetMap), per minute and per day, which survive a restart; one Owner reaching a cap never blocks another. Background work (scans, syncs, fusion, derivation, face clustering) is shared **round-robin** across Owners, so no Owner's backlog (for example a first photo pass) starves another's: with one Owner's large backlog queued, another Owner's new import starts within 5 min. Echo is sized for a handful of users (A-10); the allowlist maximum (FR-51) enforces it, and the admin page shows each Owner's usage. | Proposed (Phase 0 for caps and the allowlist maximum; Phase 1 for worker fairness) |
+| **NFR-19** | **Google verification before opening up.** | Before Echo admits anyone beyond an invited circle, or approaches Google's 100-user lifetime cap for unverified apps, the Google app passes OAuth verification (brand, privacy pages, demo video) and the Gmail restricted scopes pass a CASA security assessment, renewed yearly. Until then, Echo stays invite-only (FR-51). | Planned (Epic 9 §6); a gate, not in a phase |
 
 ## 7. Non-Goals
 
-- **Not a multi-user or social product.** There is no sharing, no family accounts, no public profiles and no notifications to other people (§2.2).
+- **Not a social product or an open service.** Echo has several users, each with their own private data, but there is no sharing between them, no family accounts, no public profiles, no notifications to other people and no public sign-up (§2.2).
+- **No cross-user matching.** Echo never links, matches or compares one Owner's people, places or faces with another's, even when the same person appears in both.
 - **Not a replacement for Google Contacts or OneDrive.** They remain the stores. Echo does not copy contact fields or photo files.
 - **No autonomous actions.** Echo never sends an email, a message or an invitation, and never edits a Contact, unless the Owner applies it.
 - **No scraping and no terms violations.**
@@ -607,29 +670,30 @@ Privacy is a product pillar, not a compliance appendix. The requirements in §4.
 
 | Phase | Theme | Contents | Exit criterion |
 |---|---|---|---|
-| **0: Realign** | Hygiene before growth | NFR-01 to NFR-06, NFR-07 isolation tests, NFR-08 key separation, NFR-10 tests (a), (c) and (d), NFR-16 central authentication, NFR-17 supported runtime; FR-03 Echo branding; FR-50 legal pages | No secrets in the repo; CI builds and deploys; no weekly re-consent; Contacts state is durable; backups are tested; docs are true; the backend runs on a supported runtime; NFR-10 (a), (c), (d) pass |
-| **1: Connect** | Contacts ↔ Atlas | FR-31 to FR-42, FR-47, FR-48; NFR-09, NFR-12 to NFR-14 for Connect data; NFR-10 test (b); NFR-11 token budget; NFR-15 for the Unified Timeline, Privacy Center and Person views; NFR-16 token scopes | UJ-3 and UJ-4 work on the Owner's real data; SM-1 to SM-3 are measured; NFR-10 (b) and the NFR-11 budget pass |
-| **2: People in Photos** | Opt-in faces | FR-43 to FR-45; NFR-14 and NFR-15 for the face views | UJ-5 works; revocation is proven to delete all face data |
-| **3+: More of me** | Breadth | FR-04, FR-11, FR-16, FR-21, FR-26, FR-30, FR-49, §4.11 sources | Chosen per Q-7 |
+| **0: Realign** | Hygiene before growth, and ready for invited users | NFR-01 to NFR-06 (NFR-03 by Production, unverified; NFR-05 to Google Drive), NFR-07 isolation tests as a hard gate, NFR-08 key separation, NFR-10 tests (a), (c) and (d), NFR-16 central authentication, NFR-17 supported runtime, NFR-18 per-Owner caps and allowlist maximum; FR-03 Echo branding; FR-50 legal pages; FR-51 invite-only sign-up; FR-53 Samsung Health time alignment | No secrets in the repo; CI builds and deploys; no weekly re-consent; Contacts state is durable; encrypted backups to Google Drive are tested; docs are true; the backend runs on a supported runtime; NFR-10 (a), (c), (d) pass; the isolation gate passes and a second user can be invited (UJ-7); Samsung Health median start-time difference vs matched GPS sources < 60 s |
+| **1: Connect** | Contacts ↔ Atlas | FR-31 to FR-42, FR-47, FR-48, FR-49, FR-52; NFR-09, NFR-12 to NFR-14 for Connect data; NFR-10 test (b); NFR-11 token budget; NFR-15 for the Unified Timeline, Privacy Center and Person views; NFR-16 token scopes; NFR-18 worker fairness | UJ-3 and UJ-4 work on the first Owner's real data; SM-1 to SM-3 are measured; NFR-10 (b), the NFR-11 budget and the NFR-18 fairness test pass; any Owner can export and erase their own data |
+| **2: People in Photos** | Opt-in faces | FR-43 to FR-45; NFR-14 and NFR-15 for the face views | UJ-5 works; revocation is proven to delete all face data; unnamed clusters are proven discarded after review; no face data is reachable across Owners |
+| **3+: More of me** | Breadth | FR-54 LinkedIn first (Q-7), then FR-04, FR-11, FR-16, FR-21, FR-26, FR-30 and the other §4.11 sources | Chosen per phase; LinkedIn connections link to Contacts |
+| **Gate: beyond the invited circle** | Opening up | NFR-19 Google verification and CASA | Not scheduled. Required before anyone outside the invited circle is admitted, or before the user count nears 100 |
 
 ### 8.1 In Scope for the Next Release (Phases 0 and 1)
 
-- The Phase 0 platform items listed above.
+- The Phase 0 platform items listed above, including invite-only sign-up, per-user isolation and caps, and the Samsung Health time fix.
 - Echo branding.
 - Person Links, Encounters (from the calendar and from the Owner), the address ↔ Place match, and the Person views in Contacts and Atlas.
 - The Unified Timeline.
 - One Assistant, and MCP read access to people.
-- The Privacy Center and export.
+- The Privacy Center, export and whole-Echo delete, per user.
+- Scheduled Sports Tracker sync.
 
 ### 8.2 Out of Scope for the Next Release
 
 - Faces (Phase 2).
 - Deeper health and self-insight (FR-26).
-- New sources (§4.11).
+- New sources (§4.11), including LinkedIn (FR-54), which comes first after Phase 2.
 - Hebrew UI (FR-04).
 - Persistent chat history (FR-30).
-- Whole-Echo delete (FR-49). It is Planned for Phase 3. Until then, the per-source and per-tier deletes of FR-46 apply.
-- `[NOTE FOR PM]` Whole-Echo delete is the counterpart of export. If the Owner sees it as part of "the data stays mine", it should move into Phase 1.
+- Google verification and CASA (NFR-19), and any opening beyond the invited circle.
 
 ## 9. Success Metrics
 
@@ -660,38 +724,38 @@ Privacy is a product pillar, not a compliance appendix. The requirements in §4.
 | Risk | Effect | Mitigation (product level) |
 |---|---|---|
 | Wrong Encounters ("you met X" when you did not) | Loss of trust in the whole product | Precision over recall (SM-C1); evidence and "Why?" on every Encounter (FR-42); Owner confirm/reject (P-5) |
-| Biometric data about non-consenting people | Legal and ethical exposure | T4 off by default, kept on the Owner's infrastructure, "never recognize", full delete (§5.3); Q-2 |
-| Cross-domain context sent to Gemini reveals more combined information | Privacy | Disclosure names the combined data (FR-31); the budget in NFR-11; Q-5 |
-| Pi capacity (face clustering over 157k Photos, Unified Timeline queries) | Slow or starved interactive use | NFR-09 priority for interactive work; batch background jobs; architect to size (addendum) |
+| Biometric data about non-consenting people | Legal and ethical exposure | T4 off by default and per Owner, kept on Echo's infrastructure, named people only, photos only, "never recognize", full delete, never matched across Owners (§5.3); accepted by the first Owner (Q-2) |
+| One Owner sees another Owner's data | Loss of trust; privacy breach | Tenancy on every store, queue, cache and token; NFR-07 isolation tests as a hard gate; the admin role reads no data (FR-51) |
+| Cross-domain context sent to Gemini reveals more combined information | Privacy | Only matched results go to Gemini (FR-31, Q-5); per-user switch to keep them out; disclosure names the combined data; the budget in NFR-11 |
+| Pi capacity (face clustering over 157k Photos, Unified Timeline queries, several users) | Slow or starved interactive use; one user starving another | NFR-09 priority for interactive work; batch background jobs; round-robin across Owners and per-Owner caps (NFR-18); allowlist maximum of a handful of users (A-10) |
 | Node loss or local-path volumes | Data loss or a stranded Area | NFR-05 off-node backups |
-| Unofficial Sports Tracker API changes | Sync breaks | Failures reported per step (Built); file import as a fallback |
-| Google restricted-scope policy | T2 or T1 could be blocked for an unverified app | Single-owner stance; keep T1 and T2 optional |
+| Unofficial Sports Tracker API changes | Sync breaks | Failures shown as connection status, scheduled retries with backoff (FR-52); file import as a fallback |
+| Google restricted-scope policy and the unverified-app cap | T1 or T2 could be blocked for an unverified app; at most 100 users ever | Invite-only with an allowlist maximum (FR-51); keep T1 and T2 optional; verification and CASA as a gate before opening up (NFR-19) |
 
 ## 11. Open Questions
 
-1. **Q-1. Multi-user ever?**
-   - If yes, the following become blockers: OAuth verification (brand, demo video), a yearly CASA assessment for Gmail scopes, per-user cost caps, a sign-up policy, and the consent of people in other users' data.
-   - The current stance is "no, but keep owner scoping".
-2. **Q-2. Faces.**
-   - Is the Owner comfortable storing face templates of friends and family who have not consented?
-   - Should T4 be limited to people the Owner names, so that no unnamed clusters are kept beyond the review session?
-   - Must T4 also work on videos, or on photos only?
-3. **Q-3. Google OAuth path.**
-   - Is moving the app to Production *unverified* (an "unverified app" warning shown only to the Owner) acceptable to end the 7-day expiry?
-   - Or does the Owner want verification? Epic 9 recommended applying for verification of the Contacts and Calendar permissions. This PRD defers that, because there is one Owner (A-2).
-4. **Q-4. Branding depth.**
-   - Is Echo only the in-app name (FR-03)?
-   - Or should repositories, the chart, images and eventually a domain follow? The URL stays for now, as instructed.
-5. **Q-5. Gemini and combined data (decided provisionally).**
-   - FR-31 decides that Echo computes the joins and sends only the matched results and their citations to Gemini.
-   - Is even that acceptable to the Owner? Or should when/where/with-whom answers be rendered without the model?
-6. **Q-6. Email touchpoints in the Unified Timeline.**
-   - Is a per-day count per Person enough?
-   - Or should individual messages appear (still headers only)?
-7. **Q-7. Order of later sources.** Which comes first after Phase 2: WhatsApp exports, calls and SMS, Strava/Garmin, LinkedIn, or Microsoft 365?
-8. **Q-8. Backup destination.** Where should off-node backups go: the Owner's OneDrive, a NAS, or a cloud bucket? Encrypted with which key?
-9. **Q-9. Sports Tracker scheduling.** Should Sports Tracker sync on a schedule, as OneDrive does?
-10. **Q-10. Samsung Health.** Its time alignment is unverified. Should health data from it be excluded from Encounters and trends until it is checked?
+*All ten questions were answered by the Owner on 2026-10-28. None is open. The answers are kept here as the record.*
+
+1. **Q-1. Multi-user ever? — Answered (2026-10-28): yes.**
+   - Echo supports more than one user. Each user owns their data, and no user sees another's (§2.2).
+   - Sign-up is invite-only, with an allowlist managed by the admin, the first Owner (FR-51; default logged).
+   - Per-user caps (NFR-11, NFR-18), isolation tests as a hard gate (NFR-07), per-user export and erase (FR-48, FR-49, which moved to Phase 1), a per-user consent ledger (FR-47) and per-user grants (FR-18, FR-46).
+   - Google: Production, unverified (warning, at most 100 users ever); Gmail scopes are restricted, so verification plus a yearly CASA assessment is a gate before opening beyond an invited circle (NFR-19).
+2. **Q-2. Faces. — Answered (2026-10-28).**
+   - Storing face data of friends and family who have not consented is acceptable to the Owner.
+   - Only named people are kept: unnamed clusters are discarded when the review session ends (FR-44).
+   - Photos only, no videos.
+   - Face data is per user, and is never shared or matched across users.
+3. **Q-3. Google OAuth path. — Answered (2026-10-28):** move Google sign-in to Production, unverified, in Phase 0 (NFR-03), within the constraints in §2.2 and NFR-19.
+4. **Q-4. Branding depth. — Answered (2026-10-28):** Echo is the in-app name only (FR-03). No repository, chart, image or domain renames; contacts.mayaffit.com stays.
+5. **Q-5. Gemini wording answers about people. — Answered (2026-10-28).**
+   - *The question, in plain words:* when you ask "When did I last see Dana?", Echo finds the answer itself (dinner with Dana at a café in Haifa on 3 Sep, 4 photos). Should Echo send that found answer to Gemini so it can write the reply in natural language, as the Assistant already does for Contacts and Atlas, or should such answers be shown without Gemini?
+   - *Answer:* send it to Gemini. Echo computes the joins and sends only the matched results and their citations, and Gemini writes the reply (FR-31). A per-user switch in the Privacy Center (FR-47) turns this off; with it off, the results are shown as plain cards, without Gemini.
+6. **Q-6. Email touchpoints in the Unified Timeline. — Answered (2026-10-28):** a count per Person per day. Individual messages are not shown (FR-40).
+7. **Q-7. Order of later sources. — Answered (2026-10-28):** LinkedIn comes first after Phase 2: `Connections.csv` from the LinkedIn data export, linked to Contacts (FR-54). LinkedIn has no personal API, so it is an export import.
+8. **Q-8. Backup destination. — Answered (2026-10-28):** Google Drive, not OneDrive. Backups are system-level, made by the operator into the operator's Drive, and hold every user's data. They are encrypted before upload with a key held in Vault, never in Drive (NFR-05, §5.2).
+9. **Q-9. Sports Tracker scheduling. — Answered (2026-10-28):** yes, a scheduled incremental sync at a polite rate, with failures shown as connection status (FR-52).
+10. **Q-10. Samsung Health. — Answered (2026-10-28):** do not exclude it; verify and fix its time alignment against matched GPS sources, in Phase 0, until the median start-time difference is under 60 s (FR-53).
 
 ## 12. References
 
@@ -702,13 +766,12 @@ Privacy is a product pillar, not a compliance appendix. The requirements in §4.
 
 ## 13. Assumptions Index
 
-*A-1 was withdrawn during drafting, so the index starts at A-2. Ids are not reused.*
-
-- **A-2** (NFR-03, Q-3): Production-unverified Google OAuth is acceptable to a single Owner and ends the 7-day refresh expiry, so verification and CASA are not needed while there is one Owner.
+*A-1 was withdrawn during drafting. A-2 was withdrawn on 2026-10-28, because the Owner's answers to Q-1 and Q-3 replaced it with decisions (§2.2, NFR-03, NFR-19). Ids are not reused.*
 - **A-3** (FR-31): Gemini remains the Assistant model. The cross-domain Assistant extends the existing disclosure and does not add a provider.
-- **A-4** (FR-43): face detection and clustering can run in batch on the Owner's cluster, and taking hours to days for the first pass over 157k Photos is acceptable. The architect must confirm this.
+- **A-4** (FR-43): face detection and clustering can run in batch on Echo's cluster, and taking hours to days for the first pass over 157k Photos is acceptable. The architect must confirm this.
 - **A-5** (§9): the metric targets (≤ 30 s, ≥ 70%, ≤ 10% rejected, ≥ 50%, 3 days a week) are proposed starting values that the Owner has not confirmed.
 - **A-6** (NFR-09): p95 ≤ 2 s is achievable and adequate on the Pi at the Owner's scale.
 - **A-7** (FR-34): the calendar (attendees, time, location) plus Atlas Visits and Activities are enough evidence for Phase 1 Encounters. Calls and WhatsApp stay out of reach until their imports are built.
 - **A-8** (FR-34): the Encounter defaults (50% overlap, 500 m, confidence cap 0.6 without a location, threshold 0.5) are starting values for the Owner to tune.
 - **A-9** (FR-29, NFR-16): remote MCP clients pass through a Cloudflare Access policy. That policy lives in Cloudflare, outside this repository, and was not checked for this PRD.
+- **A-10** (§2.2, FR-51, NFR-09, NFR-18): "a handful of users" means at most about 10, the default allowlist maximum, and the other users hold less data than the first Owner. The Pi sizing rests on this.
