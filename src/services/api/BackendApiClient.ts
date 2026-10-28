@@ -1067,6 +1067,13 @@ export class BackendApiClient {
   }
 
   /** Photos taken during visits to a place, newest first */
+  async atlasVisitPhotos(id: string): Promise<PhotoSummary[]> {
+    return unwrap(
+      await this.request<PhotoSummary[]>(`/atlas/visits/${id}/photos`),
+      'Loading the photos failed',
+    );
+  }
+
   async atlasPlacePhotos(id: string): Promise<PhotoSummary[]> {
     return unwrap(
       await this.request<PhotoSummary[]>(`/atlas/places/${id}/photos`),

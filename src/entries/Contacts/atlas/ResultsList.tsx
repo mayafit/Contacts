@@ -13,17 +13,27 @@ import { identifyMark } from './placeText';
 import { photoCountText } from './photos';
 import { tokens } from '../theme/contactsTheme';
 
+/** Read by screen readers, not shown */
+const HIDDEN = {
+  position: 'absolute',
+  // Strings: in sx a plain 1 means 100%
+  width: '1px',
+  height: '1px',
+  overflow: 'hidden',
+  clip: 'rect(0 0 0 0)',
+  whiteSpace: 'nowrap',
+} as const;
+
 /** A quiet "📷 12" at the end of a row's details, when it has photos */
 const PhotoMark: React.FC<{ count?: number }> = ({ count }) =>
   count ? (
-    <Box
-      component="span"
-      aria-label={photoCountText(count) ?? undefined}
-      title={photoCountText(count) ?? undefined}
-      sx={{ whiteSpace: 'nowrap' }}
-    >
+    <Box component="span" title={photoCountText(count) ?? undefined} sx={{ whiteSpace: 'nowrap' }}>
       {' · '}
       <PhotoCameraOutlined sx={{ fontSize: 12, verticalAlign: '-2px' }} /> {count}
+      {/* Read out as "12 photos" (the icon is hidden from screen readers) */}
+      <Box component="span" sx={HIDDEN}>
+        {count === 1 ? ' photo' : ' photos'}
+      </Box>
     </Box>
   ) : null;
 

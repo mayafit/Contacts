@@ -218,6 +218,7 @@ public class PhotoDbTests
         var found = await svc.SearchAsync(owner, new AtlasQuery());
         Assert.Equal(2, found.Activities.Single().PhotoCount);
         Assert.Equal(1, found.Visits.Single().PhotoCount);
+        Assert.Equal(new[] { "cafe.jpg" }, (await svc.VisitPhotosAsync(owner, found.Visits.Single().Id)).Select(p => p.Name));
 
         // New data at a photo's time places it again
         // (an hour either side: the cafe photo and the one at 30 min, not the one at 10)

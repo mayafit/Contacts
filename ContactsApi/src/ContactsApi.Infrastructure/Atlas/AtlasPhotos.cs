@@ -91,23 +91,21 @@ public partial class AtlasService
     private async Task<(List<ActivitySummary>, List<VisitSummary>)> WithPhotoCountsAsync(string owner,
         List<ActivitySummary> activities, List<VisitSummary> visits, CancellationToken ct)
     {
-        if ((activities.Count == 0 && visits.Count == 0) || !await _db.Photos.AnyAsync(p => p.OwnerId == owner, ct))
+        if (activities.Count == 0 && visits.Count == 0)
         {
             return (activities, visits);
         }
 
         var activityIds = activities.Select(a => a.Id).ToList();
-        var perActivity = activityIds.Count == 0
-            ? new Dictionary<Guid, int>()
-            : await _db.Photos.Where(p => p.OwnerId == owner && p.ActivityId != null && activityIds.Contains(p.ActivityId.Value))
-                .GroupBy(p => p.ActivityId!.Value).Select(g => new { g.Key, N = g.Count() })
-                .ToDictionaryAsync(x => x.Key, x => x.N, ct);
         var visitIds = visits.Select(v => v.Id).ToList();
-        var perVisit = visitIds.Count == 0
-            ? new Dictionary<Guid, int>()
-            : await _db.Photos.Where(p => p.OwnerId == owner && p.VisitId != null && visitIds.Contains(p.VisitId.Value))
-                .GroupBy(p => p.VisitId!.Value).Select(g => new { g.Key, N = g.Count() })
-                .ToDictionaryAsync(x => x.Key, x => x.N, ct);
+        var rows = await _db.Photos
+            .Where(p => p.OwnerId == owner && ((p.ActivityId != null && activityIds.Contains(p.ActivityId.Value))
+                                               || (p.VisitId != null && visitIds.Contains(p.VisitId.Value))))
+            .GroupBy(p => new { p.ActivityId, p.VisitId })
+            .Select(g => new { g.Key.ActivityId, g.Key.VisitId, N = g.Count() })
+            .ToListAsync(ct);
+        var perActivity = rows.Where(r => r.ActivityId != null).GroupBy(r => r.ActivityId!.Value).ToDictionary(g => g.Key, g => g.Sum(r => r.N));
+        var perVisit = rows.Where(r => r.VisitId != null).GroupBy(r => r.VisitId!.Value).ToDictionary(g => g.Key, g => g.Sum(r => r.N));
         return (
             activities.Select(a => perActivity.TryGetValue(a.Id, out var n) ? a with { PhotoCount = n } : a).ToList(),
             visits.Select(v => perVisit.TryGetValue(v.Id, out var n) ? v with { PhotoCount = n } : v).ToList());
@@ -318,6 +316,18 @@ public partial class AtlasService
         var to = (a.Fusion?.EndTime ?? a.EndTime) + PhotoSlack;
         return await PhotoRows(_db.Photos.Where(p => p.OwnerId == owner
                 && (p.ActivityId == primary || (!p.Placed && p.TakenAt >= from && p.TakenAt <= to)))
+            .OrderBy(p => p.TakenAt).Take(500)).ToListAsync(ct);
+    }
+
+    /// <summary>Photos taken during one visit (one without a place shows these)</summary>
+    public async Task<List<PhotoSummary>> VisitPhotosAsync(string owner, Guid visitId, CancellationToken ct = default)
+    {
+        if (!await _db.Visits.AnyAsync(v => v.Id == visitId && v.OwnerId == owner, ct))
+        {
+            throw new AtlasNotFoundException("Visit");
+        }
+
+        return await PhotoRows(_db.Photos.Where(p => p.OwnerId == owner && p.VisitId == visitId)
             .OrderBy(p => p.TakenAt).Take(500)).ToListAsync(ct);
     }
 

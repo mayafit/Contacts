@@ -38,12 +38,15 @@ describe('photos', () => {
     expect(photoCountText(1200)).toBe(`${(1200).toLocaleString()} photos`);
     expect(photoCountText(0)).toBeNull();
     expect(photoCountText(undefined)).toBeNull();
+    expect(photoCountText(500, true)).toBe('500+ photos');
   });
 
   it("says which of a place's photos are from the open visit", () => {
     expect(placePhotosText(3, 3)).toBe('3 photos');
     expect(placePhotosText(1, 12)).toBe('1 photo (12 at this place)');
     expect(placePhotosText(0, 12)).toBe('12 photos at this place');
+    expect(placePhotosText(4, 500, true)).toBe('4 photos (500+ at this place)');
+    expect(placePhotosText(0, 500, true)).toBe('500+ photos at this place');
   });
 
   it('writes when it was taken with the day', () => {

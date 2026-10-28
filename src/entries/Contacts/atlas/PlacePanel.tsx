@@ -67,7 +67,7 @@ import {
 } from './placeText';
 import PanelSection from './PanelSection';
 import PhotoStrip, { PhotosLink } from './PhotoStrip';
-import { placePhotosText } from './photos';
+import { PANEL_PHOTOS_MAX, placePhotosText } from './photos';
 import { tokens } from '../theme/contactsTheme';
 
 /** Props for PlacePanel */
@@ -824,8 +824,10 @@ const PlacePanel: React.FC<PlacePanelProps> = ({
               count={photos.length}
               target={photosRef}
               label={placePhotosText(
-                photos.filter((p) => p.visitId === visit.id).length,
+                // The server's count: the loaded list may stop before this visit's photos
+                visit.photoCount ?? photos.filter((p) => p.visitId === visit.id).length,
                 photos.length,
+                photos.length >= PANEL_PHOTOS_MAX,
               )}
             />
           </>

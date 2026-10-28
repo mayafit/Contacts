@@ -260,6 +260,11 @@ public class AtlasController : ControllerBase
     public Task<IActionResult> ActivityPhotos(Guid id) =>
         Run((svc, owner) => svc.ActivityPhotosAsync(owner, id, HttpContext.RequestAborted));
 
+    /// <summary>Photos taken during one visit</summary>
+    [HttpGet("visits/{id:guid}/photos")]
+    public Task<IActionResult> VisitPhotos(Guid id) =>
+        Run((svc, owner) => svc.VisitPhotosAsync(owner, id, HttpContext.RequestAborted));
+
     /// <summary>Photos taken during visits to a place</summary>
     [HttpGet("places/{id:guid}/photos")]
     public Task<IActionResult> PlacePhotos(Guid id) =>

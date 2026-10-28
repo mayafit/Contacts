@@ -8,7 +8,7 @@ import { Box, ButtonBase, Link, Typography } from '@mui/material';
 import { PhotoCameraOutlined, PlayCircleOutline } from '@mui/icons-material';
 import { backendApiClient } from '../../../services/api/BackendApiClient';
 import type { PhotoSummary } from './types';
-import { photoCountText, takenText } from './photos';
+import { PANEL_PHOTOS_MAX, photoCountText, takenText } from './photos';
 import { tokens } from '../theme/contactsTheme';
 
 /**
@@ -25,13 +25,13 @@ export const PhotosLink: React.FC<{
   <Link
     component="button"
     type="button"
-    variant="caption"
+    variant="inherit"
     underline="hover"
     onClick={() => target.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-    sx={{ color: 'inherit', verticalAlign: 'baseline', whiteSpace: 'nowrap' }}
+    sx={{ color: 'inherit', fontSize: 'inherit', verticalAlign: 'baseline', whiteSpace: 'nowrap' }}
   >
     <PhotoCameraOutlined sx={{ fontSize: 12, verticalAlign: '-2px', mr: 0.25 }} />
-    {label ?? photoCountText(count)}
+    {label ?? photoCountText(count, count >= PANEL_PHOTOS_MAX)}
   </Link>
 );
 

@@ -8,25 +8,30 @@ import type { PhotoSummary } from './types';
 /** Photos on the map (a warm pink, apart from the activity colours) */
 export const PHOTO_COLOR = '#f472b6';
 
+/** The panels load at most this many photos (the server's limit) */
+export const PANEL_PHOTOS_MAX = 500;
+
 /**
- * "1 photo", "12 photos"; null when none.
+ * "1 photo", "12 photos", "500+ photos" (a capped list); null when none.
  * @param n - How many
+ * @param more - There may be more than n
  */
-export const photoCountText = (n?: number | null): string | null =>
-  n ? `${n.toLocaleString()} ${n === 1 ? 'photo' : 'photos'}` : null;
+export const photoCountText = (n?: number | null, more = false): string | null =>
+  n ? `${n.toLocaleString()}${more ? '+' : ''} ${n === 1 && !more ? 'photo' : 'photos'}` : null;
 
 /**
  * A place's photos for its open visit: "3 photos", "3 photos (12 at this place)",
  * or "12 photos at this place" when none are from this visit.
  * @param visit - Taken during the open visit
- * @param place - Taken during all visits there
+ * @param place - Taken during all visits there (as loaded)
+ * @param more - The place's list is capped (there may be more)
  */
-export const placePhotosText = (visit: number, place: number): string =>
-  visit === place
+export const placePhotosText = (visit: number, place: number, more = false): string =>
+  visit === place && !more
     ? (photoCountText(place) ?? '')
     : visit > 0
-      ? `${photoCountText(visit)} (${place.toLocaleString()} at this place)`
-      : `${photoCountText(place)} at this place`;
+      ? `${photoCountText(visit)} (${place.toLocaleString()}${more ? '+' : ''} at this place)`
+      : `${photoCountText(place, more)} at this place`;
 
 /** How a photo's position was found */
 export const placedText = (p: PhotoSummary): string | null => {
