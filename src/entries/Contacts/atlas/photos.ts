@@ -8,6 +8,26 @@ import type { PhotoSummary } from './types';
 /** Photos on the map (a warm pink, apart from the activity colours) */
 export const PHOTO_COLOR = '#f472b6';
 
+/**
+ * "1 photo", "12 photos"; null when none.
+ * @param n - How many
+ */
+export const photoCountText = (n?: number | null): string | null =>
+  n ? `${n.toLocaleString()} ${n === 1 ? 'photo' : 'photos'}` : null;
+
+/**
+ * A place's photos for its open visit: "3 photos", "3 photos (12 at this place)",
+ * or "12 photos at this place" when none are from this visit.
+ * @param visit - Taken during the open visit
+ * @param place - Taken during all visits there
+ */
+export const placePhotosText = (visit: number, place: number): string =>
+  visit === place
+    ? (photoCountText(place) ?? '')
+    : visit > 0
+      ? `${photoCountText(visit)} (${place.toLocaleString()} at this place)`
+      : `${photoCountText(place)} at this place`;
+
 /** How a photo's position was found */
 export const placedText = (p: PhotoSummary): string | null => {
   switch (p.placedBy) {

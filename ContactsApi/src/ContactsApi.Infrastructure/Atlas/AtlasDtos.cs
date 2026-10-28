@@ -64,16 +64,18 @@ public class AtlasQuery
 }
 
 /// <summary>An activity without its points</summary>
+/// <param name="PhotoCount">Photos taken during it (set in search results)</param>
 public record ActivitySummary(
     Guid Id, string Type, string? Name, DateTime StartTime, DateTime EndTime, double? DistanceM, double? DurationS,
     double? ElevationGainM, int? AvgHeartRate, int? MaxHeartRate, string Source, string? Polyline,
     double? MinLat, double? MinLon, double? MaxLat, double? MaxLon, int PointCount,
-    List<string> Sources, int MemberCount, int ConflictCount);
+    List<string> Sources, int MemberCount, int ConflictCount, int PhotoCount = 0);
 
 /// <summary>A visit with its place</summary>
+/// <param name="PhotoCount">Photos taken during it (set in search results)</param>
 public record VisitSummary(
     Guid Id, Guid? PlaceId, string? PlaceName, string? Address, DateTime StartTime, DateTime EndTime,
-    double Lat, double Lon, string Source, string? IdentifyState = null);
+    double Lat, double Lon, string Source, string? IdentifyState = null, int PhotoCount = 0);
 
 /// <summary>Search results</summary>
 public record SearchResult(List<ActivitySummary> Activities, List<VisitSummary> Visits, int TotalActivities, int TotalVisits);

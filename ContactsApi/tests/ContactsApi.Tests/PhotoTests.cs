@@ -214,6 +214,10 @@ public class PhotoDbTests
         Assert.Equal("samsung SM-S918B", map.Photos[0].Camera);
         var rides = await svc.MapPhotosAsync(owner, new AtlasQuery { Types = new List<string> { "ride" } });
         Assert.Equal(new[] { "nogps.jpg", "gps.jpg" }, rides.Photos.Select(p => p.Name));
+        // The results list says how many photos each item has
+        var found = await svc.SearchAsync(owner, new AtlasQuery());
+        Assert.Equal(2, found.Activities.Single().PhotoCount);
+        Assert.Equal(1, found.Visits.Single().PhotoCount);
 
         // New data at a photo's time places it again
         // (an hour either side: the cafe photo and the one at 30 min, not the one at 10)

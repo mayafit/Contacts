@@ -5,6 +5,7 @@
 
 import type { ActivitySummary } from './types';
 import { ACTIVITY_TYPES, isSet } from './types';
+import { photoCountText } from './photos';
 
 /**
  * Decodes a Google encoded polyline (precision 5).
@@ -221,6 +222,7 @@ export const describeActivity = (a: ActivitySummary): string =>
     formatWhen(a.startTime),
     formatDuration((Date.parse(a.endTime) - Date.parse(a.startTime)) / 1000),
     a.distanceM ? formatDistance(a.distanceM) : null,
+    photoCountText(a.photoCount),
   ]
     .filter(Boolean)
     .join(' · ');

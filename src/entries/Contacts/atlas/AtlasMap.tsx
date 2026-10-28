@@ -28,7 +28,7 @@ import type {
   PointOutput,
   VisitSummary,
 } from './types';
-import { PHOTO_COLOR, spread, takenText } from './photos';
+import { PHOTO_COLOR, photoCountText, spread, takenText } from './photos';
 import { FILTER_COLOR, HEALTH_COLOR, VISIT_COLOR, typeColor, isSet } from './types';
 import { Box } from '@mui/material';
 import AtlasLegend from './AtlasLegend';
@@ -111,14 +111,22 @@ const DENSITY_DEBOUNCE = 400;
 const VisitLabel: React.FC<{ visit: VisitSummary }> = ({ visit }) => {
   const mark = identifyMark(visit.identifyState);
   const name = visit.placeName || 'Visit';
+  const photos = photoCountText(visit.photoCount);
+  const more = photos ? <span style={{ opacity: 0.7 }}> · {photos}</span> : null;
   if (mark === 'auto') {
     return (
       <span>
         <i>{name}</i> <span style={{ opacity: 0.7 }}>· auto</span>
+        {more}
       </span>
     );
   }
-  return <span>{mark === '?' ? `${name} (?)` : name}</span>;
+  return (
+    <span>
+      {mark === '?' ? `${name} (?)` : name}
+      {more}
+    </span>
+  );
 };
 
 /**
@@ -208,6 +216,18 @@ const photoPin = (p: PhotoSummary): L.DivIcon =>
     iconSize: [34, 34],
     iconAnchor: [17, 17],
   });
+
+/** A small dot saying "has photos": at the middle of a track, or beside a visit */
+const photoBadge = (anchor: [number, number]): L.DivIcon =>
+  L.divIcon({
+    className: 'atlas-photo-badge',
+    html: `<div style="width:7px;height:7px;border-radius:50%;background:${PHOTO_COLOR};border:1px solid #0e1116"></div>`,
+    iconSize: [9, 9],
+    iconAnchor: anchor,
+  });
+const TRACK_BADGE = photoBadge([4.5, 4.5]);
+// Top-right of the visit's circle, so the circle stays clickable
+const VISIT_BADGE = photoBadge([-2, 10]);
 
 /** The small permanent label at the area filter's top-left corner */
 const AREA_LABEL = L.divIcon({
@@ -513,6 +533,26 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
     [activities],
   );
   const selectedFlight = lines.find((l) => l.a.id === selectedId && l.flight);
+  // Items with photos get a small dot; the open one shows its thumbnails instead
+  const badges = useMemo(
+    () => [
+      ...lines
+        .filter(({ a }) => a.photoCount && !(a.id === selectedId && pins.length))
+        .map(({ a, path }) => ({
+          key: `badge-${a.id}`,
+          at: path[Math.floor(path.length / 2)],
+          icon: TRACK_BADGE,
+        })),
+      ...visits
+        .filter((v) => v.photoCount && !(v.id === selectedVisitId && pins.length))
+        .map((v) => ({
+          key: `badge-${v.id}`,
+          at: [v.lat, v.lon] as [number, number],
+          icon: VISIT_BADGE,
+        })),
+    ],
+    [lines, visits, selectedId, selectedVisitId, pins],
+  );
   const crowded = lines.length > 150;
   const areaBounds: LatLngBoundsExpression | null = area
     ? [
@@ -527,8 +567,12 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
         ? [...trackTypes(densityData.tracks), ...(densityData.visits.length ? ['visit'] : [])]
         : [];
     }
-    return [...activities.map((a) => a.type), ...(visits.length ? ['visit'] : [])];
-  }, [density, densityData, activities, visits]);
+    return [
+      ...activities.map((a) => a.type),
+      ...(visits.length ? ['visit'] : []),
+      ...(badges.length ? ['photos'] : []),
+    ];
+  }, [density, densityData, activities, visits, badges]);
 
   return (
     <Box sx={{ position: 'relative', height: '100%', width: '100%' }}>
@@ -637,6 +681,16 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
                 <VisitLabel visit={v} />
               </Tooltip>
             </CircleMarker>
+          ))}
+        {!density &&
+          badges.map((b) => (
+            <Marker
+              key={b.key}
+              position={b.at}
+              icon={b.icon}
+              interactive={false}
+              keyboard={false}
+            />
           ))}
         {layerMarkers}
         {pins.map(({ p, index, icon }) => (

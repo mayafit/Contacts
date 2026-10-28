@@ -7,7 +7,7 @@
  * @module Contacts/atlas/ActivityPanel
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Box,
@@ -53,7 +53,7 @@ import { indexAt, timeAtDistance, trackSamples, type ChartAxis } from './analysi
 import ActivityCharts from './ActivityCharts';
 import HrZonesBar from './HrZonesBar';
 import PanelSection from './PanelSection';
-import PhotoStrip from './PhotoStrip';
+import PhotoStrip, { PhotosLink } from './PhotoStrip';
 import {
   AnalysisSummary,
   ComparedSection,
@@ -209,6 +209,7 @@ const ActivityPanel: React.FC<ActivityPanelProps> = ({
   const [axis, setAxis] = useState<ChartAxis>('time');
   // The charts' shared cursor, seconds from the start
   const [cursorT, setCursorT] = useState<number | null>(null);
+  const photosRef = useRef<HTMLDivElement>(null);
   const from = Date.parse(s.startTime);
   const to = Date.parse(s.endTime);
   const samples = useMemo(() => trackSamples(detail.points, from), [detail.points, from]);
@@ -281,6 +282,12 @@ const ActivityPanel: React.FC<ActivityPanelProps> = ({
       <Typography variant="caption" sx={{ color: tokens.textMuted, display: 'block', ml: 5 }}>
         {formatWhen(s.startTime)} ·{' '}
         {(s.sources?.length ? s.sources : [s.source]).map((x) => sourceLabel(x)).join(', ')}
+        {photos && photos.length > 0 && onOpenPhoto && (
+          <>
+            {' · '}
+            <PhotosLink count={photos.length} target={photosRef} />
+          </>
+        )}
       </Typography>
 
       {editing && (
@@ -354,9 +361,11 @@ const ActivityPanel: React.FC<ActivityPanelProps> = ({
       )}
 
       {photos && photos.length > 0 && onOpenPhoto && (
-        <PanelSection title="Photos" hint={photos.length}>
-          <PhotoStrip photos={photos} onOpen={onOpenPhoto} />
-        </PanelSection>
+        <Box ref={photosRef} sx={{ scrollMarginTop: 8 }}>
+          <PanelSection title="Photos" hint={photos.length}>
+            <PhotoStrip photos={photos} onOpen={onOpenPhoto} />
+          </PanelSection>
+        </Box>
       )}
 
       <PanelSection

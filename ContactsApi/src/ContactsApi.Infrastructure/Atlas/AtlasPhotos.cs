@@ -87,6 +87,32 @@ public partial class AtlasService
     public Task<int> DeleteAllPhotosAsync(string owner, string provider, CancellationToken ct = default) =>
         _db.Photos.Where(p => p.OwnerId == owner && p.Provider == provider).ExecuteDeleteAsync(ct);
 
+    /// <summary>Listed activities and visits with how many photos were placed in each</summary>
+    private async Task<(List<ActivitySummary>, List<VisitSummary>)> WithPhotoCountsAsync(string owner,
+        List<ActivitySummary> activities, List<VisitSummary> visits, CancellationToken ct)
+    {
+        if ((activities.Count == 0 && visits.Count == 0) || !await _db.Photos.AnyAsync(p => p.OwnerId == owner, ct))
+        {
+            return (activities, visits);
+        }
+
+        var activityIds = activities.Select(a => a.Id).ToList();
+        var perActivity = activityIds.Count == 0
+            ? new Dictionary<Guid, int>()
+            : await _db.Photos.Where(p => p.OwnerId == owner && p.ActivityId != null && activityIds.Contains(p.ActivityId.Value))
+                .GroupBy(p => p.ActivityId!.Value).Select(g => new { g.Key, N = g.Count() })
+                .ToDictionaryAsync(x => x.Key, x => x.N, ct);
+        var visitIds = visits.Select(v => v.Id).ToList();
+        var perVisit = visitIds.Count == 0
+            ? new Dictionary<Guid, int>()
+            : await _db.Photos.Where(p => p.OwnerId == owner && p.VisitId != null && visitIds.Contains(p.VisitId.Value))
+                .GroupBy(p => p.VisitId!.Value).Select(g => new { g.Key, N = g.Count() })
+                .ToDictionaryAsync(x => x.Key, x => x.N, ct);
+        return (
+            activities.Select(a => perActivity.TryGetValue(a.Id, out var n) ? a with { PhotoCount = n } : a).ToList(),
+            visits.Select(v => perVisit.TryGetValue(v.Id, out var n) ? v with { PhotoCount = n } : v).ToList());
+    }
+
     /// <summary>How many photos the owner has, and how many have a position</summary>
     public async Task<(int Total, int WithPosition)> PhotoCountsAsync(string owner, CancellationToken ct = default)
     {

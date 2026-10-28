@@ -5,11 +5,35 @@
 
 import React, { useState } from 'react';
 import { Box, ButtonBase, Link, Typography } from '@mui/material';
-import { PlayCircleOutline } from '@mui/icons-material';
+import { PhotoCameraOutlined, PlayCircleOutline } from '@mui/icons-material';
 import { backendApiClient } from '../../../services/api/BackendApiClient';
 import type { PhotoSummary } from './types';
-import { takenText } from './photos';
+import { photoCountText, takenText } from './photos';
 import { tokens } from '../theme/contactsTheme';
+
+/**
+ * "📷 12 photos" for a panel's header line; scrolls to the panel's Photos section.
+ * @param props - How many (or the text), and the section
+ * @returns The link
+ */
+export const PhotosLink: React.FC<{
+  count: number;
+  target: React.RefObject<HTMLElement>;
+  /** Instead of "12 photos" */
+  label?: string;
+}> = ({ count, target, label }) => (
+  <Link
+    component="button"
+    type="button"
+    variant="caption"
+    underline="hover"
+    onClick={() => target.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+    sx={{ color: 'inherit', verticalAlign: 'baseline', whiteSpace: 'nowrap' }}
+  >
+    <PhotoCameraOutlined sx={{ fontSize: 12, verticalAlign: '-2px', mr: 0.25 }} />
+    {label ?? photoCountText(count)}
+  </Link>
+);
 
 /** Props for PhotoStrip */
 export interface PhotoStripProps {

@@ -97,6 +97,8 @@ export interface ActivitySummary {
   memberCount: number;
   /** Fields the sources disagree on (0 when none) */
   conflictCount: number;
+  /** Photos taken during it (search results; missing from older servers) */
+  photoCount?: number;
 }
 
 /** One source record contributing to a fused activity */
@@ -230,6 +232,8 @@ export interface VisitSummary {
   source: string;
   /** How the place got its identity (see IdentifyState); missing from older servers */
   identifyState?: string;
+  /** Photos taken during it (search results; missing from older servers) */
+  photoCount?: number;
 }
 
 /**
