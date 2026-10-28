@@ -1,0 +1,92 @@
+{{- if and .Values.enabled .Values.networkPolicy.enabled }}
+# The routes pod (both containers: a policy applies to the whole pod) reaches only
+# the backend, Postgres and cluster DNS, plus Vault for its agent (AD-32 rule 7)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "routes.fullname" . }}
+  labels:
+    {{- include "routes.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "routes.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Only the backend calls /internal/v1
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "routes.backendSelectorLabels" . | nindent 14 }}
+      ports:
+        - port: http
+          protocol: TCP
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "routes.backendSelectorLabels" . | nindent 14 }}
+      ports:
+        - port: {{ .Values.networkPolicy.backendPort }}
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.postgres.podLabels | nindent 14 }}
+      ports:
+        - port: {{ .Values.networkPolicy.postgres.port }}
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    {{- if .Values.vault.enabled }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.vault.namespace }}
+      ports:
+        - port: {{ .Values.vault.port }}
+          protocol: TCP
+    {{- end }}
+---
+# The backend admits its existing peer (the frontend's nginx) and the routes pod,
+# and no other new peer. nginx never proxies /internal/**, and the routes token is
+# accepted only on /internal/routes/* (AD-32 rule 7, AD-33 rule 2).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-backend-ingress
+  labels:
+    {{- include "routes.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "routes.backendSelectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "routes.frontendSelectorLabels" . | nindent 14 }}
+        - podSelector:
+            matchLabels:
+              {{- include "routes.selectorLabels" . | nindent 14 }}
+        {{- with .Values.networkPolicy.extraBackendIngressFrom }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      ports:
+        - port: {{ .Values.networkPolicy.backendPort }}
+          protocol: TCP
+{{- end }}

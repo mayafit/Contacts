@@ -128,6 +128,18 @@ backend:
       failureThreshold: 3
 
 # =============================================================================
+# Route quality (Epic 12): EchoRoutes.Worker with Valhalla in one pod. Off until
+# the tiles image, the echo_routes role and the Vault keys exist
+# (charts/routes/README.md)
+# =============================================================================
+routes:
+  enabled: false
+  vault:
+    enabled: false
+    kvPath: "secret/data/contacts"
+    role: "contacts-routes"
+
+# =============================================================================
 # Bitnami PostgreSQL
 # =============================================================================
 postgresql:

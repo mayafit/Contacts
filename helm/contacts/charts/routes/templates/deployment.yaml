@@ -1,0 +1,159 @@
+{{- if .Values.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "routes.fullname" . }}
+  labels:
+    {{- include "routes.labels" . | nindent 4 }}
+spec:
+  # Fixed at 1 while enabled (AD-33 rule 1): one engine, one scheduler
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "routes.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "routes.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if .Values.vault.enabled }}
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: {{ .Values.vault.role | quote }}
+        vault.hashicorp.com/agent-inject-secret-env: {{ .Values.vault.kvPath | quote }}
+        # Only the routes keys: the backend's database credentials never enter this pod
+        vault.hashicorp.com/agent-inject-template-env: |
+          {{`{{ with secret "`}}{{ .Values.vault.kvPath }}{{`" }}`}}
+          export Routes__ServiceToken="{{`{{ .Data.data.Routes__ServiceToken }}`}}"
+          export Routes__BackendToken="{{`{{ .Data.data.Routes__BackendToken }}`}}"
+          export Routes__ConnectionString="{{`{{ .Data.data.Routes__ConnectionString }}`}}"
+          {{`{{ end }}`}}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "routes.fullname" . }}
+      priorityClassName: {{ .Values.priorityClass.name }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.image.pullSecret }}
+      imagePullSecrets:
+        - name: {{ .Values.image.pullSecret }}
+      {{- end }}
+      securityContext:
+        fsGroup: 1001
+      initContainers:
+        # The tiles image (busybox) unpacks its tar straight into the emptyDir, with
+        # the outlines and graph.json: no PersistentVolume, no download (AD-32 rule 4)
+        - name: tiles
+          image: "{{ .Values.tiles.repository }}:{{ .Values.tiles.tag }}"
+          imagePullPolicy: {{ .Values.tiles.pullPolicy }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              src={{ .Values.tiles.sourceDir }}
+              rm -rf /data/valhalla_tiles && mkdir -p /data/valhalla_tiles
+              tar -xf "$src/valhalla_tiles.tar" -C /data/valhalla_tiles
+              cp "$src"/*.poly "$src/graph.json" /data/
+              for f in admins.sqlite timezones.sqlite; do [ ! -f "$src/$f" ] || cp "$src/$f" /data/; done
+          securityContext:
+            runAsUser: 1001
+            runAsGroup: 1001
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+          resources:
+            {{- toYaml .Values.resources.init | nindent 12 }}
+          volumeMounts:
+            - name: tiles
+              mountPath: /data
+      containers:
+        - name: routes
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if .Values.vault.enabled }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              if [ -f /vault/secrets/env ]; then
+                set -a
+                . /vault/secrets/env
+                set +a
+              fi
+              exec dotnet EchoRoutes.Worker.dll
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "routes.fullname" . }}-config
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.liveness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.readiness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+          resources:
+            {{- toYaml .Values.resources.routes | nindent 12 }}
+          securityContext:
+            runAsUser: 1001
+            runAsGroup: 1001
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+          volumeMounts:
+            - name: tiles
+              mountPath: /tiles
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+        - name: valhalla
+          image: {{ .Values.valhalla.image | quote }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              python3 /config/configure.py /tmp/valhalla.json
+              exec valhalla_service /tmp/valhalla.json {{ .Values.valhalla.threads }}
+          # Listens on 127.0.0.1 only: reachable from the routes container, nothing else
+          readinessProbe:
+            exec:
+              # python3 ships with the image (valhalla_build_config is Python); curl may not
+              command: ["python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:{{ .Values.valhalla.port }}/status', timeout=3)"]
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            {{- toYaml .Values.resources.valhalla | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: tiles
+              mountPath: /tiles
+              readOnly: true
+            - name: valhalla-config
+              mountPath: /config
+              readOnly: true
+            - name: valhalla-tmp
+              mountPath: /tmp
+      volumes:
+        - name: tiles
+          emptyDir:
+            sizeLimit: {{ .Values.tiles.sizeLimit }}
+        - name: tmp
+          emptyDir: {}
+        - name: valhalla-tmp
+          emptyDir: {}
+        - name: valhalla-config
+          configMap:
+            name: {{ include "routes.fullname" . }}-valhalla
+{{- end }}
