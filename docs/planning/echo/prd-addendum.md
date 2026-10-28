@@ -21,7 +21,8 @@ This addendum covers the technical context and options that sit behind the PRD (
   - The agent loop runs in the browser (`assistant/agent.ts`). The backend only proxies Gemini (`/api/assistant/generate`, `/search`).
   - Each Area passes its own `Toolset` to `AssistantPanel`: `AtlasHome.tsx` passes `atlasToolset(...)`, and Contacts passes the contact tools. Today no single conversation sees both.
 - **MCP.** `/api/mcp` uses the official C# SDK and accepts `atl_` Bearer tokens (SHA-256 stored), plus Cloudflare Access for remote clients. It has Atlas tools only: no photos and no contacts.
-- **Naming.** The repository, chart, images and Vault path are all named "contacts". Renaming them to Echo is optional (PRD FR-03 limits the requirement to the user-facing brand). If they are renamed, note that `global.publicUrl` must stay `contacts.mayaffit.com`. Also, the chart version must be bumped, or Flux ignores the change.
+- **Naming.** The repository, chart, images and Vault path are all named "contacts", and they stay so: the Owner decided that Echo is the in-app name only (PRD Q-4, FR-03). `global.publicUrl` stays `contacts.mayaffit.com`.
+- **Users.** Today any Google account that completes sign-in gets a session; there is no allowlist and no role. The data is already scoped per `sub`, which the multi-user decision (PRD Q-1, §2.2) builds on: FR-51 adds the allowlist and the admin role, and NFR-07 turns the scoping into a tested hard gate.
 
 ## A2. Phase 0 Remediation Notes (NFR-01 to NFR-06)
 
@@ -44,8 +45,9 @@ This addendum covers the technical context and options that sit behind the PRD (
   - Today's deploy is a hand build followed by `kubectl rollout restart`. Tests: xUnit, and Jest with jest-axe.
 - **OAuth (NFR-03).**
   - The app is in Google "Testing" mode, so refresh tokens expire after 7 days.
-  - Moving to Production while unverified ends that expiry. It shows an "unverified app" screen and has a lifetime cap of 100 users for sensitive or restricted scopes, which is fine for one owner.
-  - Contacts and Calendar scopes are *sensitive*, and Gmail scopes are *restricted*. Full verification, with a CASA assessment for Gmail, is only needed if Q-1 (multi-user) becomes yes.
+  - **Decided (Q-3):** move to Production, unverified, in Phase 0. That ends the expiry. Every user sees an "unverified app" screen, and the app has a lifetime cap of 100 users for sensitive or restricted scopes. That fits the Owner plus a small invited circle (Q-1, FR-51).
+  - Contacts and Calendar scopes are *sensitive*, and Gmail scopes (`gmail.metadata`, `gmail.readonly`) are *restricted*. Beyond test use, restricted scopes need verification plus a yearly CASA assessment. With invited users (Q-1 = yes), the Gmail tiers stay available under the unverified warning, and verification with CASA is the gate before opening beyond the invited circle (PRD NFR-19).
+  - The 100-user cap counts every user the app has ever had, so allowlist removals do not free places. The admin page shows the count (FR-51).
   - The privacy and terms pages (FR-50) are needed either way.
   - `include_granted_scopes` is not used, **on purpose**. Each sign-in asks for exactly the scopes of the tiers the Owner holds, because Gmail refuses content reads when a token also carries `gmail.metadata` (`ScopePreferences.cs:25-28`, `AuthController.cs:74-75`). Ending the 7-day expiry does not need it, and adopting it would break T2.
 - **Durable Contacts state (NFR-04).**
@@ -55,7 +57,8 @@ This addendum covers the technical context and options that sit behind the PRD (
   - Mind NFR-10: the backend needs the key ring at start to read the session and OAuth cookies. If the ring lives only in Postgres, a backend that starts while Postgres is down cannot sign anyone in, and Contacts goes down with the database. Whatever holds the ring must keep a copy that Contacts can read without Postgres (the architecture's AD-12 keeps Postgres as the record and a mirror in Redis).
 - **Backups (NFR-05).**
   - Postgres runs on `local-path` storage, which ties it to one node. A node loss strands it.
-  - Options: a `pg_dump` CronJob to off-node storage (see Q-8), encrypted, with a restore drill per phase. The backup must include the Data Protection keys, or encrypted columns cannot be restored.
+  - **Decided (Q-8):** a `pg_dump` CronJob to the operator's **Google Drive**, encrypted before upload with a key held in Vault (never in Drive), with a restore drill per phase. Backups are system-level and hold every user's data. The backup must include the (wrapped) Data Protection keys, or encrypted columns cannot be restored.
+  - Drive access options: an OAuth client with the `drive.file` scope (reaches only files the job created; a non-sensitive scope, so no verification), or a service account. A service account has no Drive storage of its own outside a Workspace shared drive, so it cannot simply write into a personal Drive. The architecture picks `drive.file` (AD-24).
   - Vault stays sealed after a reboot (a known operational fact). That is the one manual step allowed by NFR-10.
 - **Stale docs (NFR-06).** Three documents are wrong today:
   - `DEPLOYMENT.md` describes a frontend-only setup.
@@ -99,7 +102,7 @@ This addendum covers the technical context and options that sit behind the PRD (
 - Concerns:
   - The Contacts tools work over the contacts loaded in Redux. In Atlas, those may not be loaded. Either load them lazily, or add server-side contact tools.
   - The function declarations grow, and so does the token cost per call (NFR-11 caps the increase at 2×).
-  - Q-5 (sending combined data to Gemini) may push Connect answers to be computed on the server, with only the summarized result sent to the model.
+  - Q-5 (answered): Connect answers are computed on the server, and only the matched results and their citations go to the model. A per-user switch keeps them away from Gemini and shows them as plain cards instead.
 - MCP for people (FR-32): add read tools (contacts search and get, person links, encounters, timeline day) to `AtlasMcpTools`, and add a per-token scope field to `access_tokens`. MCP writes to Contacts stay excluded.
 
 ## A5. People in Photos (FR-43 to FR-45)
@@ -107,7 +110,8 @@ This addendum covers the technical context and options that sit behind the PRD (
 - **Inputs.** There are 157,021 Photos and videos as OneDrive metadata. Thumbnails come through Graph and are proxied today. Face detection needs pixels, so fetch a medium thumbnail per photo on demand and do not store the image.
 - **Compute.**
   - On-cluster only (the PRD forbids cloud face APIs). Candidates are CPU or ONNX models on arm64: SCRFD or RetinaFace for detection, ArcFace-class embeddings, and HDBSCAN or DBSCAN for clustering.
-  - On Raspberry Pi CPUs, plan the first pass in batches over days, with resumable progress (NFR-14), at a lower priority than interactive requests (NFR-09). An optional worker on an off-Pi machine owned by the Owner would still meet "the Owner's infrastructure". Confirm A-4.
+  - On Raspberry Pi CPUs, plan the first pass in batches over days, with resumable progress (NFR-14), at a lower priority than interactive requests (NFR-09), and round-robin across Owners (NFR-18). An optional worker on an off-Pi machine owned by the operator would still meet "Echo's own infrastructure". Confirm A-4.
+- **Scope (Q-2, answered).** Photos only (skip videos). Keep only clusters the Owner names: unnamed clusters, with their detections and templates, are discarded when the review session ends. Cluster each Owner's photos separately, and never compare embeddings across Owners.
 - **Storage.** Store embeddings encrypted (NFR-08) in an owner-keyed table, and keep face boxes with the photo id. A "never recognize" list stores only what is needed to suppress re-clustering. Prefer a negative-centroid approach, and decide whether that is itself biometric (likely yes; keep it minimal and inside T4).
   - Use a key that only face data uses. A face worker that can read the main key ring could decrypt every token and snapshot in Echo.
   - Keep the face worker away from other modules' tables: it should get photo ids and thumbnails from the backend, not by reading `atlas.photos`.
@@ -154,7 +158,17 @@ Large exports should be streamed as a zip; they may exceed the 20 MB request lim
 
 - **Writing Person Links into Google Contacts (as custom fields):** rejected. It violates P-1 and P-2 (Echo-derived data in the Owner's source of truth), and it syncs to the phone.
 - **Inferring Encounters from email:** rejected for Phase 1. An email exchange is not a meeting, and inferring one would lower precision (SM-C1).
-- **Cloud face APIs (Google Vision, Azure Face):** rejected. Biometric data would leave the Owner's infrastructure.
+- **Cloud face APIs (Google Vision, Azure Face):** rejected. Biometric data would leave Echo's infrastructure.
+- **Excluding Samsung Health until checked (old Q-10 option):** rejected by the Owner. Its time alignment is verified and corrected instead (FR-53, A11).
+- **Open sign-up:** rejected for now (Q-1). Invite-only keeps the user count inside the unverified-app cap and the Pi's capacity.
+- **OneDrive as the backup target:** replaced by Google Drive (Q-8).
+
+## A11. Samsung Health Time Alignment (FR-53)
+
+- **Evidence already exists.** Fusion pairs Samsung Health exercise sessions with Sports Tracker or GPX tracks of the same outing and records start-time conflicts (FR-19). Those pairs are the calibration set.
+- **Detect.** Per period (for example per month, split at DST changes), take the median start-time difference over the pairs. A median near a whole number of hours (±1 h, ±2 h, ±3 h) with a tight spread means a time-zone or DST error, such as local time stored as UTC.
+- **Correct.** Store the offset per (Owner, source, period) and apply it on import and to existing rows, by the same pattern as `PhotoClock.cs` (A10): the raw value stays, and the corrected value is used downstream. Re-fuse the affected windows after a change.
+- **Measure.** Report the median absolute start-time difference between Samsung Health and matched GPS sources; the Phase 0 exit is under 60 s.
 - **Google Photos as the photo source:** not feasible for the Owner (Takeout did not work out). OneDrive is the source.
 
 ## A10. Implementation Details of Built Behaviour (moved from the PRD)
@@ -170,5 +184,5 @@ The PRD states these FRs as observable behaviour. The mechanisms behind them are
 | FR-27 photo clock | `PhotoClock.cs`: GPS photos are tested as UTC and as local time of their zone against Visits and Activities (within 1 km agrees, beyond 5 km contradicts). A local clock needs at least 5 local votes and more than 3× the UTC votes. Photos without GPS take the nearest offset within 3 days, else the most common one. Re-run after a sync that changed photos, else at most daily. |
 | FR-27 photo position | Own GPS, else the track interpolated within 10 min, else the Visit's location. `PlacedBy` (gps, track, visit) records the method. |
 | FR-28 rate limits | Counted in memory in the backend process (per user per minute 40 generate and 10 search; 600 per user per day; 3,000 per day globally), so a pod restart resets them. The architecture moves them to Redis (AD-17). |
-| FR-31 Connect answers | Echo computes the when/where/with-whom joins on the server and passes only the matched rows and citations to Gemini (architecture AD-17). |
+| FR-31 Connect answers | Echo computes the when/where/with-whom joins on the server and passes only the matched rows and citations to Gemini (architecture AD-17; Q-5 answered). With the Owner's switch off, they are shown as plain cards and not sent. |
 | P-3 exception | The MCP tools `atlas_update_activity`, `atlas_update_place`, `atlas_delete_activity`, `atlas_delete_place` and `atlas_delete_visit` change or delete rows in place, with no history. Only `atlas_delete_import` (and re-import) works through provenance. |
