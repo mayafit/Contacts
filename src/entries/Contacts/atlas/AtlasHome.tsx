@@ -147,8 +147,14 @@ const AtlasHome: React.FC = () => {
     window.history.replaceState(null, '', window.location.pathname + (rest ? `?${rest}` : ''));
   }, []);
 
-  // Photos of what is open: the activity's, else the visited place's
-  const photosOf = detail ? `a:${detail.summary.id}` : visit?.placeId ? `p:${visit.placeId}` : '';
+  // Photos of what is open: the activity's, else the visited place's (the visit's without a place)
+  const photosOf = detail
+    ? `a:${detail.summary.id}`
+    : visit?.placeId
+      ? `p:${visit.placeId}`
+      : visit
+        ? `v:${visit.id}`
+        : '';
   useEffect(() => {
     setPanelPhotos([]);
     if (!photosOf) {
@@ -158,7 +164,9 @@ const AtlasHome: React.FC = () => {
     const id = photosOf.slice(2);
     (photosOf.startsWith('a:')
       ? backendApiClient.atlasActivityPhotos(id)
-      : backendApiClient.atlasPlacePhotos(id)
+      : photosOf.startsWith('p:')
+        ? backendApiClient.atlasPlacePhotos(id)
+        : backendApiClient.atlasVisitPhotos(id)
     )
       .then((p) => alive && setPanelPhotos(p))
       .catch(() => {
