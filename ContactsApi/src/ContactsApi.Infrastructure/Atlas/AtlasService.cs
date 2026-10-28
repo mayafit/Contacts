@@ -391,10 +391,11 @@ public partial class AtlasService
             totalVisits = await vq.CountAsync(ct);
             visits = await vq.OrderByDescending(v => v.StartTime).Take(limit)
                 .Select(v => new VisitSummary(v.Id, v.PlaceId, v.Place != null ? v.Place.Name : null, v.Place != null ? v.Place.Address : null,
-                    v.StartTime, v.EndTime, v.Lat, v.Lon, v.Source, v.Place != null ? v.Place.IdentifyState : null))
+                    v.StartTime, v.EndTime, v.Lat, v.Lon, v.Source, v.Place != null ? v.Place.IdentifyState : null, 0))
                 .ToListAsync(ct);
         }
 
+        (activities, visits) = await WithPhotoCountsAsync(owner, activities, visits, ct);
         return new SearchResult(activities, visits, totalActivities, totalVisits);
     }
 
@@ -1169,7 +1170,8 @@ public partial class AtlasService
             a.PointCount,
             SplitSources(a.Fusion != null ? a.Fusion.Sources : a.Source),
             a.Fusion != null ? a.Fusion.MemberCount : 1,
-            a.Fusion != null ? a.Fusion.ConflictCount : 0);
+            a.Fusion != null ? a.Fusion.ConflictCount : 0,
+            0);
 
     private static List<string> SplitSources(string sources) =>
         sources.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();

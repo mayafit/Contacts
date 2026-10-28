@@ -28,7 +28,7 @@ import type {
   PointOutput,
   VisitSummary,
 } from './types';
-import { PHOTO_COLOR, spread, takenText } from './photos';
+import { PHOTO_COLOR, photoCountText, spread, takenText } from './photos';
 import { FILTER_COLOR, HEALTH_COLOR, VISIT_COLOR, typeColor, isSet } from './types';
 import { Box } from '@mui/material';
 import AtlasLegend from './AtlasLegend';
@@ -111,14 +111,22 @@ const DENSITY_DEBOUNCE = 400;
 const VisitLabel: React.FC<{ visit: VisitSummary }> = ({ visit }) => {
   const mark = identifyMark(visit.identifyState);
   const name = visit.placeName || 'Visit';
+  const photos = photoCountText(visit.photoCount);
+  const more = photos ? <span style={{ opacity: 0.7 }}> · {photos}</span> : null;
   if (mark === 'auto') {
     return (
       <span>
         <i>{name}</i> <span style={{ opacity: 0.7 }}>· auto</span>
+        {more}
       </span>
     );
   }
-  return <span>{mark === '?' ? `${name} (?)` : name}</span>;
+  return (
+    <span>
+      {mark === '?' ? `${name} (?)` : name}
+      {more}
+    </span>
+  );
 };
 
 /**
@@ -208,6 +216,17 @@ const photoPin = (p: PhotoSummary): L.DivIcon =>
     iconSize: [34, 34],
     iconAnchor: [17, 17],
   });
+
+/**
+ * The small "has photos" dot beside a visit's circle (top-right, so the circle
+ * stays clickable); tracks get theirs on the canvas
+ */
+const VISIT_BADGE = L.divIcon({
+  className: 'atlas-photo-badge',
+  html: `<div style="width:7px;height:7px;border-radius:50%;background:${PHOTO_COLOR};border:1px solid #0e1116"></div>`,
+  iconSize: [9, 9],
+  iconAnchor: [-2, 10],
+});
 
 /** The small permanent label at the area filter's top-left corner */
 const AREA_LABEL = L.divIcon({
@@ -513,6 +532,22 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
     [activities],
   );
   const selectedFlight = lines.find((l) => l.a.id === selectedId && l.flight);
+  // Items with photos get a small dot (the open one's panel shows its photos instead):
+  // at the middle of a track, beside a visit. Positions made once per result list.
+  const trackBadges = useMemo(
+    () =>
+      lines
+        .filter(({ a }) => a.photoCount)
+        .map(({ a, path }) => ({ id: a.id, at: path[Math.floor(path.length / 2)] })),
+    [lines],
+  );
+  const visitBadges = useMemo(
+    () =>
+      visits
+        .filter((v) => v.photoCount)
+        .map((v) => ({ id: v.id, at: [v.lat, v.lon] as [number, number] })),
+    [visits],
+  );
   const crowded = lines.length > 150;
   const areaBounds: LatLngBoundsExpression | null = area
     ? [
@@ -527,8 +562,12 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
         ? [...trackTypes(densityData.tracks), ...(densityData.visits.length ? ['visit'] : [])]
         : [];
     }
-    return [...activities.map((a) => a.type), ...(visits.length ? ['visit'] : [])];
-  }, [density, densityData, activities, visits]);
+    return [
+      ...activities.map((a) => a.type),
+      ...(visits.length ? ['visit'] : []),
+      ...(trackBadges.length || visitBadges.length ? ['photos'] : []),
+    ];
+  }, [density, densityData, activities, visits, trackBadges, visitBadges]);
 
   return (
     <Box sx={{ position: 'relative', height: '100%', width: '100%' }}>
@@ -638,6 +677,35 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
               </Tooltip>
             </CircleMarker>
           ))}
+        {!density &&
+          trackBadges
+            .filter((b) => b.id !== selectedId)
+            .map((b) => (
+              <CircleMarker
+                key={`badge-${b.id}`}
+                center={b.at}
+                radius={3.5}
+                interactive={false}
+                pathOptions={{
+                  color: '#0e1116',
+                  weight: 1,
+                  fillColor: PHOTO_COLOR,
+                  fillOpacity: 1,
+                }}
+              />
+            ))}
+        {!density &&
+          visitBadges
+            .filter((b) => b.id !== selectedVisitId)
+            .map((b) => (
+              <Marker
+                key={`badge-${b.id}`}
+                position={b.at}
+                icon={VISIT_BADGE}
+                interactive={false}
+                keyboard={false}
+              />
+            ))}
         {layerMarkers}
         {pins.map(({ p, index, icon }) => (
           <Marker

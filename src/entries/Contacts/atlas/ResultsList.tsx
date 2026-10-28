@@ -5,12 +5,37 @@
 
 import React from 'react';
 import { Box, ButtonBase, Chip, Link, Tooltip, Typography } from '@mui/material';
-import { Place, WarningAmber } from '@mui/icons-material';
+import { PhotoCameraOutlined, Place, WarningAmber } from '@mui/icons-material';
 import type { SearchResult, VisitSummary } from './types';
 import { ACTIVITY_TYPES, VISIT_COLOR, sourceLabel, typeColor } from './types';
 import { formatDistance, formatDuration, formatWhen } from './geo';
 import { identifyMark } from './placeText';
+import { photoCountText } from './photos';
 import { tokens } from '../theme/contactsTheme';
+
+/** Read by screen readers, not shown */
+const HIDDEN = {
+  position: 'absolute',
+  // Strings: in sx a plain 1 means 100%
+  width: '1px',
+  height: '1px',
+  overflow: 'hidden',
+  clip: 'rect(0 0 0 0)',
+  whiteSpace: 'nowrap',
+} as const;
+
+/** A quiet "📷 12" at the end of a row's details, when it has photos */
+const PhotoMark: React.FC<{ count?: number }> = ({ count }) =>
+  count ? (
+    <Box component="span" title={photoCountText(count) ?? undefined} sx={{ whiteSpace: 'nowrap' }}>
+      {' · '}
+      <PhotoCameraOutlined sx={{ fontSize: 12, verticalAlign: '-2px' }} /> {count}
+      {/* Read out as "12 photos" (the icon is hidden from screen readers) */}
+      <Box component="span" sx={HIDDEN}>
+        {count === 1 ? ' photo' : ' photos'}
+      </Box>
+    </Box>
+  ) : null;
 
 /** Props for ResultsList */
 export interface ResultsListProps {
@@ -141,6 +166,7 @@ const ResultsList: React.FC<ResultsListProps> = ({
                   ]
                     .filter(Boolean)
                     .join(' · ')}
+                  <PhotoMark count={it.a.photoCount} />
                 </Typography>
               </Box>
             </ButtonBase>
@@ -201,6 +227,7 @@ const ResultsList: React.FC<ResultsListProps> = ({
                 <Typography variant="caption" sx={{ color: tokens.textMuted }}>
                   {formatWhen(it.v.startTime)} ·{' '}
                   {formatDuration((Date.parse(it.v.endTime) - Date.parse(it.v.startTime)) / 1000)}
+                  <PhotoMark count={it.v.photoCount} />
                 </Typography>
               </Box>
             </ButtonBase>

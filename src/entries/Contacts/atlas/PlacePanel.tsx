@@ -66,7 +66,8 @@ import {
   telUrl,
 } from './placeText';
 import PanelSection from './PanelSection';
-import PhotoStrip from './PhotoStrip';
+import PhotoStrip, { PhotosLink } from './PhotoStrip';
+import { PANEL_PHOTOS_MAX, placePhotosText } from './photos';
 import { tokens } from '../theme/contactsTheme';
 
 /** Props for PlacePanel */
@@ -548,6 +549,7 @@ const PlacePanel: React.FC<PlacePanelProps> = ({
   const [naming, setNaming] = useState(false);
   // Only the latest lookup's answer is shown (and none after unmounting)
   const lookupSeq = useRef(0);
+  const photosRef = useRef<HTMLDivElement>(null);
 
   // The place's details (again when the visit gets another place)
   const placeId = visit.placeId ?? null;
@@ -815,6 +817,21 @@ const PlacePanel: React.FC<PlacePanelProps> = ({
       <Typography variant="body2" sx={{ color: tokens.textSecondary, mt: 1 }}>
         {formatWhen(visit.startTime)} ·{' '}
         {formatDuration((Date.parse(visit.endTime) - Date.parse(visit.startTime)) / 1000)}
+        {photos && photos.length > 0 && onOpenPhoto && (
+          <>
+            {' · '}
+            <PhotosLink
+              count={photos.length}
+              target={photosRef}
+              label={placePhotosText(
+                // The server's count: the loaded list may stop before this visit's photos
+                visit.photoCount ?? photos.filter((p) => p.visitId === visit.id).length,
+                photos.length,
+                photos.length >= PANEL_PHOTOS_MAX,
+              )}
+            />
+          </>
+        )}
       </Typography>
       {address && (
         <Typography variant="caption" dir="auto" sx={{ color: tokens.textMuted, display: 'block' }}>
@@ -959,9 +976,11 @@ const PlacePanel: React.FC<PlacePanelProps> = ({
       </Box>
 
       {photos && photos.length > 0 && onOpenPhoto && (
-        <PanelSection title="Photos" hint={photos.length}>
-          <PhotoStrip photos={photos} onOpen={onOpenPhoto} />
-        </PanelSection>
+        <Box ref={photosRef} sx={{ scrollMarginTop: 8 }}>
+          <PanelSection title="Photos" hint={photos.length}>
+            <PhotoStrip photos={photos} onOpen={onOpenPhoto} />
+          </PanelSection>
+        </Box>
       )}
 
       {place && (
