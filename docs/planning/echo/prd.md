@@ -23,8 +23,8 @@ Echo is not greenfield. Two Areas already run in production at https://contacts.
 
 The rest of this document works as follows:
 - The Glossary (§3) fixes the vocabulary.
-- Features (§4) nest globally numbered requirements, FR-01 to FR-54. FR-51 to FR-54 were added after the Owner's answers of 2026-10-28, so they sit in the section they belong to, not in id order.
-- Cross-cutting quality requirements are NFR-01 to NFR-19 (§6).
+- Features (§4) nest globally numbered requirements, FR-01 to FR-60. FR-51 to FR-54 were added after the Owner's answers of 2026-10-28, so they sit in the section they belong to, not in id order. FR-55 to FR-60 (route quality, §4.12) follow them.
+- Cross-cutting quality requirements are NFR-01 to NFR-21 (§6).
 - Inferences are tagged `[ASSUMPTION]` and indexed in §13.
 - Technical "how" (mechanisms, storage, pipelines, remediation steps, and implementation details of Built behaviour such as error codes, scope names and thresholds) is in [prd-addendum.md](prd-addendum.md) for the architect.
 - The as-built inventories are the record of Built behaviour. The epics hold the original intent and detail, but in places they disagree with the code (NFR-06), so where they conflict, the as-built inventories win.
@@ -187,6 +187,11 @@ Every user of Echo is the **Owner** of their own data. The **first Owner** is al
 - **Opt-in Tier:** a revocable permission level that widens what Echo reads or shares (§5).
 - **Assistant:** Echo's chat agent (Google Gemini), which answers with links to records and writes only through Proposals.
 - **Personal Access Token:** an Owner-created bearer token (`atl_…`) that lets an external AI client use Echo through MCP.
+- **Route Quality:** Echo's assessment of how well an Activity's recorded track describes the way actually travelled: point density, gaps, straight jumps, implausible speeds. It has a score, a grade and flags.
+- **Map matching:** working out which roads or paths a recorded track actually followed. It takes the recorded GPS points, finds the roads near each one, and picks the most likely connected way through them. Where points are far apart, it fills the stretch between them with the most plausible road route.
+- **Routing graph (tiles):** the road and path network of a region, prepared from OpenStreetMap data so that a routing engine can search it quickly. Valhalla stores it as **tiles**, small files that each cover one square of the map. Echo builds it from a public map extract, and FR-60 adds more regions. It is shared by every Owner and holds no data about any of them.
+- **Routing engine:** open-source software that finds routes over a routing graph and can also do map matching. Echo uses one routing engine, self-hosted on the operator's cluster (NFR-20). The architecture compares Valhalla, OSRM and GraphHopper (AD-32).
+- **Matched Route:** a derived geometry that places an Activity's track on the real road or path network. Each piece of it is *observed* (recorded points lie along it), *inferred* (the road was chosen between sparse points) or a *gap* (nothing was matched). The source track is never changed (P-1). Like every derived fact, it belongs to the Owner of the Activity.
 
 ## 4. Features
 
@@ -582,6 +587,74 @@ The remaining sources, in no fixed order yet:
 - Strava and Garmin;
 - automatic web suggestions for Contacts (Programmable Search).
 
+### 4.12 Atlas: Route Quality and Road Matching (Proposed)
+
+On the Atlas map, most car trips are drawn as straight grey lines that cut across fields and between roads. Google Timeline records a drive as a few sparse points: the first Owner's production data has 15,420 drives with about 13 points each, which is 0.94 points per km, and the median gap between points is 60 s and 439 m. Echo detects these quality problems automatically and draws such trips on the roads that were most likely driven. A **separate route-quality service** does this on the operator's own cluster. It runs automatically on imported data, and on demand for a batch of routes or a single route.
+
+- Everything here is a **derived layer** (P-1, NFR-12). Source tracks are never changed, and the Owner can always see the original.
+- No location data leaves Echo's infrastructure for this feature (NFR-20), apart from the encrypted system backups that already hold every Owner's Atlas data (NFR-05).
+- **Per Owner.** Each Owner's Route Quality, Matched Routes, decisions and settings are their own, like the rest of their Atlas data (§2.2, NFR-07). Only the routing graph, which holds no user data, is shared.
+
+#### FR-55: Route quality assessment — Proposed
+Echo assesses every Activity's track and shows its **Route Quality**: a score from 0 to 100, a grade (good, fair or poor) and the flags that explain it. The flags are:
+- sparse points (points per km below what the type needs);
+- long gaps in time or distance (the largest gap and the 90th percentile);
+- straight jumps (legs longer than a per-type length with no point between);
+- implausible speed for the type;
+- no track at all (for example every Samsung Health activity). Such an Activity is never given a route (decision Q-11);
+- start or end far from the linked Visits;
+- after matching: points far from any road, and a low matching confidence.
+
+Details:
+- The assessment runs automatically for new and changed Activities, and for all existing ones once (a backfill).
+- An Activity whose type can be matched (FR-56) and whose score is below the "needs improvement" threshold is marked **needs improvement**. The thresholds are in the architecture (AD-35) and are starting values (A-11).
+- Assessment never needs a third party.
+
+#### FR-56: Road-matched routes — Proposed
+For an Activity marked "needs improvement", Echo computes a **Matched Route** that follows the real road network, and shows it instead of the straight lines when the match is confident enough.
+- **Types.** Phase R1: drive, and transit on roads (buses). Phase R2: ride, walk, run and hike, each on a bike or foot network. Flight, ski, swim and "other" are **never** matched. A transit trip that turns out to be rail is left as recorded (decision Q-12).
+- **Provenance.** Every piece of a Matched Route is *observed*, *inferred* or a *gap* (§3). On the map, inferred pieces are drawn more faintly (dashed), and gaps stay as recorded.
+- **Confidence.** Each Matched Route has a confidence from 0 to 1. It is shown by default, with no acceptance needed, when its confidence is at or above the Owner's threshold, which starts at **0.7** (decision Q-14). Below it, the original stays in place; from Phase R2 the Owner can view the Matched Route and choose to use it (FR-58).
+- **Distance.** When a source gave the Activity's distance (FR-19), it stays, and a Matched Route's road distance is shown beside it ("13.5 km recorded, 15.1 km on roads"), not in place of it. When no source gave a usable distance and Echo measured it along the recorded straight lines (as it does for most Google Timeline drives), the shown Matched Route's road distance **replaces** that measurement, in the panel, the lists and Insights; reverting to the original restores it.
+- **Photos.** Photos taken on an inferred stretch stay where they are placed today, on the straight line between recorded points, until a Phase R2 change places them on the Matched Route by time.
+- Each Matched Route records the engine, the map data version and the rule version that produced it (P-4).
+
+#### FR-57: Automatic and on-demand runs — Proposed
+- **Automatic.** After every import or sync, once fusion has settled, the route-quality service assesses the changed Activities and matches those that need it. A one-time backfill covers each Owner's existing history. From Phase R2, a new monthly map data version also re-matches existing routes in the background; in R1 it is used only for new matches.
+- **On demand.** The Owner can:
+  - run "Fix this route" on one Activity (the result appears within about a minute);
+  - run "Improve routes" on a batch: the Activities of the current Atlas query, or a list from the data-quality insights (FR-59);
+  - see the service's status for their own data: queued, running, last run, last error, map data version and coverage (NFR-14).
+- **MCP and Assistant (Phase R2).** An external AI client (with a Personal Access Token) and the Assistant can read an Activity's Route Quality and request improvement of a list of Activities. That only adds derived data, so it falls within the P-3 exception and changes no source record.
+- **Per Owner and fair.** Every run belongs to one Owner and touches only that Owner's Activities (NFR-07). Runs, including each Owner's backfill, share the same round-robin across Owners as all other background work, so one Owner's backlog never starves another Owner's runs (NFR-18, NFR-21).
+
+#### FR-58: Original or matched; the Owner decides — Proposed
+In the Activity panel, the Owner sees:
+- a **quality badge**, the grade with its flags on hover;
+- a **"Route improved"** indicator when a Matched Route is shown, with a toggle between *original* and *matched*;
+- the confidence, and the shares of observed and inferred pieces.
+
+They can also:
+- **Revert** to the original for good. This is a decision that survives re-matching, re-fusion, new map data and re-import (P-5), as fusion decisions do;
+- **Accept** a Matched Route that is below the threshold (Phase R2: "Use this route", at a confidence of 0.3 or more);
+- run **"Fix this route"** again after changing the type (for example from drive to ride), which re-matches with the right network.
+
+The map and the density view draw what the panel shows: the Matched Route when it is shown by default (confidence at or above the threshold, with no acceptance needed) or, from R2, accepted; otherwise the original. This includes the selected Activity: it is drawn on the Matched Route, with its recorded points as small markers, and the chart's hover marker stays on the recorded points, which carry the heart rate and time.
+
+#### FR-59: Route quality in Insights — Proposed (Phase R2)
+The data-quality section of Insights (FR-25) shows, for the current query:
+- the count of Activities by grade;
+- the count improved, the count waiting, the count that cannot be matched (no track, outside map coverage, type not matchable, rail, transit type unknown);
+- the worst sources.
+
+It also offers the batch action "Improve N routes". A rule-based proposal ("62 drives in this period are drawn as straight lines: improve them") links to it. The Owner can set the confidence threshold, the matched types, and whether Matched Routes are shown by default.
+
+#### FR-60: Routes abroad — Proposed (Phase R3)
+Activities outside the map data that Echo holds are flagged "outside map coverage" and left as recorded. At MVP, Echo holds Israel only (decision Q-13).
+- Each Owner sees which regions hold the most of their own such Activities.
+- Regions are added **on demand**: the operator adds regions from the "outside coverage" list, ranked by activity count. The admin sees only per-region counts summed over all Owners, never whose Activities they are, like the usage counters (FR-51).
+- Map data for a region is added as a published artifact (AD-32), never fetched by the cluster at run time, and Activities there are then matched like the rest.
+
 ## 5. Privacy Model
 
 Privacy is a product pillar, not a compliance appendix. The requirements in §4.10 and NFR-07, NFR-08 and NFR-11 implement it.
@@ -615,8 +688,9 @@ Privacy is a product pillar, not a compliance appendix. The requirements in §4.
 | **Google Drive** (backups, Proposed; Q-8) | Nightly system-level backups of Echo's database, holding **every user's data**, encrypted before upload with a key held in Vault and never in Drive (NFR-05). They go to the operator's Drive, through a scope that reaches only the files the backup job creates. Google sees file names, sizes and times, not content. Face data is never in a backup. | Daily, once backups are set up (Phase 0) | Operator only (system level); an Owner's erase (FR-49) reaches backups when they expire |
 | **Sports Tracker** (unofficial API) | Login once; workout listing and downloads, on a schedule (FR-52) | T3 Sports Tracker | Disconnect |
 | **Cloudflare** | All traffic (tunnel, Access) | Always | none (hosting choice) |
+| **Geofabrik** (OpenStreetMap extracts, Proposed, FR-56, FR-60) | **Nothing about any Owner.** CI downloads the latest public map extract (Israel and Palestine, and later any region the operator adds; Geofabrik updates them daily) once a month to build the routing graph. The request comes from GitHub Actions, not from the cluster, and carries no user data. It is listed for completeness: road matching itself runs on Echo's cluster and sends nothing out (NFR-20). | Monthly, from CI | Operator only: remove a region from the build list |
 
-**Never shared:** face data (T4), stored tokens and secrets, or an Owner's whole data set in bulk to any party, apart from the encrypted backups above. **No Owner's data is ever shared with another Owner.**
+**Never shared:** face data (T4), stored tokens and secrets, or an Owner's whole data set in bulk to any party, apart from the encrypted backups above. Route tracks are never sent to a hosted routing or map-matching API (NFR-20). **No Owner's data is ever shared with another Owner.**
 
 ### 5.3 Biometric Data
 
@@ -644,7 +718,7 @@ Privacy is a product pillar, not a compliance appendix. The requirements in §4.
 | **NFR-09** | **Responsive at personal scale on the Pi.** | With the first Owner's real volume (157k Photos, years of tracks) and the expected handful of users (A-10), the map, timeline, contact card Encounters and a Unified Timeline day each load at p95 ≤ 2 s; background work (fusion, photo placement, face clustering), for any Owner, never pushes interactive p95 above that. `[ASSUMPTION A-6: 2 s is achievable and adequate on the Pi at this scale.]` | Proposed |
 | **NFR-10** | **Graceful degradation.** | Done when these tests pass and are re-run each phase: **(a) Database down** (Postgres stopped, cache up, backend restarted while it is down): the Owner can sign in, list, search and edit Contacts. While the database is down, Echo may ask the Owner to sign in again when Google's short-lived access expires (about hourly), and that sign-in works. Atlas, Touchpoints, Connect, the Timeline and the Privacy Center each show a "temporarily unavailable" message within 5 s, and the Owner is not signed out. **(b) Third party down** (each of Gemini, OpenStreetMap, Microsoft Graph and Sports Tracker blocked in turn): only the features that use that party show an error that names it, and a smoke test of every other Area passes. **(c) Power cut** (both nodes power-cycled): every Echo service is Ready within 15 min of Vault being unsealed, with no other manual step. **(d) Database down and cache emptied at the same time:** Echo is down and says so, and it recovers with no data loss once the database returns. | Built in part (Contacts does not use the database today); Proposed for the rest: (a), (c) and (d) in Phase 0, (b) in Phase 1 |
 | **NFR-11** | **Third-party etiquette and cost caps.** | OSM usage policies are respected (Nominatim ≤ 1 req/s **across all users together**, with an identifying User-Agent; answers cached); Gemini and geocoder use each stay within **per-Owner** daily caps and a global daily cap (NFR-18); the cross-domain Assistant does not raise the per-question token cost by more than 2× compared with today. | Built for OSM and Gemini caps; Proposed for per-Owner geocoder caps and the budget |
-| **NFR-12** | **Recomputable derived data.** | Fusion, Person Links, Encounters and Face Clusters can be rebuilt from Source Records plus Owner decisions with no loss of Owner decisions. | Built for fusion; Proposed for the rest |
+| **NFR-12** | **Recomputable derived data.** | Fusion, Person Links, Encounters, Face Clusters, Route Quality and Matched Routes can be rebuilt from Source Records plus Owner decisions with no loss of Owner decisions. | Built for fusion; Proposed for the rest |
 | **NFR-13** | **Bilingual correctness.** | Search, sort, matching (names, Person Links, suggested emails) and Assistant answers handle Hebrew, English and mixed script; a Hebrew/English twin of one person is treated as one Person. Done when an automated suite with at least these cases passes: (1) "דנה כהן" and "Dana Cohen" with the same phone are one duplicate group, and, unmerged, one Person; (2) searching "דנה", "dana" or the phonetic name finds the same Contact; (3) a list of Hebrew and Latin names sorts Hebrew by Hebrew collation and Latin by Latin collation, with each in its own A–Z / א–ת section; (4) a mail display name in one script proposes a Contact whose name is in the other (suggested emails, attendee Person Links); (5) the same when/where/with-whom question in Hebrew and in English cites the same records. | Built for Contacts; Proposed for Connect |
 | **NFR-14** | **Observability of background work.** | The Owner can see the state of every background job (activity scan, source sync, fusion, photo placement, place identification, face clustering): queued, running, last success, last error. Logs are structured. A usage view shows scans, Assistant calls and their cost. | Built in part; usage view Planned (Epic 9 §6); Proposed for Connect and faces |
 | **NFR-15** | **Accessibility.** | Core views (contact table, card, Atlas panels, Unified Timeline, Privacy Center) are usable by keyboard and pass automated axe checks with no serious violations. | Built in part (jest-axe in Contacts); Proposed for new views |
@@ -652,6 +726,8 @@ Privacy is a product pillar, not a compliance appendix. The requirements in §4.
 | **NFR-17** | **Supported runtimes only.** | Every runtime and framework Echo runs on (the .NET runtime, the Node.js build toolchain, the database server) is within its vendor's support window, and a move to a supported version is planned at least one month before support ends. Today the backend's runtime leaves support on 2026-11-10, so the move is part of Phase 0. | Proposed (Phase 0) |
 | **NFR-18** | **Per-user fairness and capacity on the Pi.** | Each Owner has their own caps on Gemini calls and on geocoder lookups (OpenStreetMap), per minute and per day, which survive a restart; one Owner reaching a cap never blocks another. Background work (scans, syncs, fusion, derivation, face clustering) is shared **round-robin** across Owners, so no Owner's backlog (for example a first photo pass) starves another's: with one Owner's large backlog queued, another Owner's new import starts within 5 min. Echo is sized for a handful of users (A-10); the allowlist maximum (FR-51) enforces it, and the admin page shows each Owner's usage. | Proposed (Phase 0 for caps and the allowlist maximum; Phase 1 for worker fairness) |
 | **NFR-19** | **Google verification before opening up.** | Before Echo admits anyone beyond an invited circle, or approaches Google's 100-user lifetime cap for unverified apps, the Google app passes OAuth verification (brand, privacy pages, demo video) and the Gmail restricted scopes pass a CASA security assessment, renewed yearly. Until then, Echo stays invite-only (FR-51). | Planned (Epic 9 §6); a gate, not in a phase |
+| **NFR-20** | **Route matching stays home.** | Assessment and road matching (FR-55 to FR-60) run only on Echo's own cluster. No track, point or Activity id is sent to a hosted routing, map-matching or roads API. The route-quality pod can reach only the backend, Postgres and cluster DNS (enforced by a network policy on the pod), and the routing engine's configuration makes no outbound calls and fetches no map tiles. Map data reaches the cluster only as a published image built in CI. A test that runs a match with egress blocked passes. | Proposed (Phase R1) |
+| **NFR-21** | **Route quality fits the Pi.** | The route-quality service and its routing engine together stay within their declared CPU and memory limits (AD-36). The backfill of the first Owner's about 25,000 Activities completes within 24 h. While it runs, interactive p95 stays within NFR-09. A single "Fix this route" completes within 60 s, even during a backfill. Route work is shared round-robin across Owners, as NFR-18 requires of all background work: with one Owner's backfill running, another Owner's new import is assessed within 5 min. | Proposed (Phase R1) |
 
 ## 7. Non-Goals
 
@@ -674,6 +750,9 @@ Privacy is a product pillar, not a compliance appendix. The requirements in §4.
 | **1: Connect** | Contacts ↔ Atlas | FR-31 to FR-42, FR-47, FR-48, FR-49, FR-52; NFR-09, NFR-12 to NFR-14 for Connect data; NFR-10 test (b); NFR-11 token budget; NFR-15 for the Unified Timeline, Privacy Center and Person views; NFR-16 token scopes; NFR-18 worker fairness | UJ-3 and UJ-4 work on the first Owner's real data; SM-1 to SM-3 are measured; NFR-10 (b), the NFR-11 budget and the NFR-18 fairness test pass; any Owner can export and erase their own data |
 | **2: People in Photos** | Opt-in faces | FR-43 to FR-45; NFR-14 and NFR-15 for the face views | UJ-5 works; revocation is proven to delete all face data; unnamed clusters are proven discarded after review; no face data is reachable across Owners |
 | **3+: More of me** | Breadth | FR-54 LinkedIn first (Q-7), then FR-04, FR-11, FR-16, FR-21, FR-26, FR-30 and the other §4.11 sources | Chosen per phase; LinkedIn connections link to Contacts |
+| **R1: Routes MVP** (an Atlas track parallel to Phase 1) | Car trips on the roads | FR-55 (all types assessed); FR-56 and FR-57 for drive and bus or taxi transit, Israel map data only, without the MCP and Assistant tools or re-matching on a new map data version; FR-58 without accepting a Matched Route below the threshold; NFR-20, NFR-21 | It needs the `EchoService` scheme and CI image builds of Phase 0 (architecture AD-3, AD-22); if Phase 0 has not delivered them when R1 starts, R1 builds them itself (decided, architecture §12). Exit: the first Owner's drives in Israel are drawn on roads; the spike on the Pi confirms the AD-36 budget; NFR-20 and NFR-21 pass; the two-Owner isolation gate (NFR-07) and the round-robin fairness test (NFR-18) cover the route service |
+| **R2: Routes on foot and bike** | Every matchable type; insights; the rest of R1's features | FR-56 for ride, walk, run and hike; FR-57's MCP and Assistant tools and re-matching on a new map data version; FR-58's "Use this route" below the threshold; photos placed on the Matched Route; FR-59 | Matched foot and bike routes are rejected by the Owner in ≤ 10% of the cases they review (the SM-3 measure applied to routes) |
+| **R3: Routes abroad** | Coverage | FR-60 | The regions added on demand (Q-13) are matched; the rest are flagged "outside map coverage" |
 | **Gate: beyond the invited circle** | Opening up | NFR-19 Google verification and CASA | Not scheduled. Required before anyone outside the invited circle is admitted, or before the user count nears 100 |
 
 ### 8.1 In Scope for the Next Release (Phases 0 and 1)
@@ -685,6 +764,7 @@ Privacy is a product pillar, not a compliance appendix. The requirements in §4.
 - One Assistant, and MCP read access to people.
 - The Privacy Center, export and whole-Echo delete, per user.
 - Scheduled Sports Tracker sync.
+- Routes MVP (Phase R1): assessment of every Activity, and road matching of drives and road transit in Israel, with the original or matched toggle, for every Owner. The first Owner asked for this directly. It runs as its own track and does not wait for Connect.
 
 ### 8.2 Out of Scope for the Next Release
 
@@ -734,7 +814,7 @@ Privacy is a product pillar, not a compliance appendix. The requirements in §4.
 
 ## 11. Open Questions
 
-*All ten questions were answered by the Owner on 2026-10-28. None is open. The answers are kept here as the record.*
+*Questions Q-1 to Q-10 were answered by the Owner on 2026-10-28. Q-11 to Q-14 came with the route-quality plan (§4.12); the Owner asked for them to be decided rather than asked ("make the decisions"), so they are recorded as decisions with their reasons. None is open. The answers and decisions are kept here as the record.*
 
 1. **Q-1. Multi-user ever? — Answered (2026-10-28): yes.**
    - Echo supports more than one user. Each user owns their data, and no user sees another's (§2.2).
@@ -756,11 +836,15 @@ Privacy is a product pillar, not a compliance appendix. The requirements in §4.
 8. **Q-8. Backup destination. — Answered (2026-10-28):** Google Drive, not OneDrive. Backups are system-level, made by the operator into the operator's Drive, and hold every user's data. They are encrypted before upload with a key held in Vault, never in Drive (NFR-05, §5.2).
 9. **Q-9. Sports Tracker scheduling. — Answered (2026-10-28):** yes, a scheduled incremental sync at a polite rate, with failures shown as connection status (FR-52).
 10. **Q-10. Samsung Health. — Answered (2026-10-28):** do not exclude it; verify and fix its time alignment against matched GPS sources, in Phase 0, until the median start-time difference is under 60 s (FR-53).
+11. **Q-11. Activities with no track. — Decided (2026-10-28): no route is synthesised.** Samsung Health activities, and any Activity with fewer than 2 points, are flagged "no track" and not drawn (FR-55). *Reason:* a route between the Visits before and after would be made up wholly of inferred pieces. That is a guess, not a correction of a recording, and P-4 says a guess is not an answer.
+12. **Q-12. Rail transit. — Decided (2026-10-28): left as recorded.** Echo starts keeping the source's own type (FR-56, architecture AD-35), matches buses (and taxis) on roads, and leaves trains, trams, subways, ferries and cable cars as recorded. Transit recorded before Echo kept the source's type is not matched in R1 and is marked "type unknown" until the Timeline is re-imported, which fills the type; Echo does not guess rail from speed. *Reason:* the road graph has no rail lines, so a train placed on roads would be wrong, and a separate rail network costs a second graph and matcher for 473 transit trips, only some of them rail. Revisit if the Owner asks for it.
+13. **Q-13. Which regions abroad? — Decided (2026-10-28): none at MVP; added on demand.** R1 and R2 hold Israel only. In R3, regions are added on demand from the "outside coverage" list, ranked by activity count (FR-60). *Reason:* each region grows the monthly build and the tiles image, so it should be added where the unmatched trips actually are, not guessed in advance.
+14. **Q-14. Shown by default? — Decided (2026-10-28): yes, above a confidence of 0.7.** A Matched Route at or above 0.7 replaces the straight lines on the map by default, with the toggle in every Activity panel and no acceptance needed; below it, it is not drawn, and from R2 it is offered with "Use this route" (FR-56, FR-58). Each Owner can change the threshold and the default (FR-59). *Reason:* the Owner reported the straight lines as the defect, so the fix should be visible without a setting, and the threshold plus the always-available original and revert (FR-58) keep a wrong match from being silently trusted.
 
 ## 12. References
 
 - As-built inventories: [contacts-as-built.md](contacts-as-built.md), [atlas-as-built.md](atlas-as-built.md) (in this folder).
-- Epics: `docs/planning/epic-4-contacts-workspace.md` (Epics 4–6), `epic-7-activity-and-assistant.md` (Epics 7–8), `epic-9-productivity-roadmap.md`, `epic-10-personal-atlas.md`, `epic-11-fusion.md`.
+- Epics: `docs/planning/epic-4-contacts-workspace.md` (Epics 4–6), `epic-7-activity-and-assistant.md` (Epics 7–8), `epic-9-productivity-roadmap.md`, `epic-10-personal-atlas.md`, `epic-11-fusion.md`, `epic-12-route-quality.md` (FR-55 to FR-60).
 - Technical addendum for the architect: [prd-addendum.md](prd-addendum.md).
 - Architecture: [architecture.md](architecture.md).
 
@@ -775,3 +859,6 @@ Privacy is a product pillar, not a compliance appendix. The requirements in §4.
 - **A-8** (FR-34): the Encounter defaults (50% overlap, 500 m, confidence cap 0.6 without a location, threshold 0.5) are starting values for the Owner to tune.
 - **A-9** (FR-29, NFR-16): remote MCP clients pass through a Cloudflare Access policy. That policy lives in Cloudflare, outside this repository, and was not checked for this PRD.
 - **A-10** (§2.2, FR-51, NFR-09, NFR-18): "a handful of users" means at most about 10, the default allowlist maximum, and the other users hold less data than the first Owner. The Pi sizing rests on this.
+- **A-11** (FR-55, FR-56): the quality thresholds (the score below which a route needs improvement, the per-type straight-jump lengths) and the 0.7 confidence threshold are starting values for each Owner to tune. They were chosen against the first Owner's production measurements of 2026-10-28. For example, Google Timeline drives have 0.94 points per km and Sports Tracker rides about 91.
+- **A-12** (FR-56, NFR-21): a self-hosted routing engine can match sparse drives (points about 440 m and 60 s apart) on a Raspberry Pi within the NFR-21 budget, for the first Owner's history and a handful of smaller ones (A-10). The architecture's numbers are estimates until a spike on the Pi measures them (architecture AD-32, AD-36).
+- **A-13** (FR-56): OpenStreetMap's road network in Israel is complete enough that a confident match is almost always the road actually driven. Where it is not, the confidence check and the Owner's revert (FR-58) are the safeguards.
