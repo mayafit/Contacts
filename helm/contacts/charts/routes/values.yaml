@@ -4,7 +4,10 @@ enabled: false
 
 image:
   repository: ghcr.io/mayafit/contacts-routes
-  tag: latest
+  # An explicit tag: the short sha of the commit the image was built from (README,
+  # "The worker image"). With a fixed tag IfNotPresent is right, and a rollout is a
+  # values change. Empty or "latest" is refused at render time.
+  tag: "7caa18b"
   pullPolicy: IfNotPresent
   pullSecret: ""
 
@@ -16,6 +19,13 @@ valhalla:
   # Server threads (valhalla_service <config> <N>). Spike 12.1: 1 plateaus at about
   # 366 MiB anonymous memory; 2 kept growing and is rejected for now
   threads: 1
+  # GET /status on the loopback. Generous: a long trace may hold the single server
+  # thread for up to its 14 s timeout, so only a sustained silence (5 x 30 s) restarts it
+  livenessProbe:
+    initialDelaySeconds: 60
+    periodSeconds: 30
+    timeoutSeconds: 20
+    failureThreshold: 5
   # Valhalla runs with the valhalla.json shipped in the tiles image (spike 12.1
   # round 2: 32 MiB LRU tile cache, reserved memory released, httpd timeout 14 s,
   # trace max_distance 200 km). files/valhalla.json is a reference copy of it;
@@ -100,16 +110,19 @@ config:
   Routes__PollSeconds: "120"
   Routes__SweepDays: "7"
 
-# Only Routes__ServiceToken, Routes__BackendToken and Routes__ConnectionString
-# are exported into this pod (never the backend's own database credentials)
+# The pod's own Vault path, holding only Routes__ServiceToken, Routes__BackendToken
+# and Routes__ConnectionString; its role reads that path and nothing else, so the
+# backend's secrets (secret/data/contacts) never reach this pod (README, step 2)
 vault:
   enabled: false
-  kvPath: "secret/data/contacts"
+  kvPath: "secret/data/contacts-routes"
   role: "contacts-routes"
   # The Vault agent sidecar must reach Vault through the egress policy
   namespace: vault
   port: 8200
 
+# The routes pod's own policy (egress to the backend, Postgres, DNS and Vault only;
+# ingress from the backend only)
 networkPolicy:
   enabled: true
   backendPort: 5000
@@ -117,8 +130,14 @@ networkPolicy:
     port: 5432
     podLabels:
       app.kubernetes.io/name: postgresql
-  # Peers besides the frontend and the routes pod that may reach the backend
-  # (e.g. a monitoring namespace); each entry is a NetworkPolicy "from" peer
+
+# A policy on the BACKEND pod admitting only the frontend's nginx, the routes pod and
+# the peers listed below. Off by default: once on, every peer not listed is cut off
+# (an ingress controller, an in-cluster Cloudflare tunnel, metrics scrapes), so list
+# the live peers first (README, "Network policies")
+backendIngressPolicy:
+  enabled: false
+  # Each entry is a NetworkPolicy "from" peer
   extraBackendIngressFrom: []
 
 probes:

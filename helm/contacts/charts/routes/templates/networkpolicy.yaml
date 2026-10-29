@@ -59,9 +59,11 @@ spec:
         - port: {{ .Values.vault.port }}
           protocol: TCP
     {{- end }}
+{{- end }}
+{{- if and .Values.enabled .Values.backendIngressPolicy.enabled }}
 ---
-# The backend admits its existing peer (the frontend's nginx) and the routes pod,
-# and no other new peer. nginx never proxies /internal/**, and the routes token is
+# Opt-in. The backend admits the frontend's nginx, the routes pod and the listed
+# peers, and nothing else. nginx never proxies /internal/**, and the routes token is
 # accepted only on /internal/routes/* (AD-32 rule 7, AD-33 rule 2).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -83,7 +85,7 @@ spec:
         - podSelector:
             matchLabels:
               {{- include "routes.selectorLabels" . | nindent 14 }}
-        {{- with .Values.networkPolicy.extraBackendIngressFrom }}
+        {{- with .Values.backendIngressPolicy.extraBackendIngressFrom }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
       ports:

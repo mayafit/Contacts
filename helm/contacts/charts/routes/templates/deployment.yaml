@@ -70,6 +70,9 @@ spec:
               mountPath: /data
       containers:
         - name: routes
+          {{- if or (not .Values.image.tag) (eq (toString .Values.image.tag) "latest") }}
+          {{- fail "routes.image.tag must be an explicit tag (the image's short sha), not empty or latest" }}
+          {{- end }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           {{- if .Values.vault.enabled }}
@@ -121,6 +124,14 @@ spec:
           # no tile URL, no elevation download), with the spike's thread count
           command: ["valhalla_service", {{ .Values.valhalla.config | quote }}, {{ .Values.valhalla.threads | quote }}]
           # Listens on 127.0.0.1 only: reachable from the routes container, nothing else
+          livenessProbe:
+            exec:
+              command: ["python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:{{ .Values.valhalla.port }}/status', timeout={{ .Values.valhalla.livenessProbe.timeoutSeconds }})"]
+            initialDelaySeconds: {{ .Values.valhalla.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.valhalla.livenessProbe.periodSeconds }}
+            # The command's own timeout gives up first
+            timeoutSeconds: {{ add .Values.valhalla.livenessProbe.timeoutSeconds 5 }}
+            failureThreshold: {{ .Values.valhalla.livenessProbe.failureThreshold }}
           readinessProbe:
             exec:
               # python3 ships with the image (valhalla_build_config is Python); curl may not

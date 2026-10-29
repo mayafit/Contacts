@@ -139,10 +139,16 @@ backend:
 # =============================================================================
 routes:
   enabled: false
+  # image.tag: the worker image's short sha (charts/routes/README.md, "The worker image")
   vault:
     enabled: false
-    kvPath: "secret/data/contacts"
+    # The routes pod's own path (only its three keys); its role reads nothing else
+    kvPath: "secret/data/contacts-routes"
     role: "contacts-routes"
+  # A policy on the backend pod; list the live peers before switching it on (README)
+  backendIngressPolicy:
+    enabled: false
+    extraBackendIngressFrom: []
 
 # =============================================================================
 # Bitnami PostgreSQL
