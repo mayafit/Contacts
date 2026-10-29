@@ -38,7 +38,7 @@ internal sealed class RouteOnlyEngine : IValhallaClient
     }
 }
 
-/// <summary>Gap filling by /route and confidence v2 (AD-35 rules 6 and 7, routes.v2, story 12.4a), on synthetic answers</summary>
+/// <summary>Gap filling by /route and confidence v2 (AD-35 rules 6 and 7, routes.v2 and v3, story 12.4a), on synthetic answers</summary>
 public class RoutesGapFillTests
 {
     private static readonly Func<int, SyntheticTrace.Label> M = v => new SyntheticTrace.Label("matched", v);
@@ -375,7 +375,9 @@ public class RoutesGapFillTests
         };
         var r = await MatchAsync(points, PerCall(vertices), engine);
 
-        Assert.Equal((0, 1), (r.Metrics.Filled, r.Metrics.FillRejectedLength));
+        Assert.Equal((0, 0, 1), (r.Metrics.Filled, r.Metrics.FillRejectedLength, r.Metrics.FillRejectedReversal));
+        // Asked once more without headings: the same U-turn, still rejected
+        Assert.Equal((2, 1), (engine.Routes.Count, r.Metrics.FillRetried));
         Assert.Contains(r.Pieces, p => p.Kind == PieceKinds.Gap);
 
         var ok = await MatchAsync(points, PerCall(vertices), new RouteOnlyEngine());
@@ -401,6 +403,116 @@ public class RoutesGapFillTests
 
         round.Add((31.51, 34.8));
         Assert.False(GapFiller.Reverses(round));
+    }
+
+    /// <summary>A shape from moves in metres (east, north) from 31.5 N 34.8 E</summary>
+    private static List<(double Lat, double Lon)> Path(IEnumerable<(double E, double N)> metres) =>
+        metres.Select(m => (31.5 + m.N / 111_320.0, 34.8 + m.E / 94_900.0)).ToList();
+
+    /// <summary>Points on a circle round (cx, cy) of radius r, from angle a0 to a1 (degrees, counterclockwise from east)</summary>
+    private static IEnumerable<(double E, double N)> Arc(double cx, double cy, double r, double a0, double a1)
+    {
+        var steps = (int)Math.Ceiling(Math.Abs(a1 - a0) / 10);
+        for (var k = 0; k <= steps; k++)
+        {
+            var a = (a0 + (a1 - a0) * k / steps) * Math.PI / 180;
+            yield return (cx + r * Math.Cos(a), cy + r * Math.Sin(a));
+        }
+    }
+
+    [Fact]
+    public void A_motorway_loop_ramp_is_not_a_reversal_but_a_back_track_is()
+    {
+        // A cloverleaf loop: 100 m south, a 270 degree loop (radius 60 m) to the right,
+        // then east across the way in at a right angle (under the bridge) for 2 km
+        var clover = Path(new[] { (0.0, 0.0) }.Concat(Arc(-60, -100, 60, 0, -270)).Append((2000.0, -40.0)));
+        Assert.True(GapFiller.Turn(GapFiller.Bearing(clover[0], clover[1]), GapFiller.Bearing(clover[^3], clover[^2])) > 80);
+        Assert.False(GapFiller.Reverses(clover));
+        Assert.False(GapFiller.Reverses(Enumerable.Reverse(clover).ToList())); // the same loop at the end
+
+        // A loop ramp turning 180 degrees (radius 90 m) onto the road the other way, 180 m
+        // from the way in (the live Route 4 drive: routes.v2 rejected it)
+        var ramp = Path(new[] { (0.0, 0.0) }.Concat(Arc(-90, -50, 90, 0, -180)).Append((-180.0, 5000.0)));
+        Assert.False(GapFiller.Reverses(ramp));
+        Assert.False(GapFiller.Reverses(Enumerable.Reverse(ramp).ToList()));
+
+        // A U-turn across a 30 m median, 200 m out: back the other way beside the way out
+        var median = Path(new[] { (0.0, 0.0), (0.0, -200.0) }.Concat(Arc(-15, -200, 15, 0, -180)).Append((-30.0, 3000.0)));
+        Assert.True(GapFiller.Reverses(median));
+        Assert.True(GapFiller.Reverses(Enumerable.Reverse(median).ToList()));
+    }
+
+    /// <summary>A route answer along <paramref name="shape"/> at 50 km/h</summary>
+    private static JsonDocument ShapeAnswer(List<(double Lat, double Lon)> shape)
+    {
+        var lengthM = Enumerable.Range(1, shape.Count - 1).Sum(i => Geo.Haversine(shape[i - 1].Lat, shape[i - 1].Lon, shape[i].Lat, shape[i].Lon));
+        return JsonDocument.Parse(new JsonObject
+        {
+            ["trip"] = new JsonObject
+            {
+                ["legs"] = new JsonArray(new JsonObject { ["shape"] = SyntheticTrace.Encode(shape, 6) }),
+                ["summary"] = new JsonObject { ["length"] = lengthM / 1000, ["time"] = lengthM / (50 / 3.6) }
+            }
+        }.ToJsonString());
+    }
+
+    [Fact]
+    public async Task A_headed_route_rejected_for_its_length_is_retried_once_without_headings()
+    {
+        var (vertices, points) = CutGapDrive();
+        // With headings the engine leaves the wrong way round a 10 km loop; without, the road
+        var engine = new RouteOnlyEngine
+        {
+            Answer = q =>
+            {
+                var at = RouteOnlyEngine.Locations(q);
+                if (q["locations"]![0]!["heading"] == null)
+                {
+                    return SyntheticTrace.RouteAnswer(at, 50);
+                }
+
+                const double east = 5000 / 94900.0;
+                return ShapeAnswer(new List<(double Lat, double Lon)> { at[0], (at[0].Lat, at[0].Lon + east), (at[1].Lat, at[1].Lon + east), at[1] });
+            }
+        };
+        var r = await MatchAsync(points, PerCall(vertices), engine);
+
+        Assert.Equal(2, engine.Routes.Count);
+        Assert.NotNull(engine.Routes[0]["locations"]![0]!["heading"]);
+        Assert.Null(engine.Routes[1]["locations"]![0]!["heading"]);
+        Assert.Null(engine.Routes[1]["locations"]![1]!["heading"]);
+        Assert.Equal((1, 1, 0), (r.Metrics.Filled, r.Metrics.FillRetried, r.Metrics.FillRejectedLength));
+        Assert.Equal(RouteStatuses.Matched, r.Status);
+
+        // The retry counts against the per-drive cap: with one call, no retry
+        var capped = await MatchAsync(points, PerCall(vertices), engine = new RouteOnlyEngine { Answer = engine.Answer }, o => o.GapFillMaxCallsPerDrive = 1);
+        Assert.Single(engine.Routes);
+        Assert.Equal((0, 0, 1), (capped.Metrics.Filled, capped.Metrics.FillRetried, capped.Metrics.FillRejectedLength));
+
+        // Without headings there is nothing to retry
+        var plain = await MatchAsync(points, PerCall(vertices), engine = new RouteOnlyEngine(), o => o.GapFillHeadingTolerance = 0);
+        Assert.Single(engine.Routes);
+        Assert.Equal((1, 0), (plain.Metrics.Filled, plain.Metrics.FillRetried));
+    }
+
+    [Fact]
+    public async Task A_route_through_a_loop_ramp_fills_the_stretch()
+    {
+        var (vertices, points) = CutGapDrive();
+        // Leaves the anchor by a 180 degree loop ramp (radius 90 m) and drives on to the next one
+        var engine = new RouteOnlyEngine
+        {
+            Answer = q =>
+            {
+                var at = RouteOnlyEngine.Locations(q);
+                var loop = Arc(-90, 0, 90, 0, -180).Select(m => (at[0].Lat + m.N / 111_320.0, at[0].Lon + m.E / 94_900.0)).ToList();
+                return ShapeAnswer(loop.Append((at[1].Lat, at[0].Lon - 180 / 94_900.0)).Append(at[1]).ToList());
+            }
+        };
+        var r = await MatchAsync(points, PerCall(vertices), engine);
+
+        Assert.Equal((1, 0, 0), (r.Metrics.Filled, r.Metrics.FillRejectedReversal, r.Metrics.FillRetried));
+        Assert.Single(engine.Routes);
     }
 
     [Fact]

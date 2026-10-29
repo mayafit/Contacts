@@ -57,9 +57,11 @@ public static class RouteQuality
 {
     /// <summary>
     /// The rule version stored on every row; bumping it re-assesses and re-matches
-    /// (AD-34 rule 7). routes.v2: gap filling by /route and confidence v2 (AD-35 rules 6 and 7)
+    /// (AD-34 rule 7). routes.v2: gap filling by /route and confidence v2 (AD-35 rules 6 and 7).
+    /// routes.v3: a fill is rejected for a true back-track only, not a loop ramp's turn,
+    /// and a rejected headed fill is retried once without headings (AD-35 rule 7)
     /// </summary>
-    public const string RuleVersion = "routes.v2";
+    public const string RuleVersion = "routes.v3";
 
     /// <summary>Phases whose types are matched now</summary>
     public static readonly IReadOnlySet<string> EnabledPhases = new HashSet<string> { "R1" };

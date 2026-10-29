@@ -79,7 +79,7 @@ public class RoutesGapFillEngineTests
     }
 
     /// <summary>One drive as MatchRunner does it: trace calls, then (when on) one /route per stretch</summary>
-    private static async Task<(MatchResult Result, double Ms, int Routes)> MatchAsync(string url, List<RoutePoint> points, bool gapFill)
+    private static async Task<(MatchResult Result, double Ms, int Routes, List<FillOutcome> Fills)> MatchAsync(string url, List<RoutePoint> points, bool gapFill)
     {
         var options = new RoutesOptions { EngineTimeoutSeconds = 30, GapFill = gapFill };
         var client = new ValhallaClient(new Factory(url), Options.Create(options));
@@ -109,7 +109,7 @@ public class RoutesGapFillEngineTests
         var result = RouteAssembler.Assemble(points, sk, fills, profile, "auto", settings.MaxStoredVertices,
             settings.AnchorToleranceFor("google-timeline", "auto"), settings.GapFill.RoutedOnlyWeight);
         watch.Stop();
-        return (result, watch.Elapsed.TotalMilliseconds, stretches.Count);
+        return (result, watch.Elapsed.TotalMilliseconds, stretches.Count, fills);
     }
 
     [EngineTheory]
@@ -187,7 +187,7 @@ public class RoutesGapFillEngineTests
         await MatchAsync(url, points, true);
         var off = new List<double>();
         var on = new List<double>();
-        (MatchResult Result, double Ms, int Routes) without = default, with = default;
+        (MatchResult Result, double Ms, int Routes, List<FillOutcome> Fills) without = default, with = default;
         for (var i = 0; i < 3; i++)
         {
             without = await MatchAsync(url, points, false);
@@ -206,5 +206,100 @@ public class RoutesGapFillEngineTests
 
         Assert.InRange(routed, 0, 20);
         Assert.True(with.Result.Confidence >= without.Result.Confidence, $"{with.Result.Confidence} < {without.Result.Confidence}");
+    }
+
+    /// <summary>The cumulative signed turn (degrees, clockwise positive) of a shape over 20 m steps from <paramref name="fromM"/> to <paramref name="toM"/></summary>
+    private static double Turning(IReadOnlyList<(double Lat, double Lon)> shape, double fromM, double toM)
+    {
+        var cum = new double[shape.Count];
+        for (var i = 1; i < shape.Count; i++)
+        {
+            cum[i] = cum[i - 1] + Geo.Haversine(shape[i - 1].Lat, shape[i - 1].Lon, shape[i].Lat, shape[i].Lon);
+        }
+
+        (double Lat, double Lon) At(double m)
+        {
+            var k = Math.Clamp(Array.FindIndex(cum, c => c >= m), 1, shape.Count - 1);
+            var span = cum[k] - cum[k - 1];
+            var t = span > 0 ? Math.Clamp((m - cum[k - 1]) / span, 0, 1) : 0;
+            return (shape[k - 1].Lat + t * (shape[k].Lat - shape[k - 1].Lat), shape[k - 1].Lon + t * (shape[k].Lon - shape[k - 1].Lon));
+        }
+
+        double total = 0;
+        double? last = null;
+        for (var m = fromM; m + 20 <= Math.Min(toM, cum[^1]); m += 20)
+        {
+            var b = GapFiller.Bearing(At(m), At(m + 20));
+            if (last.HasValue)
+            {
+                total += ((b - last.Value + 540) % 360) - 180;
+            }
+
+            last = b;
+        }
+
+        return total;
+    }
+
+    [EngineFact]
+    public async Task A_cut_gap_that_leaves_a_motorway_by_a_loop_ramp_is_filled()
+    {
+        var url = TestEngine.Url!;
+        // Rishon LeZion to Kiryat Malakhi: south on Route 4, off it by a loop ramp at an interchange
+        var (road, timeS) = await RoadAsync(url, (31.9730, 34.7925), (31.7298, 34.7464));
+        var cum = new double[road.Count];
+        for (var i = 1; i < road.Count; i++)
+        {
+            cum[i] = cum[i - 1] + Geo.Haversine(road[i - 1].Lat, road[i - 1].Lon, road[i].Lat, road[i].Lon);
+        }
+
+        // The loop: more than 200 degrees of turning within 500 m
+        var loopM = Enumerable.Range(0, (int)(cum[^1] / 20) - 25).Select(k => k * 20.0)
+            .First(m => Math.Abs(Turning(road, m, m + 500)) > 200);
+
+        // A point every 1 km, the last one before the gap where the road ahead turns
+        // round by more than 150 degrees within 300 m (what routes.v2 called a U-turn), the
+        // next one more than 5.2 km (the pre-split) beyond it in a straight line
+        var speed = cum[^1] / timeS;
+        var t0 = new DateTime(2026, 9, 1, 8, 0, 0, DateTimeKind.Utc);
+        RoutePoint P(double m)
+        {
+            var k = Math.Clamp(Array.FindIndex(cum, c => c >= m), 1, road.Count - 1);
+            return new RoutePoint(t0.AddSeconds(cum[k] / speed), road[k].Lat, road[k].Lon);
+        }
+
+        (double Lat, double Lon) Pos(double m)
+        {
+            var k = Math.Clamp(Array.FindIndex(cum, c => c >= m), 1, road.Count - 1);
+            var t = cum[k] > cum[k - 1] ? Math.Clamp((m - cum[k - 1]) / (cum[k] - cum[k - 1]), 0, 1) : 0;
+            return (road[k - 1].Lat + t * (road[k].Lat - road[k - 1].Lat), road[k - 1].Lon + t * (road[k].Lon - road[k - 1].Lon));
+        }
+
+        double Dir(double m) => GapFiller.Bearing(Pos(m), Pos(m + 50));
+        var startM = Enumerable.Range(0, 70).Select(k => loopM - 300 + k * 10.0)
+            .First(m => Enumerable.Range(1, 10).Any(x => GapFiller.Turn(Dir(m), Dir(m + x * 25)) > 160));
+        var before = Enumerable.Range(0, (int)(startM / 1000)).Select(k => startM - k * 1000).Reverse().ToList();
+        var gapStart = P(startM);
+        var resume = startM + 100;
+        while (resume < cum[^1] && Geo.Haversine(gapStart.Lat, gapStart.Lon, P(resume).Lat, P(resume).Lon) < 5200)
+        {
+            resume += 100;
+        }
+
+        var after = Enumerable.Range(0, 6).Select(k => resume + k * 1000).Where(m => m < cum[^1]).ToList();
+        var points = before.Concat(after).Select(P).ToList();
+
+        var (result, _, _, fills) = await MatchAsync(url, points, true);
+        var jump = fills.Single(f => Geo.Haversine(f.Stretch.Start.Lat, f.Stretch.Start.Lon, gapStart.Lat, gapStart.Lon) < 200);
+        _out.WriteLine($"loop at {loopM:0} m, gap from {startM:0} m; jump {jump.Stretch.StraightM:0} m -> {jump.Result}, route {jump.Route?.LengthM:0} m; " +
+                       $"confidence {result.Confidence} {result.Status} ({result.Reason})");
+
+        // The route really leaves by the loop (routes.v2 rejected it as a U-turn)
+        Assert.NotNull(jump.Route);
+        Assert.True(Math.Abs(Turning(jump.Route!.Shape, 0, 700)) > 180, "the route does not take the loop ramp");
+        Assert.Equal(GapFiller.Filled, jump.Result);
+        Assert.Equal(0, result.Metrics.FillRejectedReversal);
+        Assert.True(result.Confidence >= 0.8, $"confidence {result.Confidence}: {result.Reason}");
+        Assert.Equal(RouteStatuses.Matched, result.Status);
     }
 }
