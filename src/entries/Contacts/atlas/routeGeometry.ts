@@ -250,8 +250,12 @@ export const routeCaption = (
 export const noMatchText = (route: ActivityRouteInfo | null | undefined): string => {
   const d = route?.description;
   const confidence = isSet(d?.confidence) ? ` (${pct(d.confidence)})` : '';
+  // The main reason only: no retry bookkeeping ("(gave up after N attempts)", "(attempt 1;
+  // retried after 1 min)"), and no engine detail after the first ";"
   const why = d?.reason
-    ?.replace(/^low confidence [\d.]+:\s*/, '')
+    ?.replace(/\s*\((?:gave up after \d+ attempts?|[^()]*;)[^()]*\)/g, '')
+    .split(';')[0]
+    .replace(/^low confidence [\d.]+:\s*/, '')
     .replace(/^no_match: /, '')
     .replace(/^no_call: /, '')
     .trim();

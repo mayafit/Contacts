@@ -215,4 +215,44 @@ describe('noMatchText', () => {
     ).toBe('No confident road match: the engine matched no point');
     expect(noMatchText(null)).toBe('No confident road match');
   });
+
+  it('drops the engine detail after the first ";" and the retry count', () => {
+    expect(
+      noMatchText(
+        route({
+          status: 'low_confidence',
+          confidence: 0.5,
+          reason:
+            'low confidence 0.5: a 2 km straight jump that no road explains; engine 400 (442): No path could be found',
+        }),
+      ),
+    ).toBe('No confident road match (50%): a 2 km straight jump that no road explains');
+    expect(
+      noMatchText(
+        route({
+          status: 'failed',
+          confidence: null,
+          reason: 'the engine did not answer within 15 s (gave up after 4 attempts)',
+        }),
+      ),
+    ).toBe('No confident road match: the engine did not answer within 15 s');
+    expect(
+      noMatchText(
+        route({
+          status: 'low_confidence',
+          confidence: 0.6,
+          reason: 'a bug (gave up after 4 attempts; the routes.v1 line is kept)',
+        }),
+      ),
+    ).toBe('No confident road match (60%): a bug');
+    expect(
+      noMatchText(
+        route({
+          status: 'failed',
+          confidence: null,
+          reason: 'the engine did not answer within 15 s (attempt 2; retried after 10 min)',
+        }),
+      ),
+    ).toBe('No confident road match: the engine did not answer within 15 s');
+  });
 });
