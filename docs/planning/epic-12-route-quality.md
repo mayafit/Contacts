@@ -9,7 +9,7 @@
 Builds on Epic 10 (`epic-10-personal-atlas.md`: storage, import, map) and
 Epic 11 (`epic-11-fusion.md`: fusion, the fusion service, the drill-down).
 Requirements: PRD FR-55 to FR-60, NFR-20 and NFR-21
-(`echo/prd.md` §4.12). Architecture: AD-32 to AD-37 (`echo/architecture.md` §5A).
+(`echo/prd.md` §4.12). Architecture: AD-32 to AD-38 (`echo/architecture.md` §5A).
 
 ## The problem
 
@@ -86,6 +86,7 @@ the 90th percentile. There are 65,797 gaps longer than 1 km.
 | `route_quality` | Assessment of every source record with or without a track | Metrics, score, grade, flags, needs improvement, matchable reason (including `unknown` for transit with no source type), rule version, input hash, the record's `UpdatedAt` and point count as assessed |
 | `matched_routes` | The Matched Route of a source record | Polyline (precision 5), pieces `{fromM, toM, kind}` in metres along the line (observed, inferred, gap), the roads it follows (`Roads`, `RoadNames`, story 12.16), confidence, road distance, engine, graph and rule version, input hash, and the record's `UpdatedAt`, point count and fused type at match time (the read-time check) |
 | `route_decisions` | The Owner's `reject` and `accept` | Keyed by `source|externalId`, never by a derived id |
+| `route_waypoints` | The points the Owner marked for a record (story 12.18) | Keyed like decisions; a decision, so backed up and exported |
 | `settings` | Per Owner | Threshold (0.7), matched types, shown by default |
 | `jobs`, `owner_cursors` | The service's per-Owner queue and its per-Owner pull cursors | Durable across restarts |
 | `atlas.activities.SourceType` (new column) | The source's own type text, for example `in_bus` or `in_train` | Written only by the backend's ingest; tells a bus from a train |
@@ -112,7 +113,7 @@ would cost hours of Pi time after a restore (AD-34 rule 9).
 
 | Phase | Content |
 | --- | --- |
-| R1 (MVP) | Engine and tiles in CI; the service and the backend's internal API; assessment of every type; matching of drive and bus or taxi transit in Israel; backfill and after-import runs; the panel toggle, revert and "Fix this route"; the map's dashed inferred pieces (stories 12.1 to 12.8, with 12.2b); roads travelled and the road filter (story 12.16) |
+| R1 (MVP) | Engine and tiles in CI; the service and the backend's internal API; assessment of every type; matching of drive and bus or taxi transit in Israel; backfill and after-import runs; the panel toggle, revert and "Fix this route"; the map's dashed inferred pieces (stories 12.1 to 12.8, with 12.2b); roads travelled and the road filter (story 12.16); rebuild from similar drives and mark the way (stories 12.17, 12.18) |
 | R2 | Foot and bike profiles (ride, walk, run, hike); route quality in Insights with the batch action; the settings dialog; photos on the matched line; the MCP and Assistant tools; "Use this route" for low-confidence matches; re-matching on a new graph version (stories 12.9, 12.10, 12.12 to 12.15) |
 | R3 | Regions abroad: a coverage report, and added extracts (story 12.11) |
 
@@ -578,6 +579,52 @@ Acceptance criteria (FR-61, AD-37):
   - the local Valhalla 3.9.1 with the Israel tiles: Ramla to Modi'in lists 423, then 431, and a filled stretch counts for 431;
   - Jest: the filter helpers and the panel line.
 
+### 12.17 Rebuild a route from similar drives — R1
+
+As the Owner, I want a drive that cannot be placed on the roads from its own points
+rebuilt from my other drives between the same places (or the same places reversed),
+when I ask, and shown to me before it is used.
+
+Acceptance criteria (FR-62, AD-38):
+- [ ] `RoutePoint.Synthetic`: legs touching a synthetic anchor are `inferred`, and
+  `anchorQuality` counts real points only.
+- [ ] `matched_routes` gains `Method`, `Basis`, `StartLat`, `StartLon`, `EndLat` and
+  `EndLon`, written at match time; older rows take theirs from the line's first and
+  last vertex at start-up. `jobs` gains `Result`.
+- [ ] `SimilarRoutes` (pure):
+  - the pool: matched, at least 0.8, `auto`, not rejected, the same type, both ends within 500 m, same direction or reversed, the 200 nearest;
+  - the fit: the share of interior real points within 150 m, with no going back over 150 m, and at least 0.6;
+  - the rank: fit, then time of day, then recency;
+  - borrowing: every 200 m on legs longer than 300 m whose two ends both lie along the basis, timed by distance, and never faster than the type's maximum.
+- [ ] The `rebuild` job runs interactively and stores the suggestion (line, pieces,
+  roads, confidence `min(factors, fit)`, basis) on the job. With no basis, the outcome
+  is `no_similar`.
+- [ ] `/api/routes/activities/{id}/rebuild` and `/apply`; apply answers 409 when the
+  record changed, writes the row (`Method = similar`) and an `accept` decision.
+- [ ] A `similar` row is not re-matched for a new rule version, and is re-matched
+  `auto` when its points or type change.
+- [ ] The panel offers "Rebuild from similar drives". The suggestion is drawn on the
+  map, and the panel shows the basis ("From 14 similar drives (6 agree), the closest
+  on 3 Sep at 08:12, reversed"), the confidence, Use and Discard.
+- [ ] Tests: pure (pool, fit, reversal, borrowing, timing and speed limit, kinds and
+  confidence); Postgres (the pool query, apply, 409, lasting); the local engine (a
+  real-shaped sparse drive rebuilt from a matched twin); Jest (the panel and the
+  marking bar). Measured on a sample of the first Owner's weak drives.
+
+### 12.18 Mark the way — R1
+
+As the Owner, I want to click on the map where I drove, so that a drive with no
+similar drives can still be rebuilt, and I want those points kept.
+
+Acceptance criteria (FR-63, AD-38):
+- [ ] The map's marking mode: a click adds a numbered point, a click on a point
+  removes it, at most 50; the bar shows Rebuild and Cancel.
+- [ ] Marked points are placed on the nearest leg of the recorded track, in the order
+  marked, timed by distance; points over 5 km from the track are refused.
+- [ ] Using the result stores `route_waypoints`, and every later automatic match of
+  that record goes through them (`Method = waypoints`), including after a rule change.
+- [ ] `route_waypoints` is exported and erased with the Owner's routes data.
+
 ## Coverage
 
 | Requirement | Stories |
@@ -589,6 +636,8 @@ Acceptance criteria (FR-61, AD-37):
 | FR-59 Route quality in Insights | 12.10 |
 | FR-60 Routes abroad | 12.11 |
 | FR-61 Roads travelled | 12.16 |
+| FR-62 Rebuild from similar drives | 12.17 |
+| FR-63 Mark the way | 12.18 |
 | NFR-20 Route matching stays home | 12.1, 12.2 |
 | NFR-21 Route quality fits the Pi | 12.1, 12.5, 12.7 |
 

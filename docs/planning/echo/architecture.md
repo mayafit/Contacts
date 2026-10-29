@@ -661,7 +661,7 @@ flowchart LR
 
 ## 5A. Route Quality and Road Matching (Phases R1 to R3)
 
-*This section covers PRD FR-55 to FR-61 and NFR-20 and NFR-21. Its AD ids follow AD-31, which is why the section comes after §5. The plan is `docs/planning/epic-12-route-quality.md`. Like every module, Routes is bound by tenancy (AD-28) and by the round-robin fairness of AD-30; this section applies those rules and adds no scheme of its own.*
+*This section covers PRD FR-55 to FR-63 and NFR-20 and NFR-21. Its AD ids follow AD-31, which is why the section comes after §5. The plan is `docs/planning/epic-12-route-quality.md`. Like every module, Routes is bound by tenancy (AD-28) and by the round-robin fairness of AD-30; this section applies those rules and adds no scheme of its own.*
 
 ### 5A.1 The Problem in Numbers
 
@@ -820,9 +820,10 @@ Image availability was checked on 2026-10-28. Resource figures for the Israel ex
      | Table | Tier | Holds |
      |---|---|---|
      | `route_quality` | Derived | one row per source record: `ActivityId`, `SourceKey`, the type used, the raw source type, `InputHash` (SHA-256 of the points' times and coordinates rounded to 1e-6, computed by the service from `tracks`, never on a read), the record's `SourceUpdatedAt` and `PointCount` as assessed, track length, `Metrics` JSON, `Score`, `Grade`, `Flags`, `NeedsImprovement`, `Matchable` (`yes`, `no_track`, `type_never`, `outside_coverage`, `rail`, `unknown` for transit with no source type), `RuleVersion`, `ComputedAt` |
-     | `matched_routes` | Derived | one row per matched source record: `ActivityId`, `SourceKey`, `InputHash`, the record's `SourceUpdatedAt`, `SourcePointCount` and fused type at match time (the cheap read-time check of rule 3), costing, `Engine`, `EngineVersion`, `GraphVersion`, `RuleVersion`, `Status` (`matched`, `low_confidence`, `failed`), `Confidence`, `Polyline` (Google encoded at precision 5, converted from Valhalla's polyline6, ≤ 1,000 vertices, as `Geo.cs` does; read by the detail view only), `ListPolyline` (the same line simplified to the recorded lines' 400-vertex budget, for lists, search and the map) and `DensityPolyline` (80 vertices at ~30 m, for the density map), so no read decodes or simplifies a full line (review R1), `Pieces` JSON `[{fromM, toM, kind: observed / inferred / gap}]`, where `fromM` and `toM` are metres along the stored line, so pieces survive any later simplification of it (vertex indexes would not), `MatchedDistanceM`, `Roads` JSON `[{name, ref, m, fromM}]` and `RoadNames` (text[]): the roads the line follows (AD-37), `MetricsAfter` JSON, `Reason`, `Attempts`, `NextAttemptAt`, `ComputedAt` |
+     | `matched_routes` | Derived | one row per matched source record: `ActivityId`, `SourceKey`, `InputHash`, the record's `SourceUpdatedAt`, `SourcePointCount` and fused type at match time (the cheap read-time check of rule 3), costing, `Engine`, `EngineVersion`, `GraphVersion`, `RuleVersion`, `Status` (`matched`, `low_confidence`, `failed`), `Confidence`, `Polyline` (Google encoded at precision 5, converted from Valhalla's polyline6, ≤ 1,000 vertices, as `Geo.cs` does; read by the detail view only), `ListPolyline` (the same line simplified to the recorded lines' 400-vertex budget, for lists, search and the map) and `DensityPolyline` (80 vertices at ~30 m, for the density map), so no read decodes or simplifies a full line (review R1), `Pieces` JSON `[{fromM, toM, kind: observed / inferred / gap}]`, where `fromM` and `toM` are metres along the stored line, so pieces survive any later simplification of it (vertex indexes would not), `MatchedDistanceM`, `Roads` JSON `[{name, ref, m, fromM}]` and `RoadNames` (text[]): the roads the line follows (AD-37), `Method` (`auto`, `similar`, `waypoints`) and `Basis` JSON (AD-38), `StartLat`, `StartLon`, `EndLat`, `EndLon` (the record's first and last point, AD-38), `MetricsAfter` JSON, `Reason`, `Attempts`, `NextAttemptAt`, `ComputedAt` |
      | `route_decisions` | Decision | `SourceKey`, `Kind` (`reject` or `accept`), `CreatedAt`; unique per (OwnerId, SourceKey) |
      | `settings` | Decision | per-Owner JSON: threshold (default 0.7), matched types, shown by default (default on, decision Q-14) |
+     | `route_waypoints` | Decision | the points the Owner marked for a record (AD-38): `SourceKey`, `Points` JSON `[[lat, lon]…]` in the order marked, `CreatedAt`; unique per (OwnerId, SourceKey) |
      | `jobs`, `owner_cursors` | Operational | the per-Owner job queue with priority, scope, progress and backoff; the per-Owner pull cursors |
 
      `SourceKey` is the **natural key** `source|externalId`, or `activity|<id>` for a manual record without an external id (AD-4). Rows are about 3 KB per matched route, so about 75 MB for the first Owner's 25,000 records, and less for each smaller Owner (A-10).
@@ -971,7 +972,7 @@ Image availability was checked on 2026-10-28. Resource figures for the Israel ex
   7. **Cost.**
      - **Engine.** No extra call. On the local engine with the Israel tiles, `edge.names` and maneuvers made no measurable difference: a 23 km trace took 34.7 ms (median) without names and 32.7 ms with them; `/route` took 28.2 ms with `none` and 23.2 ms with `maneuvers`. Both differences are within noise.
      - **Storage.** A few hundred bytes per row.
-     - **The filter query.** It reads one Owner's matched rows through the `(OwnerId, ActivityId)` index, with no new index. A GIN index on `RoadNames` is the reverse if that ever becomes slow.
+     - **The filter query.** It reads one Owner's matched rows through the `(OwnerId, ActivityId)` index, with no new index. Measured on the Pi on 2026-10-29, over the first Owner's 13,300 rows: **86 ms** for a route number and **100 ms** for part of a street name. A GIN index on `RoadNames` is the reverse if that ever becomes slow.
   8. **The rule version.** `routes.v4` stores roads and widens coverage, so every row is re-matched once in the normal queue (AD-35 rule 8). Well-recorded drives never matched before wait behind new and changed records, with the older rule's weak matches. Until its re-match, a row has no roads, and the filter does not find it. A row whose re-match gives up keeps its older line (AD-35 rule 8) **without roads**, until its input changes or a later rule re-matches it; the filter does not find it meanwhile.
 - *Alternatives:*
   - a separate `route_roads` table (rejected: a second write per match, and a delete-and-insert to keep it in step, for a filter that one array column serves);
@@ -980,6 +981,51 @@ Image availability was checked on 2026-10-28. Resource figures for the Israel ex
   - matching only the drives that need improvement (rejected: road search would miss every well-recorded drive);
   - matching road names through the main text search (rejected: "4" would match every name with a 4 in it; the explicit "road 431" form and its chip are unambiguous).
 
+### AD-38 — Rebuilding a route on demand: points borrowed from similar drives, or marked by the Owner
+
+- **Binds:** the route-quality service (a `rebuild` job and its result), `matched_routes.Method`, `Basis` and the start and end columns, the new `route_waypoints` table, `/internal/v1/rebuild` and `/apply`, `/api/routes/activities/{id}/rebuild` and `/apply`, the Activity panel and the map; FR-62, FR-63; AD-33, AD-34, AD-35, AD-37; P-1, P-5.
+- **Prevents:**
+  - a guess drawn without the Owner asking for it and seeing it first;
+  - borrowed or marked points passed off as observed;
+  - a confidence raised by points Echo made up;
+  - a borrowed timeline that moves faster than the type allows;
+  - another Owner's drives used;
+  - a used route undone by the next rule change;
+  - the Owner's marked points lost on a re-match.
+- **Rule:**
+  1. **On demand, one record, interactive.** `POST /api/routes/activities/{id}/rebuild {method: similar | waypoints, waypoints?}` resolves the Activity's record with `RouteRecordsAsync`; an outing of several recordings is refused (400) in R1. The backend queues a `rebuild` job through `/internal/v1/rebuild`. It is interactive (AD-36 rule 4), so it runs ahead of the batch round-robin.
+  2. **Synthetic points.** `RoutePoint` gains `Synthetic`. A leg between two anchors either of which is synthetic is **inferred**, never observed. `anchorQuality` counts real points only: anchors and points sent both leave out synthetic ones. The other factors are unchanged (AD-35 rule 6).
+  3. **Similar drives (`similar`).**
+     - **Pool.** The Owner's own `matched_routes` rows with `Status = matched`, a confidence of at least 0.8, `Method = auto`, no `reject` decision, the same fused type, and a start and end within **500 m** of this record's start and end (*same direction*), or of its end and start (*reversed*). The rows carry `StartLat`, `StartLon`, `EndLat` and `EndLon` (the record's first and last point, written at match time; older rows take their line's first and last vertex once, at start-up). The query reads one Owner's rows with a bounding box on both ends. At most the **200** rows with the nearest ends are scored.
+     - **Fit.** A candidate's line is reversed for a reversed match. Each real point of this record is projected onto it: its distance and its position along the line. The **fit** is the share of the interior points within **150 m** (twice the Timeline `gps_accuracy`). The positions must not go back by more than 150 m. A candidate with a fit below **0.6**, or one that goes back, is dropped.
+     - **Rank.** By fit, then by the difference in time of day (circular, in hours), then by recency. The best candidate is the **basis**; the **agreeing** count is the candidates kept.
+     - **Borrowing.** For each leg between two consecutive real points that are both within 150 m of the basis line, and longer than 300 m along it, synthetic points are added along the basis line every **200 m** between the two positions. They are timed linearly by distance between the two real times, so the leg's speed is constant. A leg whose borrowed length over its elapsed time exceeds the type's maximum speed (AD-35 rule 4) borrows nothing.
+     - **No basis.** If no candidate is kept, the job ends with the outcome `no_similar`, and the panel offers marking the way.
+  4. **Marked points (`waypoints`).** At most 50 `[lat, lon]` points, in the order the Owner marked them. Each one is projected onto the recorded track's straight legs and placed on the leg it is closest to. Points on the same leg keep the order the Owner marked them in and are spaced along it. Each is timed linearly by distance between that leg's two real points. Points farther than 5 km from the track are refused (400).
+  5. **Matching and confidence.** The enriched points (real plus synthetic, in time order) go through the normal stage B (AD-35 rules 6 and 7: trace calls, gap filling, assembly).
+     - The confidence of a `similar` result is `min(the normal factors, fit)`.
+     - The confidence of a `waypoints` result is the normal factors.
+     - The result is not stored as the record's match. It goes on the job (`jobs.Result`, jsonb), with its line, pieces, roads (AD-37), length, status, confidence, reason, the method, the record's `InputHash`, and the basis (candidate count, agreeing count, reversed, and up to 3 examples by activity id and start time).
+     - `GET /api/routes/jobs/{id}` returns it. Jobs are kept for 7 days (AD-36), so an unused suggestion simply expires.
+  6. **Using a suggestion.** `POST /api/routes/activities/{id}/apply {jobId}`:
+     - The backend calls `/internal/v1/apply`. The service checks that the job is the Owner's, is done, is a `rebuild` of this record, and that the record's `InputHash` is unchanged; otherwise it answers 409.
+     - The service then writes `matched_routes` from the result, with `Method` (`similar` or `waypoints`) and `Basis`. For `waypoints`, it also writes `route_waypoints` (`OwnerId`, `SourceKey`, the points, `CreatedAt`; unique per Owner and key).
+     - The backend then writes an `accept` decision for the record's natural key. It is drawn by AD-34 rule 3 at a confidence of 0.3 or more.
+     - **Discard** deletes nothing: the suggestion expires with the job.
+  7. **Lasting (amends AD-34 rule 7 and AD-35 rule 8).**
+     - A row with `Method = similar` is not re-matched for a new `RuleVersion` (a rebuild is the Owner's choice, made on what they saw). When the record's points or type change, it is re-matched as `auto`, because the basis no longer applies.
+     - A record with `route_waypoints` is always matched through them, in every automatic match (`Method = waypoints`). So a rule change re-matches it with the Owner's points.
+     - "Revert to recorded" (`reject`) wins over both. "Try again" clears the decision but keeps the waypoints. Waypoints are cleared only by the Owner, or with the record when it is deleted.
+  8. **Tiers and erasure.** `route_waypoints` is a **decision** table (AD-34 rule 1): backed up, exported with the routes data, and erased with the Owner. The backend reads it for export through its default `SELECT` grant (helm README step 1).
+  9. **Cost.** One rebuild costs one candidate query over one Owner's rows (no new index), the projection of about 13 points onto up to 200 lines (pure arithmetic, under 50 ms), and one normal match of about 14 to 60 points (about 0.1 to 0.7 s on the Pi, AD-36 rule 5). It stays well within the interactive budget of AD-36 rule 5.
+- *Alternatives:*
+  - rebuilding every weak drive automatically (rejected: the Owner asked for it on demand, and a borrowed route is a guess the Owner should see first);
+  - averaging several similar drives into one line (rejected: an average of road lines is not a road; one basis line, plus the agreeing count, is honest);
+  - copying the similar drive's line outright (rejected: it ignores where this drive's own points went, and its timing);
+  - timing the borrowed points from the similar drive's own timing (rejected: a matched line keeps no times, and this drive's own times are what make it physically possible);
+  - a separate suggestions table (rejected: the job already has an owner, a lifetime and an API);
+  - marked points as a source record (rejected: P-1 keeps source records as imported; they are the Owner's decision about a derived line).
+
 ### 5A.3 UI (no AD; it follows the conventions of §6)
 
 - **The Activity panel** gains a quality badge (the grade, with the flags on hover); a "Route improved" chip with a toggle between *Original* and *On roads*; the confidence and the observed and inferred shares; "Fix this route" or "Try again"; and "Keep the original" (a `reject` decision). "Use this route" (an `accept` decision) for a `low_confidence` match comes in Phase R2.
@@ -987,6 +1033,9 @@ Image availability was checked on 2026-10-28. Resource figures for the Israel ex
 - **Insights, data quality** (R2): counts by grade, improved, waiting and unmatchable, with the reasons; the worst sources; "Improve N routes"; and the proposal rule. The settings (threshold, types, shown by default) are in a small "Route quality" dialog next to Fusion settings.
 - **Status** shows in the existing fusion status area and on the job board.
 - **Roads** (AD-37): under the panel's route line, "Via 4 › 431 › street", with route numbers as small road signs; a click sets the road filter. The filter shows as a "Road 431" chip in the filter bar, and "road 431" or "כביש 431" typed into the search box becomes that chip on Enter.
+- **Rebuild** (AD-38): beside "Fix this route", the panel offers "Rebuild from similar drives" and "Mark the way".
+  - **Similar drives.** It runs a `rebuild` job and draws the result on the map as the selected route, in the suggestion colour. The panel shows the basis, the confidence, **Use this route** and **Discard**.
+  - **Mark the way.** It puts the map in a marking mode, like the Area tool: each click adds a numbered point, and a click on a point removes it. A bar shows the count, **Rebuild** and **Cancel**.
 
 ## 6. Consistency Conventions
 
@@ -1138,6 +1187,8 @@ routing/regions.txt                  # Geofabrik regions built into the tiles im
 | FR-58 Original or matched; the Owner decides | Proposed | Activity panel, map, `ActivitySummary.geometry`, `routes.route_decisions` | AD-34, AD-4 | R1 (toggle, revert), R2 ("Use this route" below the threshold) |
 | FR-59 Route quality in Insights | Proposed | Insights data quality, `GET /api/routes/summary` | AD-33, AD-35 | R2 |
 | FR-61 Roads travelled | Proposed | `matched_routes.Roads` and `RoadNames`, `IRouteGeometryReader.OnRoadAsync`, `AtlasQuery.Road`, `RouteRoads.tsx`, Assistant and MCP `road` | AD-37, AD-34, AD-35 | R1 |
+| FR-62 Rebuild from similar drives | Proposed | the `rebuild` job, `SimilarRoutes`, `jobs.Result`, `/internal/v1/rebuild` and `/apply`, `/api/routes/activities/{id}/rebuild` and `/apply`, `RouteRebuild.tsx` | AD-38, AD-34, AD-35, AD-36 | R1 |
+| FR-63 Mark the way | Proposed | `route_waypoints`, `Waypoints`, the map's marking mode | AD-38, AD-34 | R1 |
 | FR-60 Routes abroad | Proposed | `routing/regions.txt`, region outlines, per-region counts | AD-32 | R3 |
 
 ### 9.2 Non-Functional Requirements
