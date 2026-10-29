@@ -254,14 +254,15 @@ public class RouteGeometryReader : IRouteGeometryReader
 
     /// <summary>
     /// The Owner's matches on a road: a route number by equality, a street name by
-    /// ILIKE over the row's names. Owner-scoped (the (OwnerId, ActivityId) index), so it
+    /// ILIKE over the row's names (the text's wildcards escaped with backslashes, ILIKE's
+    /// default escape). Owner-scoped (the (OwnerId, ActivityId) index), so it
     /// reads one Owner's rows only.
     /// </summary>
     internal static string OnRoadSql(bool isRef)
     {
         var match = isRef
             ? @"m.""RoadNames"" @> ARRAY[@road]::text[]"
-            : @"EXISTS (SELECT 1 FROM unnest(m.""RoadNames"") r WHERE r ILIKE @road ESCAPE '')";
+            : @"EXISTS (SELECT 1 FROM unnest(m.""RoadNames"") r WHERE r ILIKE @road)";
         return $@"
             SELECT m.""ActivityId"", m.""SourceUpdatedAt"", m.""SourcePointCount"", m.""FusedType"", m.""Status"", m.""Confidence"",
                    d.""Kind"" AS ""Decision"",

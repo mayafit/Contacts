@@ -460,8 +460,8 @@ public class RouteGeometryDbTests
         var owner = "geom-roads-" + Guid.NewGuid();
         var svc = Service(c);
         var records = await SeedAsync(c, svc, owner, 6);
-        await MatchAsync(c, records[0], owner, OnRoads("4", "431", "דרך נמיר"));
-        await MatchAsync(c, records[1], owner, OnRoads("4313", "אבן גבירול"));
+        await MatchAsync(c, records[0], owner, OnRoads("4", "431", "דרך נמיר", "axb"));
+        await MatchAsync(c, records[1], owner, OnRoads("4313", "אבן גבירול", "a_b"));
         // Below the threshold: not shown, so its roads do not count
         await MatchAsync(c, records[2], owner, r => { OnRoads("431")(r); r.Status = RouteStatuses.LowConfidence; r.Confidence = 0.5; });
         // "Keep the original": the Owner said the match is wrong
@@ -485,8 +485,11 @@ public class RouteGeometryDbTests
         Assert.Equal(new[] { records[1].Id }, await Find("גבירול"));
         Assert.Equal(new[] { records[0].Id }, await Find("נמיר"));
         Assert.Empty(await Find("רוטשילד"));
-        // A LIKE wildcard is text, not a wildcard
+        // A LIKE wildcard is text, not a wildcard ("a_b" is not "axb")
         Assert.Empty(await Find("%"));
+        Assert.Equal(new[] { records[1].Id }, await Find("a_b"));
+        // "דרך" is part of a street name, not a prefix dropped
+        Assert.Equal(new[] { records[0].Id }, await Find("דרך נמיר"));
 
         // Visits are left out, the other filters still combine, and the timeline and density agree
         var found = await svc.SearchAsync(owner, new AtlasQuery { Road = "431" });

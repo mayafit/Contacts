@@ -196,12 +196,6 @@ public partial class AtlasService
                 points = DecodePolyline(c.Polyline);
                 own = c.Pieces?.ToList() ?? new List<RouteGeometryPiece>();
                 distance += c.MatchedDistanceM;
-                foreach (var r in c.Roads ?? Array.Empty<RouteRoad>())
-                {
-                    roads[r.Name] = roads.TryGetValue(r.Name, out var seen)
-                        ? seen with { M = seen.M + r.M }
-                        : r with { FromM = Math.Round(at + r.FromM, 1) };
-                }
             }
             else
             {
@@ -232,6 +226,15 @@ public partial class AtlasService
             }
 
             pieces.AddRange(own.Select(p => new RouteGeometryPiece(Math.Round(at + p.FromM, 1), Math.Round(at + p.ToM, 1), p.Kind)));
+            if (c != null)
+            {
+                foreach (var r in c.Roads ?? Array.Empty<RouteRoad>())
+                {
+                    roads[r.Name] = roads.TryGetValue(r.Name, out var seen)
+                        ? seen with { M = seen.M + r.M }
+                        : r with { FromM = Math.Round(at + r.FromM, 1) };
+                }
+            }
             line.AddRange(points);
             at += LineLength(points);
         }

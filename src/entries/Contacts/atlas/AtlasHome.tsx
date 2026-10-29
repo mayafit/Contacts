@@ -240,20 +240,26 @@ const AtlasHome: React.FC = () => {
       .catch(() => setAssistantEnabled(false));
   }, [loadSummary]);
 
-  // Debounced text search; "road 431" or "כביש 431" becomes the road filter
+  // Debounced text search; "road 431" waits for Enter, which makes it the road filter
   useEffect(() => {
     const t = setTimeout(() => {
-      const typedRoad = parseRoadQuery(text);
-      if (typedRoad) {
-        setRoad(typedRoad);
-        setText('');
-        setQuery('');
-        return;
+      if (!parseRoadQuery(text)) {
+        setQuery(text.trim());
       }
-      setQuery(text.trim());
     }, 350);
     return () => clearTimeout(t);
   }, [text]);
+
+  /** Enter in the search box: "road 431" or "כביש 431" becomes the road filter */
+  const searchKey = (e: React.KeyboardEvent) => {
+    const typedRoad = e.key === 'Enter' ? parseRoadQuery(text) : null;
+    if (typedRoad) {
+      e.preventDefault();
+      setRoad(typedRoad);
+      setText('');
+      setQuery('');
+    }
+  };
 
   // The filters (time, area, types, text, conflicts): the insights use them as they are
   const filters: AtlasQuery = useMemo(
@@ -547,6 +553,7 @@ const AtlasHome: React.FC = () => {
           <InputBase
             value={text}
             onChange={(e) => setText(e.target.value)}
+            onKeyDown={searchKey}
             placeholder="Search places, activities or road 431…"
             inputProps={{ 'aria-label': 'Search Atlas', dir: 'auto' }}
             sx={{ flex: 1, fontSize: { xs: 16, sm: 14 } }}

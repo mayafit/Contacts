@@ -93,6 +93,8 @@ describe('road filter', () => {
     expect(parseRoadQuery('road 431')).toBe('431');
     expect(parseRoadQuery('  Route 4 ')).toBe('4');
     expect(parseRoadQuery('כביש 431')).toBe('431');
+    expect(parseRoadQuery('highway 6')).toBe('6');
+    expect(parseRoadQuery('דרך נמיר')).toBeNull();
     expect(parseRoadQuery('road אבן גבירול')).toBe('אבן גבירול');
     expect(parseRoadQuery('431')).toBeNull();
     expect(parseRoadQuery('Roadrunner')).toBeNull();

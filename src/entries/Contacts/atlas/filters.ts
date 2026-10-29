@@ -116,7 +116,7 @@ export const formatRoadFilter = (road: string): string =>
   /^[0-9]{1,4}[A-Za-z]?$/.test(road.trim()) ? `Road ${road.trim()}` : road.trim();
 
 /** "road 431", "route 4", "כביש 431": a road search typed into the search box */
-const ROAD_QUERY = /^(?:road|route|rd|כביש)\s+(.+)$/i;
+const ROAD_QUERY = /^(?:road|route|rd|hwy|highway|כביש)\s+(.+)$/i;
 
 /**
  * A road typed into the search box, as the road filter.

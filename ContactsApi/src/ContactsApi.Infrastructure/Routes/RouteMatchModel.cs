@@ -55,7 +55,7 @@ public static class RouteRoads
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private static readonly Regex RefPattern = new(@"^[0-9]{1,4}[A-Za-z]?$", RegexOptions.Compiled);
-    private static readonly Regex Prefix = new(@"^(road|route|rd|hwy|highway|כביש|דרך)\s+", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex Prefix = new(@"^(road|route|rd|hwy|highway|כביש)\s+", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     /// <summary>A route number ("431", "4"), not a street name</summary>
     public static bool IsRef(string name) => RefPattern.IsMatch(name);
@@ -92,8 +92,9 @@ public static class RouteRoads
     }
 
     /// <summary>
-    /// What the Owner typed, as searched: trimmed, without a "road" / "כביש" prefix; null
-    /// when nothing is left. "Road 431" and "כביש 431" search for 431.
+    /// What the Owner typed, as searched: trimmed, without a "road" / "כביש" prefix, a
+    /// route number's letter in capitals; null when nothing is left. "Road 431" and
+    /// "כביש 431" search for 431. "דרך" is kept: it begins many street names.
     /// </summary>
     public static string? Normalize(string? road)
     {
@@ -104,6 +105,11 @@ public static class RouteRoads
         }
 
         s = Prefix.Replace(s, string.Empty).Trim();
+        if (IsRef(s))
+        {
+            s = s.ToUpperInvariant();
+        }
+
         return s.Length == 0 ? null : s.Length > 100 ? s[..100] : s;
     }
 }

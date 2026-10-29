@@ -318,7 +318,7 @@ const ActivityPanel: React.FC<ActivityPanelProps> = ({
           onChanged={onRouteChanged}
         />
       )}
-      {onRoad && s.geometry === 'matched' && detail.route?.roads && (
+      {onRoad && s.geometry === 'matched' && routeView === 'roads' && detail.route?.roads && (
         <RouteRoads roads={detail.route.roads} onRoad={onRoad} />
       )}
 

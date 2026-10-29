@@ -139,7 +139,6 @@ export interface RouteDescription {
   reason: string | null;
 }
 
-/** Route quality in the detail view (missing when route quality is off) */
 /** A road a matched route follows (AD-37) */
 export interface RouteRoad {
   /** A route number ("431") or a street name, as the map data spells it */
@@ -152,6 +151,7 @@ export interface RouteRoad {
   fromM: number;
 }
 
+/** Route quality in the detail view (missing when route quality is off) */
 export interface ActivityRouteInfo {
   /** The records whose track is drawn: what "Fix this route" queues */
   recordIds: string[];

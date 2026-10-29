@@ -962,7 +962,7 @@ Image availability was checked on 2026-10-28. Resource figures for the Israel ex
      - Foot and bike types stay unmatched until R2 (AD-35 *Alternatives*).
   5. **The filter.** `AtlasQuery.Road` is resolved once per request, before any Atlas query:
      - **Reading (Routes).** `IRouteGeometryReader.OnRoadAsync(owner, road)` reads one Owner's rows only. A route number matches with `RoadNames @> ARRAY[road]`; any other text matches with `ILIKE '%text%'` over `unnest(RoadNames)`, wildcards escaped.
-     - **The text.** The input is trimmed, and a leading "road", "route", "rd", "hwy", "highway", "כביש" or "דרך" is dropped.
+     - **The text.** The input is trimmed, a leading "road", "route", "rd", "hwy", "highway" or "כביש" is dropped ("דרך" is kept, because it begins many street names, such as "דרך נמיר"), and a route number's letter is put in capitals.
      - **Which rows count.** It keeps a row that is not `failed` or rejected and that is `matched` at or above the Owner's threshold, or accepted at 0.3 or more. This is AD-34 rule 3 without "shown by default": a road is a fact about the match, whether or not the Owner draws matched lines.
      - **Checking (Atlas).** Atlas keeps the records whose `UpdatedAt` and point count still equal the stored ones, maps each to the Activity it lists (the cluster primary) and filters by those ids. The fused type is not compared, because a retype re-matches the record within minutes (AD-34 rule 7).
      - **Where it applies.** Visits are left out while the road filter is on, as with `ConflictsOnly`. Search, density, the timeline histogram and Insights apply it; photos on the map do not, as with text.
@@ -972,7 +972,7 @@ Image availability was checked on 2026-10-28. Resource figures for the Israel ex
      - **Engine.** No extra call. On the local engine with the Israel tiles, `edge.names` and maneuvers made no measurable difference: a 23 km trace took 34.7 ms (median) without names and 32.7 ms with them; `/route` took 28.2 ms with `none` and 23.2 ms with `maneuvers`. Both differences are within noise.
      - **Storage.** A few hundred bytes per row.
      - **The filter query.** It reads one Owner's matched rows through the `(OwnerId, ActivityId)` index, with no new index. A GIN index on `RoadNames` is the reverse if that ever becomes slow.
-  8. **The rule version.** `routes.v4` stores roads and widens coverage, so every row is re-matched once in the normal queue (AD-35 rule 8). Until its re-match, a row has no roads, and the filter does not find it.
+  8. **The rule version.** `routes.v4` stores roads and widens coverage, so every row is re-matched once in the normal queue (AD-35 rule 8). Well-recorded drives never matched before wait behind new and changed records, with the older rule's weak matches. Until its re-match, a row has no roads, and the filter does not find it. A row whose re-match gives up keeps its older line (AD-35 rule 8) **without roads**, until its input changes or a later rule re-matches it; the filter does not find it meanwhile.
 - *Alternatives:*
   - a separate `route_roads` table (rejected: a second write per match, and a delete-and-insert to keep it in step, for a filter that one array column serves);
   - naming roads at read time from the stored line (rejected: an engine call on every panel open, and the backend would need the engine);
@@ -986,7 +986,7 @@ Image availability was checked on 2026-10-28. Resource figures for the Israel ex
 - **On the map**, observed pieces are solid, inferred pieces dashed at lower opacity, and gaps thin grey (AD-34 rule 6). The selected Activity is drawn from its chosen pieces too, with its source points as small markers; the chart's hover marker stays on the source points. The legend explains the dashes.
 - **Insights, data quality** (R2): counts by grade, improved, waiting and unmatchable, with the reasons; the worst sources; "Improve N routes"; and the proposal rule. The settings (threshold, types, shown by default) are in a small "Route quality" dialog next to Fusion settings.
 - **Status** shows in the existing fusion status area and on the job board.
-- **Roads** (AD-37): under the panel's route line, "Via 4 › 431 › street", with route numbers as small road signs; a click sets the road filter. The filter shows as a "Road 431" chip in the filter bar, and "road 431" or "כביש 431" typed into the search box becomes that chip.
+- **Roads** (AD-37): under the panel's route line, "Via 4 › 431 › street", with route numbers as small road signs; a click sets the road filter. The filter shows as a "Road 431" chip in the filter bar, and "road 431" or "כביש 431" typed into the search box becomes that chip on Enter.
 
 ## 6. Consistency Conventions
 

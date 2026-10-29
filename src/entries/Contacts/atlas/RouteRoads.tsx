@@ -32,6 +32,7 @@ const signSx = {
   fontWeight: 700,
   lineHeight: 1,
   '&:hover': { bgcolor: 'rgba(57, 135, 229, 0.16)' },
+  '&.Mui-focusVisible': { outline: `2px solid ${tokens.text}`, outlineOffset: 1 },
 } as const;
 
 /**
@@ -50,6 +51,7 @@ const RouteRoads: React.FC<RouteRoadsProps> = ({ roads, onRoad }) => {
     <Typography
       variant="caption"
       component="div"
+      role="group"
       aria-label="Roads"
       sx={{
         color: tokens.textMuted,

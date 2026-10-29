@@ -654,7 +654,7 @@ When a route is matched to roads, Echo records which roads it followed: route nu
 - **Shown.** In the Activity panel, under the route line: "Via 4 › 431 › איילון צפון". Route numbers look like small road signs. It is shown only while the Matched Route is drawn. Each road can be clicked.
 - **Searchable.** A **road filter** finds every Activity whose route followed a road. The Owner sets it by:
   - clicking a road in the panel;
-  - typing "road 431" or "כביש 431" in the search box;
+  - typing "road 431" or "כביש 431" in the search box and pressing Enter;
   - asking the Assistant, or through MCP (`road`).
 
   It shows as a chip ("Road 431") beside the other filters and combines with them (time, area, types). The timeline, the density map and Insights count what it finds; visits are left out. A route number matches exactly (431 is not 4313); a street name matches in part ("גבירול" finds "אבן גבירול").

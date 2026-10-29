@@ -104,7 +104,10 @@ public class MatchRunner
     {
         public RouteQualityRow Q { get; init; } = null!;
 
-        /// <summary>0: new, changed or a due retry; 1: an older rule's low_confidence or failed match; 2: an older rule's matched one</summary>
+        /// <summary>
+        /// 0: new, changed or a due retry; 1: an older rule's low_confidence or failed match, or a
+        /// well-recorded record never matched (matched for its roads, AD-37); 2: an older rule's matched one
+        /// </summary>
         public int Rank { get; init; }
     }
 
@@ -129,7 +132,8 @@ public class MatchRunner
             select new PendingRow
             {
                 Q = q,
-                Rank = m == null || m.InputHash != q.InputHash || m.FusedType != q.Type || m.RuleVersion == rule ? 0
+                Rank = m == null ? (q.NeedsImprovement ? 0 : 1)
+                    : m.InputHash != q.InputHash || m.FusedType != q.Type || m.RuleVersion == rule ? 0
                     : m.Status == RouteStatuses.Matched ? 2 : 1
             };
     }
