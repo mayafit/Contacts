@@ -18,6 +18,8 @@ import type {
   PhotoSummary,
   FusionSettings,
   FusionStatus,
+  RouteJob,
+  RouteStatus,
   HistogramRow,
   Insights,
   LocationLookup,
@@ -821,6 +823,61 @@ export class BackendApiClient {
     return unwrap(
       await this.request<FusionStatus>('/atlas/fusion/status'),
       'Loading the fusion status failed',
+    );
+  }
+
+  // ===================================
+  // Routes (route quality and road matching)
+  // ===================================
+
+  /** What the route service is doing; { available: false } when it is down or off */
+  async routesStatus(): Promise<RouteStatus> {
+    return unwrap(await this.request<RouteStatus>('/routes/status'), 'Route status failed');
+  }
+
+  /**
+   * Queues matching ("Fix this route"): interactive for a few records, ahead of the backfill.
+   * Throws ApiRequestError ROUTES_UNAVAILABLE (503) when the service is down or off.
+   * @param activityIds - The records to match (the activity's drawn records)
+   * @returns The job to poll with routesJob
+   */
+  async routesImprove(activityIds: string[]): Promise<{ jobId: string }> {
+    return unwrap(
+      await this.request<{ jobId: string }>('/routes/improve', {
+        method: 'POST',
+        body: JSON.stringify({ activityIds, force: true }),
+      }),
+      'Queueing the route failed',
+    );
+  }
+
+  /** A route job's progress */
+  async routesJob(id: string): Promise<RouteJob> {
+    return unwrap(await this.request<RouteJob>(`/routes/jobs/${id}`), 'Route job failed');
+  }
+
+  /**
+   * Keeps the recorded line ("reject"), remembered across re-matching and re-imports.
+   * @param activityId - The activity
+   * @param kind - reject (or accept)
+   */
+  async routesDecide(activityId: string, kind: 'reject' | 'accept' = 'reject'): Promise<void> {
+    unwrap(
+      await this.request<unknown>(`/routes/activities/${activityId}/decision`, {
+        method: 'PUT',
+        body: JSON.stringify({ kind }),
+      }),
+      'Saving the route choice failed',
+    );
+  }
+
+  /** Forgets the route choice ("Try again" does this before matching again) */
+  async routesClearDecision(activityId: string): Promise<void> {
+    unwrap(
+      await this.request<unknown>(`/routes/activities/${activityId}/decision`, {
+        method: 'DELETE',
+      }),
+      'Clearing the route choice failed',
     );
   }
 

@@ -25,14 +25,18 @@ public partial class AtlasService
 {private readonly AtlasDbContext _db;
     private readonly ILogger<AtlasService> _logger;
     private readonly IFusionSignal? _signal;
+    private readonly ContactsApi.Core.Interfaces.IRouteGeometryReader? _routes;
 
     /// <summary>Creates the service</summary>
     /// <param name="signal">The fusion service; without it (tests, tools) changes are fused right away</param>
-    public AtlasService(AtlasDbContext db, ILogger<AtlasService> logger, IFusionSignal? signal = null)
+    /// <param name="routes">Matched geometry (AD-34); without it every line is drawn as recorded</param>
+    public AtlasService(AtlasDbContext db, ILogger<AtlasService> logger, IFusionSignal? signal = null,
+        ContactsApi.Core.Interfaces.IRouteGeometryReader? routes = null)
     {
         _db = db;
         _logger = logger;
         _signal = signal;
+        _routes = routes;
     }
 
     // ---------------------------------------------------------------- ingest
@@ -397,6 +401,7 @@ public partial class AtlasService
                 .ToListAsync(ct);
         }
 
+        activities = await WithRoutesAsync(owner, activities, false, ct);
         (activities, visits) = await WithPhotoCountsAsync(owner, activities, visits, ct);
         return new SearchResult(activities, visits, totalActivities, totalVisits);
     }
@@ -426,16 +431,19 @@ public partial class AtlasService
             var rows = await aq.Where(a => a.Polyline != null || (a.Fusion != null && a.Fusion.Polyline != null))
                 .OrderByDescending(a => a.StartTime)
                 .Take(maxTracks + 1)
-                .Select(a => new
-                {
-                    Type = a.Fusion != null && a.Fusion.Type != null ? a.Fusion.Type : a.Type,
-                    Polyline = a.Fusion != null && a.Fusion.Polyline != null ? a.Fusion.Polyline : a.Polyline
-                })
+                .Select(a => new GeometryCandidate(a.Id,
+                    a.Fusion != null && a.Fusion.Type != null ? a.Fusion.Type : a.Type,
+                    a.Fusion != null && a.Fusion.Polyline != null ? a.Fusion.Polyline : a.Polyline,
+                    a.UpdatedAt, a.PointCount,
+                    a.Fusion != null && a.Fusion.SegmentCount > 1 ? a.Fusion.Evidence : null))
                 .ToListAsync(ct);
             truncated |= rows.Count > maxTracks;
-            foreach (var r in rows.Take(maxTracks))
+            rows = rows.Take(maxTracks).ToList();
+            // The chosen line (AD-34 rule 6): one query for every track, no pieces
+            var chosen = await ChooseGeometryAsync(owner, rows, false, ct);
+            foreach (var r in rows)
             {
-                var points = DecodePolyline(r.Polyline!);
+                var points = DecodePolyline(chosen.TryGetValue(r.Id, out var c) ? c.Polyline : r.Polyline!);
                 if (points.Count >= 2)
                 {
                     // ~30 m first: a density line needs no finer detail (and it is per request)
@@ -739,8 +747,15 @@ public partial class AtlasService
         var evidence = a.Fusion != null
             ? System.Text.Json.JsonSerializer.Deserialize<List<MatchEvidence>>(a.Fusion.Evidence, JsonCamel) ?? new()
             : new List<MatchEvidence>();
-        return new ActivityDetail(summary, a.Notes, points, hrSource, hr, memberRows, conflicts, fieldSources, places,
-            evidence, a.Fusion?.MatchConfidence, analysis?.Analysis);
+        var trackRecords = members.Where(m => trackIds.Contains(m.Id)).ToList();
+        if (trackRecords.Count == 0)
+        {
+            trackRecords.Add(a);
+        }
+
+        var (routed, route) = await DetailRouteAsync(owner, summary, trackRecords, ct);
+        return new ActivityDetail(routed, a.Notes, points, hrSource, hr, memberRows, conflicts, fieldSources, places,
+            evidence, a.Fusion?.MatchConfidence, analysis?.Analysis) { Route = route };
     }
 
     private static readonly System.Text.Json.JsonSerializerOptions JsonCamel = new(System.Text.Json.JsonSerializerDefaults.Web);
@@ -1175,7 +1190,13 @@ public partial class AtlasService
             SplitSources(a.Fusion != null ? a.Fusion.Sources : a.Source),
             a.Fusion != null ? a.Fusion.MemberCount : 1,
             a.Fusion != null ? a.Fusion.ConflictCount : 0,
-            0);
+            0)
+        {
+            RecordUpdatedAt = a.UpdatedAt,
+            SegmentCount = a.Fusion != null ? a.Fusion.SegmentCount : 1,
+            OutingEvidence = a.Fusion != null && a.Fusion.SegmentCount > 1 ? a.Fusion.Evidence : null,
+            DistanceFromTrack = a.Fusion != null && a.Fusion.FieldSources.Contains(DistanceFromTrackMark)
+        };
 
     private static List<string> SplitSources(string sources) =>
         sources.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();

@@ -99,6 +99,87 @@ export interface ActivitySummary {
   conflictCount: number;
   /** Photos taken during it (search results; missing from older servers) */
   photoCount?: number;
+  /**
+   * 'matched' when polyline is a road-matched route chosen by the server (AD-34);
+   * 'recorded' (or missing, older servers) for the recorded line
+   */
+  geometry?: RouteGeometry;
+  /** The matched line's pieces in metres along it (the detail view only) */
+  pieces?: RoutePiece[] | null;
+  /** The matched line's length (the detail view only) */
+  onRoadsM?: number | null;
+}
+
+/** Which line an activity is drawn with */
+export type RouteGeometry = 'matched' | 'recorded';
+
+/** One piece of a matched line: along recorded points, chosen by routing, or not matched */
+export interface RoutePiece {
+  fromM: number;
+  toM: number;
+  kind: 'observed' | 'inferred' | 'gap';
+}
+
+/** The quality, stored match and decision of the activity's (primary) record */
+export interface RouteDescription {
+  /** good, fair, poor; null when not assessed or without a track */
+  grade: 'good' | 'fair' | 'poor' | null;
+  score: number | null;
+  flags: string[];
+  /** yes, no_track, type_never, outside_coverage, rail, unknown; null when not assessed */
+  matchable: string | null;
+  needsImprovement: boolean;
+  /** matched, low_confidence, failed; null without a stored match */
+  status: 'matched' | 'low_confidence' | 'failed' | null;
+  confidence: number | null;
+  matchedDistanceM: number | null;
+  /** The stored match is for the record as it is now */
+  current: boolean;
+  decision: 'reject' | 'accept' | null;
+  reason: string | null;
+}
+
+/** Route quality in the detail view (missing when route quality is off) */
+export interface ActivityRouteInfo {
+  /** The records whose track is drawn: what "Fix this route" queues */
+  recordIds: string[];
+  /** Null before the route service assessed it, or when it cannot be read */
+  description: RouteDescription | null;
+  observedShare: number | null;
+  inferredShare: number | null;
+}
+
+/** A route job's progress (GET /api/routes/jobs/{id}) */
+export interface RouteJob {
+  id: string;
+  kind: string;
+  priority: string;
+  state: 'queued' | 'running' | 'done' | 'failed';
+  total: number;
+  done: number;
+  lastError?: string | null;
+}
+
+/** What the route service is doing for the Owner (GET /api/routes/status) */
+export interface RouteStatus {
+  /** false when the service cannot be reached (or is not enabled) */
+  available?: boolean;
+  message?: string;
+  queued?: { interactive: number; batch: number };
+  running?: number;
+  retrying?: number;
+  waitingForMatch?: number;
+  etaSeconds?: number;
+  lastRunAt?: string | null;
+  lastError?: string | null;
+  backfilled?: boolean;
+  engine?: {
+    up: boolean;
+    version?: string | null;
+    breaker?: { open: boolean; openUntil?: string | null; consecutiveFailures?: number };
+  };
+  graphVersion?: string | null;
+  regions?: string[];
 }
 
 /** One source record contributing to a fused activity */
@@ -601,6 +682,8 @@ export interface ActivityDetail {
   matchConfidence?: number | null;
   /** Null without a track of at least 2 points (missing from older servers) */
   analysis?: ActivityAnalysis | null;
+  /** Route quality (missing when it is off or unavailable) */
+  route?: ActivityRouteInfo | null;
 }
 
 /** Timeline histogram row */

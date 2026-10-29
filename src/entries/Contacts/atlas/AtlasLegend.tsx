@@ -11,7 +11,10 @@ import { tokens } from '../theme/contactsTheme';
 
 /** Props for AtlasLegend */
 export interface AtlasLegendProps {
-  /** Kinds to show: activity types, 'visit', 'health', 'photos' (the "has photos" dot) */
+  /**
+   * Kinds to show: activity types, 'visit', 'health', 'photos' (the "has photos" dot),
+   * 'inferred' (a matched route's dashed stretch)
+   */
   kinds: string[];
   /** Health data is drawn as a strip, not a bar */
   healthAsStrip?: boolean;
@@ -19,7 +22,7 @@ export interface AtlasLegendProps {
 
 /** Activity types first (by name), then visits, health, and the photos dot */
 export const legendOrder = (kinds: Iterable<string>): string[] => {
-  const ranks: Record<string, number> = { visit: 1, health: 2, photos: 3 };
+  const ranks: Record<string, number> = { visit: 1, health: 2, photos: 3, inferred: 4 };
   const rank = (k: string) => ranks[k] ?? 0;
   return [...new Set(kinds)].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
 };
@@ -38,20 +41,34 @@ const AtlasLegend: React.FC<AtlasLegendProps> = ({ kinds, healthAsStrip }) =>
     >
       {legendOrder(kinds).map((k) => (
         <Box key={k} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-          <Box
-            sx={{
-              width: k === 'visit' ? 9 : k === 'photos' ? 7 : 12,
-              height: k === 'visit' ? 9 : k === 'photos' ? 7 : 4,
-              borderRadius: k === 'visit' || k === 'photos' ? '50%' : '2px',
-              bgcolor: k === 'photos' ? PHOTO_COLOR : kindColor(k),
-            }}
-          />
+          {k === 'inferred' ? (
+            <Box
+              data-testid="legend-dashed"
+              sx={{
+                width: 14,
+                height: 0,
+                borderTop: `2px dashed ${tokens.textSecondary}`,
+                opacity: 0.8,
+              }}
+            />
+          ) : (
+            <Box
+              sx={{
+                width: k === 'visit' ? 9 : k === 'photos' ? 7 : 12,
+                height: k === 'visit' ? 9 : k === 'photos' ? 7 : 4,
+                borderRadius: k === 'visit' || k === 'photos' ? '50%' : '2px',
+                bgcolor: k === 'photos' ? PHOTO_COLOR : kindColor(k),
+              }}
+            />
+          )}
           <Typography variant="caption" sx={{ color: tokens.textSecondary, lineHeight: 1.4 }}>
             {k === 'photos'
               ? 'Has photos'
-              : k === 'health' && healthAsStrip
-                ? `${kindLabel(k)} (top strip)`
-                : kindLabel(k)}
+              : k === 'inferred'
+                ? 'Inferred road (no GPS)'
+                : k === 'health' && healthAsStrip
+                  ? `${kindLabel(k)} (top strip)`
+                  : kindLabel(k)}
           </Typography>
         </Box>
       ))}

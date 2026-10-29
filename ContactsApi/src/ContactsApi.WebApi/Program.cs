@@ -65,6 +65,16 @@ builder.Services.AddDbContext<ContactsApi.Infrastructure.Atlas.AtlasDbContext>(o
     o.UseNpgsql(string.IsNullOrWhiteSpace(atlasConnection) ? "Host=unset" : atlasConnection,
         npgsql => npgsql.MigrationsHistoryTable("__ef_migrations", "atlas")));
 builder.Services.AddScoped<ContactsApi.Infrastructure.Atlas.AtlasService>();
+// Routes module (AD-34): reads routes (matched lines, quality) and writes decisions only,
+// with the backend's own role; the schema's migrations belong to the route-quality service
+builder.Services.AddDbContext<ContactsApi.Infrastructure.Routes.RoutesDbContext>(o =>
+    o.UseNpgsql(string.IsNullOrWhiteSpace(atlasConnection) ? "Host=unset" : atlasConnection));
+builder.Services.AddSingleton(new ContactsApi.Infrastructure.Routes.RouteGeometryOptions
+{
+    Enabled = !string.IsNullOrWhiteSpace(atlasConnection) && !string.IsNullOrWhiteSpace(builder.Configuration["Routes:ServiceUrl"])
+});
+builder.Services.AddScoped<ContactsApi.Core.Interfaces.IRouteGeometryReader, ContactsApi.Infrastructure.Routes.RouteGeometryReader>();
+builder.Services.AddScoped<ContactsApi.Infrastructure.Routes.RouteOwnerData>();
 // The route-quality service reads Atlas only through /internal/routes/* (AD-33)
 builder.Services.AddScoped<ContactsApi.Infrastructure.Atlas.AtlasRoutesFeed>();
 builder.Services.AddSingleton<InteractiveLoad>();
