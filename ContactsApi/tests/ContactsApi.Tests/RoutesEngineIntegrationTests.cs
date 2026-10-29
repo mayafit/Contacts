@@ -10,9 +10,57 @@ using Microsoft.Extensions.Options;
 
 namespace ContactsApi.Tests;
 
+/// <summary>The engine of the integration tests (VALHALLA_TEST_URL, default http://localhost:8002), probed once</summary>
+internal static class TestEngine
+{
+    private static readonly Lazy<string?> Probe = new(() =>
+    {
+        var url = Environment.GetEnvironmentVariable("VALHALLA_TEST_URL") ?? "http://localhost:8002";
+        try
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+            var status = http.GetFromJsonAsync<JsonElement>(url.TrimEnd('/') + "/status").GetAwaiter().GetResult();
+            return status.TryGetProperty("version", out _) ? url : null;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    });
+
+    /// <summary>The engine's URL; null when none answers</summary>
+    public static string? Url => Probe.Value;
+
+    public const string SkipReason = "No Valhalla answers at VALHALLA_TEST_URL (default http://localhost:8002)";
+}
+
+/// <summary>A fact that needs the routing engine: reported as skipped (not passed) without one</summary>
+public sealed class EngineFactAttribute : FactAttribute
+{
+    public EngineFactAttribute()
+    {
+        if (TestEngine.Url == null)
+        {
+            Skip = TestEngine.SkipReason;
+        }
+    }
+}
+
+/// <summary>A theory that needs the routing engine: reported as skipped (not passed) without one</summary>
+public sealed class EngineTheoryAttribute : TheoryAttribute
+{
+    public EngineTheoryAttribute()
+    {
+        if (TestEngine.Url == null)
+        {
+            Skip = TestEngine.SkipReason;
+        }
+    }
+}
+
 /// <summary>
 /// Against a real Valhalla with the Israel tiles (VALHALLA_TEST_URL, default
-/// http://localhost:8002); skipped when none answers. The traces are synthetic: the
+/// http://localhost:8002); reported as skipped when none answers. The traces are synthetic: the
 /// engine routes between two public city centres, and the route is sampled sparsely
 /// like a Timeline drive. No recorded data is used.
 /// </summary>
@@ -25,20 +73,6 @@ public class RoutesEngineIntegrationTests
         public HttpClient CreateClient(string name) => new() { BaseAddress = new Uri(_url.TrimEnd('/') + "/"), Timeout = TimeSpan.FromSeconds(60) };
     }
 
-    private static async Task<string?> EngineAsync()
-    {
-        var url = Environment.GetEnvironmentVariable("VALHALLA_TEST_URL") ?? "http://localhost:8002";
-        try
-        {
-            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
-            var status = await http.GetFromJsonAsync<JsonElement>(url.TrimEnd('/') + "/status");
-            return status.TryGetProperty("version", out _) ? url : null;
-        }
-        catch (Exception)
-        {
-            return null;
-        }
-    }
 
     /// <summary>The engine's own road route between two places, as (lat, lon)</summary>
     private static async Task<List<(double Lat, double Lon)>> RoadAsync(string url, (double, double) from, (double, double) to)
@@ -107,18 +141,13 @@ public class RoutesEngineIntegrationTests
         return best;
     }
 
-    [Theory]
+    [EngineTheory]
     [InlineData(32.0853, 34.7818, 31.7683, 35.2137)] // Tel Aviv to Jerusalem (Route 1)
     [InlineData(32.7940, 34.9896, 32.0853, 34.7818)] // Haifa to Tel Aviv (Routes 2 / 4)
     [InlineData(31.2518, 34.7913, 31.7683, 35.2137)] // Be'er Sheva to Jerusalem (Route 6 area)
     public async Task A_sparse_drive_is_matched_onto_the_road_it_followed(double fromLat, double fromLon, double toLat, double toLon)
     {
-        var url = await EngineAsync();
-        if (url == null)
-        {
-            return; // no engine here: skipped
-        }
-
+        var url = TestEngine.Url!;
         var road = await RoadAsync(url, (fromLat, fromLon), (toLat, toLon));
         var points = Sample(road, 800);
 
@@ -140,14 +169,10 @@ public class RoutesEngineIntegrationTests
         Assert.Contains(r.Pieces, p => p.Kind == PieceKinds.Inferred); // 800 m legs: routed between points
     }
 
-    [Fact]
+    [EngineFact]
     public async Task A_long_gap_in_the_recording_stays_a_gap_and_the_rest_is_matched()
     {
-        var url = await EngineAsync();
-        if (url == null)
-        {
-            return;
-        }
+        var url = TestEngine.Url!;
 
         var road = await RoadAsync(url, (32.0853, 34.7818), (31.7683, 35.2137));
         var points = Sample(road, 800);
