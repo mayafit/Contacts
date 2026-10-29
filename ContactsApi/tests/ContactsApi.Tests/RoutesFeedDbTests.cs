@@ -156,10 +156,13 @@ public class RoutesFeedDbTests
         Assert.Equal(stored.UpdatedAt, d1.UpdatedAt);
         Assert.Equal(0, all.Single(c => c.SourceKey == "google-timeline|s1").PointCount);
 
-        // Nothing changed since: an empty page and the same cursor
-        var empty = await feed.ChangesAsync(owner, cursor);
+        // Nothing changed since: once the overlap has passed, an empty page at the same position
+        var later = new AtlasRoutesFeed(db, new EngineClientTests.Clock { Now = DateTime.UtcNow.AddMinutes(10) });
+        var settled = await later.ChangesAsync(owner, cursor);
+        var empty = await later.ChangesAsync(owner, settled.Next);
         Assert.Empty(empty.Items);
-        Assert.Equal(cursor, empty.Next);
+        var (was, now) = (AtlasRoutesFeed.ParseCursor(cursor), AtlasRoutesFeed.ParseCursor(empty.Next));
+        Assert.Equal((was.T, was.Id), (now.T, now.Id));
 
         // Tracks: points in order, and the Visit just before
         var tracks = await feed.TracksAsync(owner, new[] { d1.Id });
@@ -206,6 +209,120 @@ public class RoutesFeedDbTests
         Assert.Contains(b, owners);
         Assert.Equal(owners.Count, owners.Distinct().Count());
         await Assert.ThrowsAsync<ArgumentException>(() => feed.TracksAsync(a, Enumerable.Range(0, 26).Select(_ => Guid.NewGuid()).ToList()));
+    }
+
+    [Fact]
+    public async Task A_record_committed_after_the_read_with_an_earlier_UpdatedAt_is_read_on_the_next_poll()
+    {
+        await using var db = await DbAsync();
+        if (db == null)
+        {
+            return;
+        }
+
+        var owner = "overlap-" + Guid.NewGuid();
+        var svc = new AtlasService(db, NullLogger<AtlasService>.Instance);
+        await svc.IngestAsync(owner, new IngestRequest
+        {
+            Source = "google-timeline",
+            Activities = Enumerable.Range(0, 3)
+                .Select(i => new ActivityInput($"o{i}", "IN_PASSENGER_VEHICLE", null, T0.AddHours(i), T0.AddHours(i).AddMinutes(30), Points: Track(8, 32 + i * 0.01)))
+                .ToList()
+        });
+        var clock = new EngineClientTests.Clock { Now = DateTime.UtcNow };
+        var feed = new AtlasRoutesFeed(db, clock);
+        var first = await feed.ChangesAsync(owner, null);
+        Assert.Equal((3, false), (first.Items.Count, first.More));
+        var lastT = first.Items.Max(i => i.UpdatedAt);
+
+        // Stamped a second before the last change it was read with, committed after that read
+        await svc.IngestAsync(owner, new IngestRequest
+        {
+            Source = "google-timeline",
+            Activities = { new ActivityInput("late", "IN_PASSENGER_VEHICLE", null, T0.AddHours(9), T0.AddHours(9).AddMinutes(30), Points: Track(8, 32.5)) }
+        });
+        await db.Activities.Where(a => a.OwnerId == owner && a.ExternalId == "late")
+            .ExecuteUpdateAsync(s => s.SetProperty(a => a.UpdatedAt, lastT.AddSeconds(-1)));
+
+        clock.Now = clock.Now.AddMinutes(2);
+        var next = await feed.ChangesAsync(owner, first.Next);
+        Assert.Contains(next.Items, i => i.SourceKey == "google-timeline|late");
+        // The overlap brings the others again too: the service skips them as unchanged
+        Assert.Equal(4, next.Items.Count);
+
+        // Once the cursor is older than the overlap, nothing is read twice
+        clock.Now = clock.Now.AddMinutes(10);
+        var settled = await feed.ChangesAsync(owner, next.Next);
+        Assert.Equal(4, settled.Items.Count);
+        Assert.Empty((await feed.ChangesAsync(owner, settled.Next)).Items);
+    }
+
+    [Fact]
+    public async Task Fusion_in_backoff_or_failing_repeatedly_does_not_hold_the_feed_back()
+    {
+        await using var db = await DbAsync();
+        if (db == null)
+        {
+            return;
+        }
+
+        var owner = "stuck-" + Guid.NewGuid();
+        var feed = new AtlasRoutesFeed(db);
+        db.FusionQueue.Add(new FusionQueueItem { OwnerId = owner, Full = true });
+        await db.SaveChangesAsync();
+        await Assert.ThrowsAsync<DerivationNotReadyException>(() => feed.ChangesAsync(owner, null));
+
+        // Failed once and waiting for its retry
+        await db.FusionQueue.Where(q => q.OwnerId == owner)
+            .ExecuteUpdateAsync(s => s.SetProperty(q => q.Attempts, 1).SetProperty(q => q.NextAttemptAt, DateTime.UtcNow.AddMinutes(2)));
+        Assert.Empty((await feed.ChangesAsync(owner, null)).Items);
+
+        // Due again, but it keeps failing
+        await db.FusionQueue.Where(q => q.OwnerId == owner)
+            .ExecuteUpdateAsync(s => s.SetProperty(q => q.Attempts, RoutesFeedLimits.FusionStuckAttempts).SetProperty(q => q.NextAttemptAt, (DateTime?)null));
+        Assert.Empty((await feed.ChangesAsync(owner, null)).Items);
+
+        // Due, and not failing yet: wait for it
+        await db.FusionQueue.Where(q => q.OwnerId == owner).ExecuteUpdateAsync(s => s.SetProperty(q => q.Attempts, 1));
+        await Assert.ThrowsAsync<DerivationNotReadyException>(() => feed.ChangesAsync(owner, null));
+        await db.FusionQueue.Where(q => q.OwnerId == owner).ExecuteDeleteAsync();
+    }
+
+    [Fact]
+    public async Task A_long_track_is_thinned_in_the_query_the_same_in_any_batch()
+    {
+        await using var db = await DbAsync();
+        if (db == null)
+        {
+            return;
+        }
+
+        var owner = "thin-" + Guid.NewGuid();
+        var svc = new AtlasService(db, NullLogger<AtlasService>.Instance);
+        await svc.IngestAsync(owner, new IngestRequest
+        {
+            Source = "gpx",
+            Activities =
+            {
+                new ActivityInput("long", "driving", null, T0, T0.AddHours(3), Points: Track(7_001, 32.0, 1, 0.0001)),
+                new ActivityInput("short", "driving", null, T0.AddHours(5), T0.AddHours(6), Points: Track(50, 32.0))
+            }
+        });
+        var feed = new AtlasRoutesFeed(db);
+        var ids = await db.Activities.AsNoTracking().Where(a => a.OwnerId == owner).OrderBy(a => a.StartTime).Select(a => a.Id).ToListAsync();
+
+        var both = await feed.TracksAsync(owner, ids);
+        var alone = Assert.Single(await feed.TracksAsync(owner, new[] { ids[0] }));
+        var longTrack = both.Single(t => t.Id == ids[0]);
+
+        var stored = await db.TrackPoints.AsNoTracking().Where(p => p.ActivityId == ids[0]).OrderBy(p => p.Time).Select(p => p.Time).ToListAsync();
+        Assert.True(stored.Count > RoutesFeedLimits.PointsMax, $"{stored.Count} points stored");
+        Assert.InRange(longTrack.Points.Count, 2, RoutesFeedLimits.PointsMax);
+        Assert.Equal(stored[0], longTrack.Points[0].T);
+        Assert.Equal(stored[^1], longTrack.Points[^1].T);
+        Assert.Equal(50, both.Single(t => t.Id == ids[1]).Points.Count);
+        // The same points whatever the batch: the service's hash of them is stable
+        Assert.Equal(RouteQuality.InputHash(longTrack.Points), RouteQuality.InputHash(alone.Points));
     }
 
     [Fact]

@@ -24,8 +24,21 @@ public static class RoutesFeedLimits
     /// <summary>Most records of one tracks call</summary>
     public const int TracksMax = 25;
 
-    /// <summary>Most points of one track (longer tracks are thinned)</summary>
-    public const int PointsMax = 5000;
+    /// <summary>
+    /// Most points of one track (longer tracks are thinned in the query): the engine's
+    /// max_shape, so a record is usually one engine call, and a full tracks call holds at
+    /// most 25 × 2,000 points
+    /// </summary>
+    public const int PointsMax = 2000;
+
+    /// <summary>
+    /// How far before the last read the next read of the change feed starts again: a
+    /// record's UpdatedAt is stamped before its transaction commits
+    /// </summary>
+    public static readonly TimeSpan Overlap = TimeSpan.FromMinutes(5);
+
+    /// <summary>A fusion queue entry that failed this often no longer holds the feed back</summary>
+    public const int FusionStuckAttempts = 3;
 
     /// <summary>Most ids of one exists call</summary>
     public const int ExistsMax = 2000;

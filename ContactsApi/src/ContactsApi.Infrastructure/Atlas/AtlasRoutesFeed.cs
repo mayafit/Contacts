@@ -26,11 +26,13 @@ public class AtlasRoutesFeed
 {
     private static readonly DateTime Epoch = new(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
     private readonly AtlasDbContext _db;
+    private readonly TimeProvider _clock;
 
     /// <summary>Creates the feed</summary>
-    public AtlasRoutesFeed(AtlasDbContext db)
+    public AtlasRoutesFeed(AtlasDbContext db, TimeProvider? clock = null)
     {
         _db = db;
+        _clock = clock ?? TimeProvider.System;
     }
 
     /// <summary>
@@ -51,13 +53,31 @@ public class AtlasRoutesFeed
     /// Source records whose track or fused type may have changed after the cursor,
     /// oldest change first. Built from activities.UpdatedAt and activity_fusion.UpdatedAt.
     /// </summary>
-    /// <exception cref="DerivationNotReadyException">The owner's fusion queue is not empty</exception>
+    /// <remarks>
+    /// UpdatedAt is stamped before its transaction commits, so a record stamped just before
+    /// a read can become visible only after it. The last page's cursor therefore carries the
+    /// time of the read, and the next read starts again <see cref="RoutesFeedLimits.Overlap"/>
+    /// before that time while the cursor is within it: those records come again (the
+    /// service's unchanged check skips them with no track read) and a late commit is never
+    /// passed over. Once the cursor is older than the overlap, nothing is read twice.
+    /// </remarks>
+    /// <exception cref="DerivationNotReadyException">The owner's fusion is due or running</exception>
     /// <exception cref="ArgumentException">The cursor is not one this feed wrote</exception>
     public async Task<RouteChangesPage> ChangesAsync(string owner, string? after, int limit = RoutesFeedLimits.ChangesMax, CancellationToken ct = default)
     {
-        var (t, id) = ParseCursor(after);
+        var (t, id, readAt) = ParseCursor(after);
+        var now = _clock.GetUtcNow().UtcDateTime;
+        if (readAt.HasValue && t > readAt.Value - RoutesFeedLimits.Overlap)
+        {
+            t = readAt.Value - RoutesFeedLimits.Overlap;
+            id = Guid.Empty;
+        }
+
         limit = Math.Clamp(limit, 1, RoutesFeedLimits.ChangesMax);
-        if (await _db.FusionQueue.AnyAsync(q => q.OwnerId == owner, ct))
+        // Waiting fusion blocks the feed, but not an entry in backoff or one that keeps
+        // failing (it would hold every route back until someone fixed it)
+        if (await _db.FusionQueue.AnyAsync(q => q.OwnerId == owner && q.Attempts < RoutesFeedLimits.FusionStuckAttempts
+                                                 && (q.NextAttemptAt == null || q.NextAttemptAt <= now), ct))
         {
             throw new DerivationNotReadyException();
         }
@@ -92,13 +112,34 @@ public class AtlasRoutesFeed
 
         var items = rows.Select(r => new RouteChange(r.Id, Utc(r.UpdatedAt), r.PointCount, r.Type,
             RouteKeys.SourceKey(r.Source, r.ExternalId, r.Id), r.SourceType)).ToList();
-        var next = rows.Count > 0 ? Cursor(Utc(rows[^1].T), rows[^1].Id) : after;
+        string? next;
+        if (more)
+        {
+            // More after this page: the next one simply follows it (no read time, no overlap)
+            next = Cursor(Utc(rows[^1].T), rows[^1].Id);
+        }
+        else
+        {
+            // The last page: never behind the cursor asked with, and stamped with this read's time
+            var (lastT, lastId, _) = ParseCursor(after);
+            if (rows.Count > 0 && Utc(rows[^1].T) >= lastT)
+            {
+                (lastT, lastId) = (Utc(rows[^1].T), rows[^1].Id);
+            }
+
+            next = after == null && rows.Count == 0 ? null : Cursor(lastT, lastId, now);
+        }
+
         return new RouteChangesPage(items, next, more);
     }
 
     /// <summary>
     /// The records' tracks (at most 25), with the Visits just before and after. Ids
-    /// the owner does not have are left out. Three queries for the whole batch.
+    /// the owner does not have are left out. Three queries for the whole batch. Long
+    /// tracks are thinned in the query (every n-th point by the record's PointCount, both
+    /// ends kept), so at most <see cref="RoutesFeedLimits.PointsMax"/> points per record
+    /// are ever read into memory; the thinning depends on the record alone, so its points,
+    /// and the service's hash of them, are the same in any batch.
     /// </summary>
     public async Task<List<RouteTrack>> TracksAsync(string owner, IReadOnlyCollection<Guid> ids, CancellationToken ct = default)
     {
@@ -125,13 +166,19 @@ public class AtlasRoutesFeed
         }
 
         // Only the owner's records reach the points query
-        var owned = records.Select(r => r.Id).ToList();
-        var points = (await _db.TrackPoints.AsNoTracking()
-                .Where(p => owned.Contains(p.ActivityId))
-                .OrderBy(p => p.ActivityId).ThenBy(p => p.Time)
-                .Select(p => new { p.ActivityId, p.Time, p.Lat, p.Lon })
-                .ToListAsync(ct))
+        var owned = records.Select(r => r.Id).ToArray();
+        var steps = records.Select(r => ThinStep(r.PointCount)).ToArray();
+        var counts = records.Select(r => r.PointCount).ToArray();
+        var points = (await _db.Database.SqlQuery<PointRow>($@"
+                SELECT p.""ActivityId"", p.""Time"", p.""Lat"", p.""Lon""
+                  FROM (SELECT tp.""ActivityId"", tp.""Time"", tp.""Lat"", tp.""Lon"", s.step, s.n,
+                               row_number() OVER (PARTITION BY tp.""ActivityId"" ORDER BY tp.""Time"") AS rn
+                          FROM unnest({owned}, {steps}, {counts}) AS s(id, step, n)
+                          JOIN atlas.track_points tp ON tp.""ActivityId"" = s.id) p
+                 WHERE p.step = 1 OR (p.rn - 1) % p.step = 0 OR p.rn = p.n
+                 ORDER BY p.""ActivityId"", p.""Time""").ToListAsync(ct))
             .GroupBy(p => p.ActivityId)
+            // Thin again only when PointCount understated the track
             .ToDictionary(g => g.Key, g => Thin(g.Select(p => new RoutePoint(Utc(p.Time), p.Lat, p.Lon)).ToList()));
 
         var idArray = records.Select(r => r.Id).ToArray();
@@ -172,7 +219,7 @@ public class AtlasRoutesFeed
         limit = Math.Clamp(limit, 1, RoutesFeedLimits.ChangesMax);
         from = Utc(from);
         to = Utc(to);
-        var (t, id) = after == null ? (from, Guid.Empty) : ParseCursor(after);
+        var (t, id, _) = after == null ? (from, Guid.Empty, (DateTime?)null) : ParseCursor(after);
         var rows = await _db.Activities.AsNoTracking()
             .Where(a => a.OwnerId == owner && a.StartTime >= from && a.StartTime < to
                         && (a.StartTime > t || (a.StartTime == t && a.Id.CompareTo(id) > 0)))
@@ -202,7 +249,11 @@ public class AtlasRoutesFeed
         return _db.Activities.AsNoTracking().Where(a => a.OwnerId == owner && wanted.Contains(a.Id)).Select(a => a.Id).ToListAsync(ct);
     }
 
-    /// <summary>A track thinned evenly to at most 5,000 points, keeping both ends</summary>
+    /// <summary>Every how many points a track of <paramref name="pointCount"/> points is read (1: all)</summary>
+    internal static int ThinStep(int pointCount) =>
+        pointCount <= RoutesFeedLimits.PointsMax ? 1 : (int)Math.Ceiling((pointCount - 1) / (double)(RoutesFeedLimits.PointsMax - 1));
+
+    /// <summary>A track thinned evenly to at most PointsMax points, keeping both ends</summary>
     internal static List<RoutePoint> Thin(List<RoutePoint> points, int max = RoutesFeedLimits.PointsMax)
     {
         if (points.Count <= max)
@@ -219,24 +270,48 @@ public class AtlasRoutesFeed
         return thinned;
     }
 
-    /// <summary>An opaque cursor: the change time and the record id</summary>
-    internal static string Cursor(DateTime t, Guid id) => $"{t.Ticks.ToString(CultureInfo.InvariantCulture)}_{id:N}";
+    /// <summary>An opaque cursor: the change time and the record id, and on a last page the time of the read</summary>
+    internal static string Cursor(DateTime t, Guid id, DateTime? readAt = null) =>
+        $"{t.Ticks.ToString(CultureInfo.InvariantCulture)}_{id:N}"
+        + (readAt.HasValue ? "_" + readAt.Value.Ticks.ToString(CultureInfo.InvariantCulture) : string.Empty);
 
-    internal static (DateTime T, Guid Id) ParseCursor(string? cursor)
+    internal static (DateTime T, Guid Id, DateTime? ReadAt) ParseCursor(string? cursor)
     {
         if (string.IsNullOrEmpty(cursor))
         {
-            return (Epoch, Guid.Empty);
+            return (Epoch, Guid.Empty, null);
         }
 
         var parts = cursor.Split('_');
-        if (parts.Length != 2 || !long.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out var ticks)
-            || ticks < Epoch.Ticks || ticks > DateTime.MaxValue.Ticks || !Guid.TryParseExact(parts[1], "N", out var id))
+        if (parts.Length is < 2 or > 3 || !TryTicks(parts[0], out var t) || !Guid.TryParseExact(parts[1], "N", out var id))
         {
             throw new ArgumentException("Unknown cursor.");
         }
 
-        return (new DateTime(ticks, DateTimeKind.Utc), id);
+        DateTime? readAt = null;
+        if (parts.Length == 3)
+        {
+            if (!TryTicks(parts[2], out var r))
+            {
+                throw new ArgumentException("Unknown cursor.");
+            }
+
+            readAt = r;
+        }
+
+        return (t, id, readAt);
+    }
+
+    private static bool TryTicks(string s, out DateTime t)
+    {
+        t = default;
+        if (!long.TryParse(s, NumberStyles.None, CultureInfo.InvariantCulture, out var ticks) || ticks < Epoch.Ticks || ticks > DateTime.MaxValue.Ticks)
+        {
+            return false;
+        }
+
+        t = new DateTime(ticks, DateTimeKind.Utc);
+        return true;
     }
 
     private static DateTime Utc(DateTime d) => d.Kind == DateTimeKind.Utc ? d : DateTime.SpecifyKind(d.ToUniversalTime(), DateTimeKind.Utc);
@@ -251,6 +326,14 @@ public class AtlasRoutesFeed
         public string Source { get; set; } = string.Empty;
         public string? ExternalId { get; set; }
         public string? SourceType { get; set; }
+    }
+
+    internal sealed class PointRow
+    {
+        public Guid ActivityId { get; set; }
+        public DateTime Time { get; set; }
+        public double Lat { get; set; }
+        public double Lon { get; set; }
     }
 
     internal sealed class VisitRow

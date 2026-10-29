@@ -242,10 +242,14 @@ public class RoutesFeedHelperTests
         var t = new DateTime(2026, 10, 28, 12, 0, 0, DateTimeKind.Utc).AddTicks(10);
         var id = Guid.NewGuid();
 
-        Assert.Equal((t, id), AtlasRoutesFeed.ParseCursor(AtlasRoutesFeed.Cursor(t, id)));
+        Assert.Equal((t, id, (DateTime?)null), AtlasRoutesFeed.ParseCursor(AtlasRoutesFeed.Cursor(t, id)));
+        var read = t.AddMinutes(3);
+        Assert.Equal((t, id, (DateTime?)read), AtlasRoutesFeed.ParseCursor(AtlasRoutesFeed.Cursor(t, id, read)));
         Assert.Equal(Guid.Empty, AtlasRoutesFeed.ParseCursor(null).Id);
         Assert.Throws<ArgumentException>(() => AtlasRoutesFeed.ParseCursor("2026-10-28"));
         Assert.Throws<ArgumentException>(() => AtlasRoutesFeed.ParseCursor("-1_" + id.ToString("N")));
+        Assert.Throws<ArgumentException>(() => AtlasRoutesFeed.ParseCursor(AtlasRoutesFeed.Cursor(t, id) + "_x"));
+        Assert.Throws<ArgumentException>(() => AtlasRoutesFeed.ParseCursor(AtlasRoutesFeed.Cursor(t, id, read) + "_1"));
     }
 
     [Fact]
@@ -260,6 +264,23 @@ public class RoutesFeedHelperTests
         Assert.Equal(points[^1], thin[^1]);
         var small = points.Take(10).ToList();
         Assert.Same(small, AtlasRoutesFeed.Thin(small));
+    }
+
+    [Theory]
+    [InlineData(10)]
+    [InlineData(2000)]
+    [InlineData(2001)]
+    [InlineData(5000)]
+    [InlineData(12_345)]
+    [InlineData(100_000)]
+    public void The_query_side_step_keeps_at_most_PointsMax_points_with_both_ends(int n)
+    {
+        // As the tracks query keeps them: every step-th point, and the last
+        var step = AtlasRoutesFeed.ThinStep(n);
+        var kept = Enumerable.Range(1, n).Count(rn => step == 1 || (rn - 1) % step == 0 || rn == n);
+
+        Assert.InRange(kept, Math.Min(n, 2), RoutesFeedLimits.PointsMax);
+        Assert.Equal(n <= RoutesFeedLimits.PointsMax ? 1 : step, step);
     }
 
     [Fact]
