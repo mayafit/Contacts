@@ -2,6 +2,7 @@ import {
   hasInferred,
   inferredCasingStyle,
   jobText,
+  noMatchText,
   pieceStyle,
   routeCaption,
   routeStatusText,
@@ -184,5 +185,34 @@ describe('jobText and routeStatusText', () => {
         backfilled: true,
       }),
     ).toBe('Route matching: up to date');
+  });
+});
+
+describe('noMatchText', () => {
+  it('gives the confidence and the main reason of a match below the threshold', () => {
+    expect(
+      noMatchText(
+        route({
+          status: 'low_confidence',
+          confidence: 0.65,
+          reason: 'low confidence 0.65: a 6 km stretch with no road that fits the 4 min elapsed',
+        }),
+      ),
+    ).toBe(
+      'No confident road match (65%): a 6 km stretch with no road that fits the 4 min elapsed',
+    );
+  });
+
+  it('reads a failure without a confidence, and says little when nothing is known', () => {
+    expect(
+      noMatchText(
+        route({
+          status: 'failed',
+          confidence: null,
+          reason: 'no_match: the engine matched no point',
+        }),
+      ),
+    ).toBe('No confident road match: the engine matched no point');
+    expect(noMatchText(null)).toBe('No confident road match');
   });
 });

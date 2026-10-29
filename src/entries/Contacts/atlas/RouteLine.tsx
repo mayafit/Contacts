@@ -9,7 +9,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { CircularProgress, Link, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material';
 import { ApiRequestError, backendApiClient } from '../../../services/api/BackendApiClient';
 import type { ActivityDetail, RouteJob } from './types';
-import { jobText, routeCaption } from './routeGeometry';
+import { jobText, noMatchText, routeCaption } from './routeGeometry';
 import { tokens } from '../theme/contactsTheme';
 
 /** How the open activity is drawn */
@@ -22,7 +22,7 @@ export interface RouteLineProps {
   view: RouteView;
   onView: (view: RouteView) => void;
   /** Loads the activity again after a route change; resolves to it (null when gone) */
-  onChanged: () => Promise<Pick<ActivityDetail, 'summary'> | null>;
+  onChanged: () => Promise<Pick<ActivityDetail, 'summary' | 'route'> | null>;
 }
 
 /** Polls a route job this often (ms) */
@@ -130,7 +130,8 @@ const RouteLine: React.FC<RouteLineProps> = ({ detail, view, onView, onChanged }
       } else if (finished.state === 'failed') {
         setNote('Matching failed');
       } else if (after?.summary.geometry !== 'matched') {
-        setNote('No confident road match');
+        // The confidence and the main reason, so the Owner sees why
+        setNote(noMatchText(after?.route));
       } else {
         onView('roads');
       }

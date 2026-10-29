@@ -240,6 +240,24 @@ export const routeCaption = (
   };
 };
 
+/**
+ * Why "Fix this route" found no confident match: the confidence and the main reason the
+ * route service gave (AD-35 rule 6), e.g. "No confident road match (65%): a 6 km
+ * stretch with no road that fits the 4 min elapsed"
+ * @param route - The activity's route info after the job
+ * @returns The note
+ */
+export const noMatchText = (route: ActivityRouteInfo | null | undefined): string => {
+  const d = route?.description;
+  const confidence = isSet(d?.confidence) ? ` (${pct(d.confidence)})` : '';
+  const why = d?.reason
+    ?.replace(/^low confidence [\d.]+:\s*/, '')
+    .replace(/^no_match: /, '')
+    .replace(/^no_call: /, '')
+    .trim();
+  return `No confident road match${confidence}${why ? `: ${why}` : ''}`;
+};
+
 /** A job's progress as a short text */
 export const jobText = (job: Pick<RouteJob, 'state' | 'done' | 'total'> | null): string => {
   if (!job || job.state === 'queued') {
