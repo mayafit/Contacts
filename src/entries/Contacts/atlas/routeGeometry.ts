@@ -12,7 +12,7 @@ import type {
   RouteStatus,
 } from './types';
 import { formatDistance } from './geo';
-import { isSet } from './types';
+import { INFERRED_CASING, INFERRED_COLOR, isSet } from './types';
 
 /** A drawable run of one kind: its positions on the map */
 export interface PieceLine {
@@ -116,20 +116,27 @@ export const splitPieces = (
   return runs;
 };
 
-/** Leaflet path options of a piece: observed solid, inferred dashed and fainter, gaps faint dotted */
+/** Leaflet path options of a piece: observed solid, inferred amber dashes, gaps faint dotted */
 export const pieceStyle = (
   kind: RoutePiece['kind'],
   color: string,
 ): { color: string; weight: number; opacity: number; dashArray?: string } => {
   switch (kind) {
     case 'inferred':
-      return { color, weight: 3.5, opacity: 0.6, dashArray: '6 7' };
+      return { color: INFERRED_COLOR, weight: 4, opacity: 1, dashArray: '8 6' };
     case 'gap':
       return { color: '#9ca3af', weight: 1.5, opacity: 0.55, dashArray: '1 5' };
     default:
       return { color, weight: 4.5, opacity: 0.95 };
   }
 };
+
+/** The solid dark casing drawn under an inferred stretch's dashes */
+export const inferredCasingStyle = (): { color: string; weight: number; opacity: number } => ({
+  color: INFERRED_CASING,
+  weight: 6.5,
+  opacity: 0.75,
+});
 
 /** Whether any run is inferred (the legend then explains the dashes) */
 export const hasInferred = (runs: PieceLine[]): boolean => runs.some((r) => r.kind === 'inferred');

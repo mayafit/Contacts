@@ -5,7 +5,7 @@
 
 import React from 'react';
 import { Box, Typography } from '@mui/material';
-import { kindColor, kindLabel } from './types';
+import { INFERRED_COLOR, kindColor, kindLabel } from './types';
 import { PHOTO_COLOR } from './photos';
 import { tokens } from '../theme/contactsTheme';
 
@@ -47,8 +47,7 @@ const AtlasLegend: React.FC<AtlasLegendProps> = ({ kinds, healthAsStrip }) =>
               sx={{
                 width: 14,
                 height: 0,
-                borderTop: `2px dashed ${tokens.textSecondary}`,
-                opacity: 0.8,
+                borderTop: `3px dashed ${INFERRED_COLOR}`,
               }}
             />
           ) : (

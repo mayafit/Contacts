@@ -1,12 +1,13 @@
 import {
   hasInferred,
+  inferredCasingStyle,
   jobText,
   pieceStyle,
   routeCaption,
   routeStatusText,
   splitPieces,
 } from '../routeGeometry';
-import type { ActivityRouteInfo, RouteDescription } from '../types';
+import { INFERRED_COLOR, type ActivityRouteInfo, type RouteDescription } from '../types';
 
 /** A straight north-south line of 11 points, ~111 m apart (1,112 m in all) */
 const line: [number, number][] = Array.from({ length: 11 }, (_, i) => [32 + i * 0.001, 34.8]);
@@ -79,14 +80,16 @@ describe('splitPieces', () => {
 });
 
 describe('pieceStyle', () => {
-  it('draws observed solid, inferred dashed and fainter, gaps faint grey dots', () => {
+  it('draws observed solid, inferred in distinct amber dashes on a casing, gaps faint grey dots', () => {
     const observed = pieceStyle('observed', '#f00');
     const inferred = pieceStyle('inferred', '#f00');
     const gap = pieceStyle('gap', '#f00');
     expect(observed.dashArray).toBeUndefined();
     expect(observed.color).toBe('#f00');
     expect(inferred.dashArray).toBeDefined();
-    expect(inferred.opacity).toBeLessThan(observed.opacity);
+    expect(inferred.color).toBe(INFERRED_COLOR);
+    expect(inferred.opacity).toBe(1);
+    expect(inferredCasingStyle().weight).toBeGreaterThan(inferred.weight);
     expect(gap.color).not.toBe('#f00');
     expect(gap.weight).toBeLessThan(inferred.weight);
     expect(gap.opacity).toBeLessThan(observed.opacity);
