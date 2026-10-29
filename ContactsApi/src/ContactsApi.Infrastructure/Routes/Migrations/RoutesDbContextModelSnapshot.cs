@@ -45,6 +45,9 @@ namespace ContactsApi.Infrastructure.Routes.Migrations
                         .HasMaxLength(16)
                         .HasColumnType("character varying(16)");
 
+                    b.Property<string>("DensityPolyline")
+                        .HasColumnType("text");
+
                     b.Property<string>("Engine")
                         .IsRequired()
                         .HasMaxLength(16)
@@ -67,6 +70,9 @@ namespace ContactsApi.Infrastructure.Routes.Migrations
                         .IsRequired()
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
+
+                    b.Property<string>("ListPolyline")
+                        .HasColumnType("text");
 
                     b.Property<double?>("MatchedDistanceM")
                         .HasColumnType("double precision");

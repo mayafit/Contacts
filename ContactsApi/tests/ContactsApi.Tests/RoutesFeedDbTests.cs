@@ -12,10 +12,14 @@ internal sealed class CommandCounter : DbCommandInterceptor
 {
     public int Count;
 
+    /// <summary>The text of every query read (to check what a query selects)</summary>
+    public readonly System.Collections.Concurrent.ConcurrentQueue<string> Queries = new();
+
     public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command, CommandEventData eventData,
         InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
     {
         Interlocked.Increment(ref Count);
+        Queries.Enqueue(command.CommandText);
         return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
     }
 

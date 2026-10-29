@@ -22,10 +22,11 @@ public partial class AtlasService
     private sealed record SegmentState(Guid Id, DateTime UpdatedAt, int PointCount, DateTime StartTime, string? Polyline);
 
     /// <summary>The chosen line of an activity (a record's, or an outing's recordings joined)</summary>
-    private sealed record ChosenGeometry(string Polyline, double? DistanceM, List<RouteGeometryPiece>? Pieces);
+    /// <param name="Final">Already simplified for the line asked for: a density read draws it as it is</param>
+    private sealed record ChosenGeometry(string Polyline, double? DistanceM, List<RouteGeometryPiece>? Pieces, bool Final = true);
 
-    /// <summary>The summaries with their chosen lines (lists: no pieces)</summary>
-    private async Task<List<ActivitySummary>> WithRoutesAsync(string owner, List<ActivitySummary> list, bool withPieces, CancellationToken ct)
+    /// <summary>The summaries with their chosen list lines (no pieces)</summary>
+    private async Task<List<ActivitySummary>> WithRoutesAsync(string owner, List<ActivitySummary> list, CancellationToken ct)
     {
         if (_routes is not { Enabled: true } || list.Count == 0)
         {
@@ -35,15 +36,15 @@ public partial class AtlasService
         var candidates = list.Where(s => s.Polyline != null)
             .Select(s => new GeometryCandidate(s.Id, s.Type, s.Polyline, s.RecordUpdatedAt, s.PointCount, s.OutingEvidence))
             .ToList();
-        var chosen = await ChooseGeometryAsync(owner, candidates, withPieces, ct);
-        return chosen.Count == 0 ? list : list.Select(s => Apply(s, chosen.GetValueOrDefault(s.Id), withPieces)).ToList();
+        var chosen = await ChooseGeometryAsync(owner, candidates, RouteLine.List, ct);
+        return chosen.Count == 0 ? list : list.Select(s => Apply(s, chosen.GetValueOrDefault(s.Id), false)).ToList();
     }
 
     /// <summary>
     /// The chosen lines, by activity id. One routes query for the whole list; an outing of
     /// several recordings adds one Atlas query for its recordings' check columns.
     /// </summary>
-    private async Task<Dictionary<Guid, ChosenGeometry>> ChooseGeometryAsync(string owner, IReadOnlyList<GeometryCandidate> items, bool withPieces,
+    private async Task<Dictionary<Guid, ChosenGeometry>> ChooseGeometryAsync(string owner, IReadOnlyList<GeometryCandidate> items, RouteLine line,
         CancellationToken ct)
     {
         if (_routes is not { Enabled: true } || items.Count == 0)
@@ -75,11 +76,11 @@ public partial class AtlasService
             }
         }
 
-        return await ChooseCoreAsync(owner, items, outings, withPieces, ct);
+        return await ChooseCoreAsync(owner, items, outings, line, ct);
     }
 
     private async Task<Dictionary<Guid, ChosenGeometry>> ChooseCoreAsync(string owner, IReadOnlyList<GeometryCandidate> items,
-        Dictionary<Guid, List<SegmentState>> outings, bool withPieces, CancellationToken ct)
+        Dictionary<Guid, List<SegmentState>> outings, RouteLine line, CancellationToken ct)
     {
         var result = new Dictionary<Guid, ChosenGeometry>();
         var records = new List<RouteRecord>();
@@ -101,7 +102,7 @@ public partial class AtlasService
             return result;
         }
 
-        var chosen = await _routes!.ChooseAsync(owner, records, withPieces, ct);
+        var chosen = await _routes!.ChooseAsync(owner, records, line, ct);
         if (chosen.Count == 0)
         {
             return result;
@@ -111,7 +112,7 @@ public partial class AtlasService
         {
             if (outings.TryGetValue(i.Id, out var segments) && segments.Count > 1)
             {
-                var joined = JoinOuting(segments.OrderBy(s => s.StartTime).ToList(), chosen, withPieces);
+                var joined = JoinOuting(segments.OrderBy(s => s.StartTime).ToList(), chosen, line);
                 if (joined != null)
                 {
                     result[i.Id] = joined;
@@ -128,10 +129,13 @@ public partial class AtlasService
 
     /// <summary>
     /// An outing's recordings in time order, each with its chosen line (matched, or the
-    /// recorded one), as fusion joins them; the jump between two recordings is a gap
+    /// recorded one), as fusion joins them; the jump between two recordings is a gap.
+    /// It is simplified at most once: a list line here (the recordings' lines are stored
+    /// simplified already), a density line by the density map itself.
     /// </summary>
-    private static ChosenGeometry? JoinOuting(List<SegmentState> segments, IReadOnlyDictionary<Guid, ChosenRoute> chosen, bool withPieces)
+    private static ChosenGeometry? JoinOuting(List<SegmentState> segments, IReadOnlyDictionary<Guid, ChosenRoute> chosen, RouteLine kind)
     {
+        var withPieces = kind == RouteLine.Detail;
         if (!segments.Any(s => chosen.ContainsKey(s.Id)))
         {
             return null;
@@ -190,9 +194,9 @@ public partial class AtlasService
         }
 
         // A list draws it whole, so it is simplified as fusion does; the panel keeps the
-        // pieces' metres exact
-        var polyline = withPieces ? Geo.EncodePolyline(line) : Geo.EncodePolyline(Geo.Simplify(line));
-        return new ChosenGeometry(polyline, distance, withPieces ? pieces : null);
+        // pieces' metres exact; the density map simplifies it once, itself
+        var polyline = kind == RouteLine.List ? Geo.EncodePolyline(Geo.Simplify(line)) : Geo.EncodePolyline(line);
+        return new ChosenGeometry(polyline, distance, withPieces ? pieces : null, kind != RouteLine.Density);
     }
 
     /// <summary>A summary drawn with its chosen line; the distance replaced only when fusion took it from the straight legs (rule 5)</summary>
@@ -227,7 +231,7 @@ public partial class AtlasService
         var outings = segments.Count > 1
             ? new Dictionary<Guid, List<SegmentState>> { [summary.Id] = segments }
             : new Dictionary<Guid, List<SegmentState>>();
-        var chosen = (await ChooseCoreAsync(owner, new[] { item }, outings, true, ct)).GetValueOrDefault(summary.Id);
+        var chosen = (await ChooseCoreAsync(owner, new[] { item }, outings, RouteLine.Detail, ct)).GetValueOrDefault(summary.Id);
         var description = await _routes.DescribeAsync(owner,
             new RouteRecord(summary.Id, summary.RecordUpdatedAt, summary.PointCount, summary.Type), ct);
         double? observed = null, inferred = null;

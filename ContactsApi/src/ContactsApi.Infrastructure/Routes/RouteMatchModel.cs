@@ -104,3 +104,31 @@ public static class RouteChoice
     public static List<RoutePiece> Pieces(MatchedRouteRow row) =>
         JsonSerializer.Deserialize<List<RoutePiece>>(row.Pieces, new JsonSerializerOptions(JsonSerializerDefaults.Web)) ?? new List<RoutePiece>();
 }
+
+/// <summary>
+/// The pre-simplified lines stored beside a matched route, so no read decodes or
+/// simplifies a full line: the list line has the recorded lines' budget, the density
+/// line what the density map draws
+/// </summary>
+public static class RouteLines
+{
+    /// <summary>Most vertices of a list line (as the recorded lines, Geo.Simplify's default)</summary>
+    public const int ListVertices = 400;
+
+    /// <summary>Most vertices of a density line</summary>
+    public const int DensityVertices = 80;
+
+    /// <summary>The density line's first tolerance in degrees (~30 m)</summary>
+    public const double DensityTolerance = 0.0003;
+
+    /// <summary>The list and density lines of a full line (Google encoded at precision 5)</summary>
+    public static (string List, string Density) Derive(string polyline)
+    {
+        var points = Atlas.AtlasService.DecodePolyline(polyline);
+        return (Atlas.Geo.EncodePolyline(Atlas.Geo.Simplify(points, ListVertices)), Density(points));
+    }
+
+    /// <summary>A line simplified for the density map</summary>
+    public static string Density(IReadOnlyList<(double Lat, double Lon)> points) =>
+        Atlas.Geo.EncodePolyline(Atlas.Geo.Simplify(points, DensityVertices, DensityTolerance));
+}

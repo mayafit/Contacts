@@ -154,6 +154,7 @@ public class RoutesScheduler : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await MigrateAsync(stoppingToken);
+        await FillLinesAsync(stoppingToken);
         while (!stoppingToken.IsCancellationRequested)
         {
             bool did;
@@ -600,6 +601,41 @@ public class RoutesScheduler : BackgroundService
                 _logger.LogWarning(ex, "Routes schema migration failed (attempt {Attempt}); retrying", attempt);
                 await Task.Delay(TimeSpan.FromSeconds(Math.Min(60, 5 * attempt)), ct);
             }
+        }
+    }
+
+    /// <summary>
+    /// Matched rows stored before the list and density lines existed get them now, 200
+    /// at a time with the batch pause between pages (until then reads fall back to the
+    /// full line). A failure is logged and left for the next start.
+    /// </summary>
+    private async Task FillLinesAsync(CancellationToken ct)
+    {
+        try
+        {
+            var total = 0;
+            while (!ct.IsCancellationRequested)
+            {
+                using var scope = _scopes.CreateScope();
+                var runner = scope.ServiceProvider.GetService<MatchRunner>();
+                var filled = runner == null ? 0 : await runner.FillLinesAsync(200, ct);
+                if (filled == 0)
+                {
+                    break;
+                }
+
+                total += filled;
+                await _pause.DelayAsync(Pause, ct);
+            }
+
+            if (total > 0)
+            {
+                _logger.LogInformation("Routes: stored the list and density lines of {Count} matched routes", total);
+            }
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            _logger.LogWarning(ex, "Routes: filling the list and density lines failed; reads use the full line meanwhile");
         }
     }
 

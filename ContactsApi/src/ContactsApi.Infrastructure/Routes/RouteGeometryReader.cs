@@ -1,12 +1,14 @@
 /**
  * @fileoverview IRouteGeometryReader over the routes schema (AD-34 rule 3): one
  * set-based query per read, by record ids, checked with the stored UpdatedAt, point
- * count and fused type; no points read and nothing hashed.
+ * count and fused type; only the stored line the read needs, no points read and
+ * nothing hashed.
  * @module ContactsApi.Infrastructure.Routes
  */
 using ContactsApi.Core.Interfaces;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Npgsql;
 
 namespace ContactsApi.Infrastructure.Routes;
 
@@ -36,7 +38,7 @@ public class RouteGeometryReader : IRouteGeometryReader
 
     /// <inheritdoc />
     public async Task<IReadOnlyDictionary<Guid, ChosenRoute>> ChooseAsync(string owner, IReadOnlyCollection<RouteRecord> records,
-        bool withPieces, CancellationToken ct = default)
+        RouteLine line, CancellationToken ct = default)
     {
         var chosen = new Dictionary<Guid, ChosenRoute>();
         if (!Enabled || records.Count == 0)
@@ -50,24 +52,10 @@ public class RouteGeometryReader : IRouteGeometryReader
             byId[r.Id] = r;
         }
 
-        var ids = byId.Keys.ToList();
         try
         {
-            // One query: the rows by (OwnerId, ActivityId), the decision by (OwnerId, SourceKey)
-            // and the Owner's settings as a scalar subquery (evaluated once)
-            var rows = await (
-                    from m in _db.MatchedRoutes.AsNoTracking()
-                    where m.OwnerId == owner && ids.Contains(m.ActivityId) && m.Polyline != null && m.Status != RouteStatuses.Failed
-                    join d in _db.Decisions.AsNoTracking().Where(d => d.OwnerId == owner) on m.SourceKey equals d.SourceKey into dj
-                    from d in dj.DefaultIfEmpty()
-                    select new
-                    {
-                        m.ActivityId, m.SourceUpdatedAt, m.SourcePointCount, m.FusedType, m.Status, m.Confidence, m.Polyline,
-                        Pieces = withPieces ? m.Pieces : null,
-                        m.MatchedDistanceM,
-                        Decision = d != null ? d.Kind : null,
-                        Settings = _db.Settings.Where(s => s.OwnerId == owner).Select(s => s.Json).FirstOrDefault()
-                    })
+            var rows = await _db.Database.SqlQueryRaw<ChoiceRow>(ChoiceSql(line),
+                    new NpgsqlParameter("owner", owner), new NpgsqlParameter("ids", byId.Keys.ToArray()))
                 .ToListAsync(ct);
             if (rows.Count == 0)
             {
@@ -81,17 +69,20 @@ public class RouteGeometryReader : IRouteGeometryReader
                 var row = new MatchedRouteRow
                 {
                     OwnerId = owner, ActivityId = m.ActivityId, SourceUpdatedAt = m.SourceUpdatedAt, SourcePointCount = m.SourcePointCount,
-                    FusedType = m.FusedType, Status = m.Status, Confidence = m.Confidence, Polyline = m.Polyline, Pieces = m.Pieces ?? "[]"
+                    FusedType = m.FusedType, Status = m.Status, Confidence = m.Confidence, Polyline = m.Line, Pieces = m.Pieces ?? "[]"
                 };
                 if (!RouteChoice.Drawable(row, owner, record.UpdatedAt, record.PointCount, record.FusedType, m.Decision, settings))
                 {
                     continue;
                 }
 
-                var pieces = withPieces
+                var pieces = line == RouteLine.Detail
                     ? RouteChoice.Pieces(row).Select(p => new RouteGeometryPiece(p.FromM, p.ToM, p.Kind)).ToList()
                     : null;
-                chosen[m.ActivityId] = new ChosenRoute(m.ActivityId, m.Polyline!, m.MatchedDistanceM, m.Confidence, pieces);
+                // A row stored before its simplified lines existed (until the service fills them):
+                // simplified here, so a read never sends more than its budget
+                var polyline = m.Coarse ? Coarsen(m.Line!, line) : m.Line!;
+                chosen[m.ActivityId] = new ChosenRoute(m.ActivityId, polyline, m.MatchedDistanceM, m.Confidence, pieces);
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -103,6 +94,57 @@ public class RouteGeometryReader : IRouteGeometryReader
         }
 
         return chosen;
+    }
+
+    /// <summary>
+    /// The read-time choice as one query: the rows by (OwnerId, ActivityId), the decision
+    /// by (OwnerId, SourceKey) and the Owner's settings as a scalar subquery (evaluated
+    /// once). Only the stored line the read needs is selected (COALESCE is lazy, so the
+    /// full line is read only for a row stored before its simplified lines), and the
+    /// pieces only for the detail view.
+    /// </summary>
+    internal static string ChoiceSql(RouteLine line)
+    {
+        var (lineSql, coarseSql, piecesSql) = line switch
+        {
+            RouteLine.Detail => (@"m.""Polyline""", "false", @"m.""Pieces""::text"),
+            RouteLine.List => (@"COALESCE(m.""ListPolyline"", m.""Polyline"")", @"m.""ListPolyline"" IS NULL", "NULL::text"),
+            _ => (@"COALESCE(m.""DensityPolyline"", m.""ListPolyline"", m.""Polyline"")", @"m.""DensityPolyline"" IS NULL", "NULL::text")
+        };
+        return $@"
+            SELECT m.""ActivityId"", m.""SourceUpdatedAt"", m.""SourcePointCount"", m.""FusedType"", m.""Status"", m.""Confidence"",
+                   {lineSql} AS ""Line"", {coarseSql} AS ""Coarse"", {piecesSql} AS ""Pieces"", m.""MatchedDistanceM"",
+                   d.""Kind"" AS ""Decision"",
+                   (SELECT s.""Json""::text FROM routes.settings s WHERE s.""OwnerId"" = @owner) AS ""Settings""
+              FROM routes.matched_routes m
+              LEFT JOIN routes.route_decisions d ON d.""OwnerId"" = @owner AND d.""SourceKey"" = m.""SourceKey""
+             WHERE m.""OwnerId"" = @owner AND m.""ActivityId"" = ANY(@ids)
+               AND m.""Polyline"" IS NOT NULL AND m.""Status"" <> '{RouteStatuses.Failed}'";
+    }
+
+    private static string Coarsen(string polyline, RouteLine line)
+    {
+        var points = Atlas.AtlasService.DecodePolyline(polyline);
+        return line == RouteLine.Density
+            ? RouteLines.Density(points)
+            : Atlas.Geo.EncodePolyline(Atlas.Geo.Simplify(points, RouteLines.ListVertices));
+    }
+
+    /// <summary>One row of the read-time choice</summary>
+    internal sealed class ChoiceRow
+    {
+        public Guid ActivityId { get; set; }
+        public DateTime SourceUpdatedAt { get; set; }
+        public int SourcePointCount { get; set; }
+        public string FusedType { get; set; } = string.Empty;
+        public string Status { get; set; } = string.Empty;
+        public double? Confidence { get; set; }
+        public string? Line { get; set; }
+        public bool Coarse { get; set; }
+        public string? Pieces { get; set; }
+        public double? MatchedDistanceM { get; set; }
+        public string? Decision { get; set; }
+        public string? Settings { get; set; }
     }
 
     /// <inheritdoc />

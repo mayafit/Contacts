@@ -281,6 +281,8 @@ public class MatchRunner
         row.Status = result.Status;
         row.Confidence = result.Confidence;
         row.Polyline = result.Polyline;
+        // Reads take a pre-simplified line (lists 400 vertices, density 80), never the full one
+        (row.ListPolyline, row.DensityPolyline) = result.Polyline != null ? RouteLines.Derive(result.Polyline) : (null, null);
         row.Pieces = JsonSerializer.Serialize(result.Pieces, Json);
         row.MatchedDistanceM = result.Polyline != null ? result.LengthM : null;
         row.MetricsAfter = JsonSerializer.Serialize(result.Metrics, Json);
@@ -314,6 +316,8 @@ public class MatchRunner
         row.Status = RouteStatuses.Failed;
         row.Confidence = null;
         row.Polyline = null;
+        row.ListPolyline = null;
+        row.DensityPolyline = null;
         row.Pieces = "[]";
         row.MatchedDistanceM = null;
         row.ComputedAt = Now;
@@ -387,6 +391,25 @@ public class MatchRunner
         row.Costing = costing;
         row.Engine = "valhalla";
         row.RuleVersion = RouteQuality.RuleVersion;
+    }
+
+    /// <summary>
+    /// Fills the list and density lines of rows stored before they existed, a page at a
+    /// time; returns how many rows it filled (0: none are left)
+    /// </summary>
+    public async Task<int> FillLinesAsync(int page, CancellationToken ct)
+    {
+        var rows = await _db.MatchedRoutes
+            .Where(m => m.Polyline != null && (m.ListPolyline == null || m.DensityPolyline == null))
+            .OrderBy(m => m.Id).Take(Math.Max(1, page)).ToListAsync(ct);
+        foreach (var row in rows)
+        {
+            (row.ListPolyline, row.DensityPolyline) = RouteLines.Derive(row.Polyline!);
+        }
+
+        await _db.SaveChangesAsync(ct);
+        _db.ChangeTracker.Clear();
+        return rows.Count;
     }
 
     /// <summary>Deletes the derived rows of records that no longer exist (decisions stay)</summary>

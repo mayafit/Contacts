@@ -81,9 +81,9 @@ public class RouteGeometryDbTests
     private static async Task<string> FusedTypeAsync(Ctx c, AtlasActivity a) =>
         await c.Atlas.Fusions.AsNoTracking().Where(f => f.ActivityId == (a.ClusterId ?? a.Id)).Select(f => f.Type).FirstOrDefaultAsync() ?? a.Type;
 
-    private static async Task MatchAsync(Ctx c, AtlasActivity a, string owner, Action<MatchedRouteRow>? change = null)
+    private static async Task MatchAsync(Ctx c, AtlasActivity a, string owner, Action<MatchedRouteRow>? change = null, string? road = null)
     {
-        var road = Road(a.MinLat ?? 32.0);
+        road ??= Road(a.MinLat ?? 32.0);
         var length = AtlasService.DecodePolyline(road).Zip(AtlasService.DecodePolyline(road).Skip(1))
             .Sum(p => Geo.Haversine(p.First.Lat, p.First.Lon, p.Second.Lat, p.Second.Lon));
         var row = new MatchedRouteRow
@@ -98,6 +98,8 @@ public class RouteGeometryDbTests
             }, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
             RuleVersion = "routes.v1"
         };
+        // As the service stores it: the full line and its list and density lines
+        (row.ListPolyline, row.DensityPolyline) = RouteLines.Derive(road);
         change?.Invoke(row);
         c.Routes.MatchedRoutes.Add(row);
         await c.Routes.SaveChangesAsync();
@@ -136,11 +138,17 @@ public class RouteGeometryDbTests
 
         c.AtlasCount.Count = 0;
         c.RoutesCount.Count = 0;
+        c.RoutesCount.Queries.Clear();
         var on = await Service(c).SearchAsync(owner, query);
         // The query-count evidence: the choice adds exactly one set-based routes query
         _out.WriteLine($"search: atlas commands {atlasOff} without routes, {c.AtlasCount.Count} with; routes commands {c.RoutesCount.Count}");
         Assert.Equal(atlasOff, c.AtlasCount.Count);
         Assert.Equal(1, c.RoutesCount.Count);
+        // The projection: the stored list line only, never the pieces or the density line
+        var sql = Assert.Single(c.RoutesCount.Queries);
+        Assert.Contains(@"m.""ListPolyline""", sql);
+        Assert.DoesNotContain(@"m.""Pieces""", sql);
+        Assert.DoesNotContain(@"m.""DensityPolyline""", sql);
 
         var byId = on.Activities.ToDictionary(a => a.Id);
         var drawn = byId[records[0].Id];
@@ -183,8 +191,67 @@ public class RouteGeometryDbTests
         Assert.Equal(20, on.Activities.Count(a => a.Geometry == RouteGeometryKinds.Matched));
 
         c.RoutesCount.Count = 0;
+        c.RoutesCount.Queries.Clear();
         await Service(c).DensityAsync(owner, new AtlasQuery { Visits = false });
         Assert.Equal(1, c.RoutesCount.Count);
+        // The projection: the stored density line, never the pieces
+        var sql = Assert.Single(c.RoutesCount.Queries);
+        Assert.Contains(@"m.""DensityPolyline""", sql);
+        Assert.DoesNotContain(@"m.""Pieces""", sql);
+        Assert.DoesNotContain(@"m.""ListPolyline"" IS NULL", sql);
+    }
+
+    /// <summary>A winding "road" of <paramref name="n"/> vertices (nothing simplifies it away)</summary>
+    private static string LongRoad(double lat0, int n) =>
+        Geo.EncodePolyline(Enumerable.Range(0, n).Select(i => (lat0 + i * 0.00005, 34.85 + Math.Sin(i * 0.7) * 0.0004)));
+
+    [Fact]
+    public async Task Search_sends_matched_lines_within_the_recorded_budget_and_the_detail_the_full_line()
+    {
+        await using var c = await DbAsync();
+        if (c == null)
+        {
+            return;
+        }
+
+        var owner = "geom-budget-" + Guid.NewGuid();
+        var records = await SeedAsync(c, Service(c), owner, 2);
+        var full = LongRoad(32.0, 1000);
+        await MatchAsync(c, records[0], owner, road: full);
+        // Stored before the simplified lines existed: still within the budget
+        await MatchAsync(c, records[1], owner, r => (r.ListPolyline, r.DensityPolyline) = (null, null), LongRoad(32.1, 1000));
+
+        var on = await Service(c).SearchAsync(owner, new AtlasQuery { Visits = false });
+        Assert.Equal(2, on.Activities.Count(a => a.Geometry == RouteGeometryKinds.Matched));
+        Assert.All(on.Activities, a => Assert.InRange(AtlasService.DecodePolyline(a.Polyline!).Count, 2, RouteLines.ListVertices));
+        Assert.Equal(RouteLines.Derive(full).List, on.Activities.Single(a => a.Id == records[0].Id).Polyline);
+
+        c.RoutesCount.Queries.Clear();
+        var detail = await Service(c).GetActivityAsync(owner, records[0].Id);
+        Assert.Equal(full, detail.Summary.Polyline);
+        Assert.Contains(c.RoutesCount.Queries, q => q.Contains(@"m.""Pieces""") && q.Contains("matched_routes"));
+    }
+
+    [Fact]
+    public async Task Density_draws_the_stored_density_line_as_it_is()
+    {
+        await using var c = await DbAsync();
+        if (c == null)
+        {
+            return;
+        }
+
+        var owner = "geom-density-" + Guid.NewGuid();
+        var records = await SeedAsync(c, Service(c), owner, 2);
+        // A marker density line: drawn verbatim, so it was not decoded and simplified again
+        var marker = Geo.EncodePolyline(new[] { (32.0, 34.8), (32.0001, 34.8001), (32.0002, 34.8) });
+        await MatchAsync(c, records[0], owner, r => r.DensityPolyline = marker, LongRoad(32.0, 1000));
+        await MatchAsync(c, records[1], owner, r => r.DensityPolyline = null, LongRoad(32.1, 1000));
+
+        var density = await Service(c).DensityAsync(owner, new AtlasQuery { Visits = false });
+
+        Assert.Contains(density.Tracks, t => t.Polyline == marker);
+        Assert.All(density.Tracks, t => Assert.InRange(AtlasService.DecodePolyline(t.Polyline).Count, 2, RouteLines.DensityVertices));
     }
 
     [Fact]

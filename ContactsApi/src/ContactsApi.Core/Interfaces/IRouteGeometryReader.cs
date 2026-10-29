@@ -13,6 +13,22 @@ namespace ContactsApi.Core.Interfaces;
 /// <param name="FusedType">The fused type (the cluster's), else the record's own</param>
 public record RouteRecord(Guid Id, DateTime UpdatedAt, int PointCount, string FusedType);
 
+/// <summary>
+/// Which stored matched line a read needs. Each is stored pre-simplified by the
+/// route-quality service, so a read decodes and simplifies nothing.
+/// </summary>
+public enum RouteLine
+{
+    /// <summary>The full line (at most 1,000 vertices) with its pieces: the detail view</summary>
+    Detail,
+
+    /// <summary>At most 400 vertices, the recorded lines' budget: lists, search, the map</summary>
+    List,
+
+    /// <summary>At most 80 vertices at ~30 m: the density map</summary>
+    Density
+}
+
 /// <summary>One piece of a matched line, in metres along it: observed, inferred or gap</summary>
 public record RouteGeometryPiece(double FromM, double ToM, string Kind);
 
@@ -40,12 +56,13 @@ public interface IRouteGeometryReader
 
     /// <summary>
     /// The matched lines that may be drawn for these records, by record id. One
-    /// set-based query for the whole list, whatever its size; no points are read.
-    /// Records without a drawable match are left out. Never throws for a missing or
-    /// unreachable routes schema: the records are then drawn as recorded.
+    /// set-based query for the whole list, whatever its size, reading only the stored
+    /// line <paramref name="line"/> asks for; no points are read. Records without a
+    /// drawable match are left out. Never throws for a missing or unreachable routes
+    /// schema: the records are then drawn as recorded.
     /// </summary>
-    /// <param name="withPieces">Include the pieces (the detail view); lists and the density map leave them out</param>
-    Task<IReadOnlyDictionary<Guid, ChosenRoute>> ChooseAsync(string owner, IReadOnlyCollection<RouteRecord> records, bool withPieces,
+    /// <param name="line">The line to read; only <see cref="RouteLine.Detail"/> carries the pieces</param>
+    Task<IReadOnlyDictionary<Guid, ChosenRoute>> ChooseAsync(string owner, IReadOnlyCollection<RouteRecord> records, RouteLine line,
         CancellationToken ct = default);
 
     /// <summary>The quality, the stored match and the Owner's decision of one record; null when unknown</summary>

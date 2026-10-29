@@ -86,7 +86,7 @@ public class RoutesOptions
     /// <summary>How long an open breaker pauses all matching, in minutes</summary>
     public double BreakerPauseMinutes { get; set; } = 10;
 
-    /// <summary>Most vertices of a stored matched line (AD-34 rule 1)</summary>
+    /// <summary>Most vertices of a stored full matched line, read only by the detail view (AD-34 rule 1); lists and the density map read the 400- and 80-vertex lines stored beside it</summary>
     public int MaxStoredVertices { get; set; } = 1000;
 
     /// <summary>Days between orphan sweeps of an Owner (AD-34 rule 7: weekly)</summary>

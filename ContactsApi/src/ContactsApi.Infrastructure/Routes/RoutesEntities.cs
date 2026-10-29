@@ -62,8 +62,12 @@ public class MatchedRouteRow
     /// <summary>matched, low_confidence, failed</summary>
     public string Status { get; set; } = "failed";
     public double? Confidence { get; set; }
-    /// <summary>Google encoded at precision 5</summary>
+    /// <summary>Google encoded at precision 5: the full line (at most MaxStoredVertices), for the detail view</summary>
     public string? Polyline { get; set; }
+    /// <summary>The line simplified to the recorded lines' budget (400 vertices), for lists and the map</summary>
+    public string? ListPolyline { get; set; }
+    /// <summary>The line simplified for the density map (80 vertices, ~30 m)</summary>
+    public string? DensityPolyline { get; set; }
     /// <summary>JSON: [{fromM, toM, kind: observed / inferred / gap}]</summary>
     public string Pieces { get; set; } = "[]";
     public double? MatchedDistanceM { get; set; }
