@@ -45,7 +45,7 @@ public class RoutesGapFillTests
 
     /// <summary>Plans, answers every call, fills the stretches with <paramref name="engine"/>, assembles</summary>
     private static async Task<MatchResult> MatchAsync(List<RoutePoint> points, Func<TraceCall, JsonDocument?> answer, RouteOnlyEngine engine,
-        Action<RoutesOptions>? options = null, EngineBreaker? breaker = null, string source = "google-timeline")
+        Action<RoutesOptions>? options = null, EngineBreaker? breaker = null, string source = "google-timeline", Func<bool>? yield = null)
     {
         var o = new RoutesOptions();
         options?.Invoke(o);
@@ -62,7 +62,7 @@ public class RoutesGapFillTests
         var sk = RouteAssembler.Build(points, plan, answers, profile);
         breaker ??= new EngineBreaker(Options.Create(o), TimeProvider.System);
         var fills = await GapFiller.FillAsync(RouteAssembler.Stretches(sk, s.GapFill), "auto", s.GapFill, profile.MaxSpeedKmh, engine,
-            ex => breaker.Failure(ex.Message) | ex.Unreachable, breaker.Success, default);
+            ex => breaker.Failure(ex.Message) | ex.Unreachable, breaker.Success, default, yield);
         return RouteAssembler.Assemble(points, sk, fills, profile, "auto", s.MaxStoredVertices, s.AnchorToleranceFor(source, "auto"),
             s.GapFill.RoutedOnlyWeight);
     }
@@ -138,17 +138,84 @@ public class RoutesGapFillTests
     }
 
     [Fact]
-    public async Task A_leg_touching_an_unmatched_point_is_bridged_between_the_anchors_around_it()
+    public async Task A_leg_skipping_an_unmatched_point_on_a_continuous_shape_keeps_the_shape_and_asks_no_route()
     {
         var vertices = Enumerable.Range(0, 10).Select(i => i * 2).ToList();
         var labels = vertices.Select((v, i) => i == 5 ? new SyntheticTrace.Label("unmatched", v) : M(v)).ToList();
         var engine = new RouteOnlyEngine();
         var r = await MatchAsync(SyntheticTrace.Points(vertices), _ => SyntheticTrace.Answer(19, labels), engine);
 
-        var at = RouteOnlyEngine.Locations(Assert.Single(engine.Routes));
-        Assert.Equal((SyntheticTrace.Vertex(8).Lat, SyntheticTrace.Vertex(12).Lat), (Math.Round(at[0].Lat, 6), Math.Round(at[1].Lat, 6)));
+        Assert.Empty(engine.Routes);
+        Assert.Equal((0, PieceKinds.Observed), (r.Metrics.Stretches, Assert.Single(r.Pieces).Kind));
         Assert.Equal((1.0, 0.9), (r.Metrics.Coverage, r.Metrics.AnchorQuality));
         Assert.Equal((0.9, RouteStatuses.Matched), (r.Confidence, r.Status));
+    }
+
+    [Fact]
+    public async Task A_leg_skipping_an_unmatched_point_across_a_break_is_routed_between_the_anchors_around_it()
+    {
+        var vertices = Enumerable.Range(0, 10).Select(i => i * 2).ToList();
+        var labels = vertices.Select((v, i) => i == 5 ? new SyntheticTrace.Label("unmatched", v) { End = true } : M(v)).ToList();
+        var engine = new RouteOnlyEngine();
+        var r = await MatchAsync(SyntheticTrace.Points(vertices), _ => SyntheticTrace.Answer(19, labels), engine);
+
+        var at = RouteOnlyEngine.Locations(Assert.Single(engine.Routes));
+        Assert.Equal((SyntheticTrace.Vertex(8).Lat, SyntheticTrace.Vertex(12).Lat), (Math.Round(at[0].Lat, 6), Math.Round(at[1].Lat, 6)));
+        Assert.Equal((1, 1.0), (r.Metrics.Filled, r.Metrics.Coverage));
+    }
+
+    /// <summary>A drive of <paramref name="n"/> + 1 anchors on one call, the engine breaking every leg; leg k is k + 1 vertices long</summary>
+    private static (List<RoutePoint> Points, Func<TraceCall, JsonDocument?> Answer) BrokenEveryLeg(int n)
+    {
+        var vertices = new List<int> { 0 };
+        for (var k = 0; k < n; k++)
+        {
+            vertices.Add(vertices[^1] + k + 1);
+        }
+
+        // 60 s a leg; each anchor ends one route and begins the next
+        var points = At(vertices, vertices.Select((_, i) => i * 60.0).ToList());
+        var labels = vertices.Select((v, i) => M(v) with { Begin = i > 0 && i < n, End = i > 0 && i < n }).ToList();
+        return (points, call => SyntheticTrace.Answer(vertices[^1] + 1, labels.Skip(call.Start).Take(call.Count), perEdge: 1));
+    }
+
+    [Fact]
+    public async Task An_anchored_drive_routes_at_most_the_cap_longest_stretches_first_and_marks_the_rest_skipped()
+    {
+        var (points, answer) = BrokenEveryLeg(25);
+        var engine = new RouteOnlyEngine();
+        var r = await MatchAsync(points, answer, engine);
+
+        Assert.Equal(25, r.Metrics.Stretches);
+        Assert.Equal(20, engine.Routes.Count);
+        Assert.Equal((20, 5, 0), (r.Metrics.Filled, r.Metrics.FillSkipped, r.Metrics.FillTimeouts));
+        // The longest first: the first five legs (1 to 5 vertices) are the ones left
+        var routed = engine.Routes.Select(q => Math.Round(RouteOnlyEngine.Locations(q)[0].Lat, 6)).ToList();
+        Assert.DoesNotContain(Math.Round(SyntheticTrace.Vertex(0).Lat, 6), routed);
+        Assert.Equal(Math.Round(SyntheticTrace.Vertex(300).Lat, 6), routed[0]);
+        Assert.Contains(r.Pieces, p => p.Kind == PieceKinds.Gap);
+
+        var three = await MatchAsync(points, answer, new RouteOnlyEngine(), o => o.GapFillMaxCallsPerDrive = 3);
+        Assert.Equal((3, 22), (three.Metrics.Filled, three.Metrics.FillSkipped));
+    }
+
+    [Fact]
+    public async Task Interactive_work_stops_a_drive_s_filling_between_calls_and_defers_the_rest()
+    {
+        var (points, answer) = BrokenEveryLeg(6);
+        var engine = new RouteOnlyEngine();
+        var waiting = false;
+        engine.Answer = q =>
+        {
+            waiting = engine.Routes.Count >= 2;
+            return SyntheticTrace.RouteAnswer(RouteOnlyEngine.Locations(q), 50);
+        };
+
+        var r = await MatchAsync(points, answer, engine, yield: () => waiting);
+
+        Assert.Equal(2, engine.Routes.Count);
+        Assert.Equal((2, 4, 0), (r.Metrics.Filled, r.Metrics.FillDeferred, r.Metrics.FillSkipped));
+        Assert.NotNull(r.Polyline);
     }
 
     [Fact]
@@ -240,9 +307,9 @@ public class RoutesGapFillTests
     }
 
     [Fact]
-    public async Task A_route_timeout_leaves_a_gap_counts_for_the_breaker_and_skips_the_rest_of_the_record()
+    public async Task A_lone_route_timeout_leaves_a_gap_and_filling_goes_on_without_the_breaker()
     {
-        // Two stretches: the cut gap and an engine break after it
+        // Two stretches: the cut gap and an engine break after it; the long one times out
         var (vertices, points) = CutGapDrive();
         Func<int, SyntheticTrace.Label> label = i => i switch
         {
@@ -250,17 +317,175 @@ public class RoutesGapFillTests
             7 => M(vertices[i]) with { End = true },
             _ => M(vertices[i])
         };
-        var engine = new RouteOnlyEngine { Answer = _ => throw new EngineUnavailableException("the engine did not answer within 15 s", true) };
+        var engine = new RouteOnlyEngine();
+        engine.Answer = q => engine.Routes.Count == 1
+            ? throw new EngineUnavailableException("the engine did not answer within 5 s", true)
+            : SyntheticTrace.RouteAnswer(RouteOnlyEngine.Locations(q), 50);
+        var o = new RoutesOptions { BreakerFailures = 1 };
+        var breaker = new EngineBreaker(Options.Create(o), TimeProvider.System);
+
+        var r = await MatchAsync(points, PerCall(vertices, label), engine, x => x.BreakerFailures = 1, breaker);
+
+        Assert.Equal(2, engine.Routes.Count);
+        Assert.Equal((2, 1, 1, 0), (r.Metrics.Stretches, r.Metrics.Filled, r.Metrics.FillTimeouts, r.Metrics.FillDeferred));
+        Assert.NotNull(r.Polyline); // the record is stored, not failed for the engine
+        Assert.Contains(r.Pieces, p => p.Kind == PieceKinds.Gap);
+        Assert.Equal((0, false), (breaker.ConsecutiveFailures, breaker.IsOpen));
+    }
+
+    [Fact]
+    public async Task Route_timeouts_in_a_row_count_once_for_the_breaker_and_stop_the_record_s_filling()
+    {
+        var (points, answer) = BrokenEveryLeg(6);
+        var engine = new RouteOnlyEngine { Answer = _ => throw new EngineUnavailableException("the engine did not answer within 5 s", true) };
         var o = new RoutesOptions { BreakerFailures = 3 };
         var breaker = new EngineBreaker(Options.Create(o), TimeProvider.System);
 
-        var r = await MatchAsync(points, PerCall(vertices, label), engine, x => x.BreakerFailures = 3, breaker);
+        var r = await MatchAsync(points, answer, engine, x => x.BreakerFailures = 3, breaker);
 
-        Assert.Single(engine.Routes);
-        Assert.Equal((2, 0, 2), (r.Metrics.Stretches, r.Metrics.Filled, r.Metrics.FillTimeouts));
-        Assert.NotNull(r.Polyline); // the record is stored, not failed for the engine
-        Assert.Contains(r.Pieces, p => p.Kind == PieceKinds.Gap);
+        Assert.Equal(3, engine.Routes.Count);
+        Assert.Equal((0, 3, 3), (r.Metrics.Filled, r.Metrics.FillTimeouts, r.Metrics.FillDeferred));
         Assert.Equal((1, false), (breaker.ConsecutiveFailures, breaker.IsOpen));
+        Assert.NotNull(r.Polyline);
+    }
+
+    [Fact]
+    public async Task A_route_that_turns_back_near_an_end_is_rejected_and_a_straight_one_accepted()
+    {
+        var (vertices, points) = CutGapDrive();
+        // Leaves the anchor the wrong way for 200 m, turns back, then drives on
+        var engine = new RouteOnlyEngine
+        {
+            Answer = q =>
+            {
+                var at = RouteOnlyEngine.Locations(q);
+                var back = (at[0].Lat - 0.0018, at[0].Lon);
+                var straight = SyntheticTrace.RouteAnswer(at, 50);
+                var fill = GapFiller.Parse(straight.RootElement)!;
+                var shape = new List<(double Lat, double Lon)> { at[0], back }.Concat(fill.Shape).ToList();
+                return JsonDocument.Parse(new JsonObject
+                {
+                    ["trip"] = new JsonObject
+                    {
+                        ["legs"] = new JsonArray(new JsonObject { ["shape"] = SyntheticTrace.Encode(shape, 6) }),
+                        ["summary"] = new JsonObject { ["length"] = (fill.LengthM + 400) / 1000, ["time"] = fill.TimeS + 30 }
+                    }
+                }.ToJsonString());
+            }
+        };
+        var r = await MatchAsync(points, PerCall(vertices), engine);
+
+        Assert.Equal((0, 1), (r.Metrics.Filled, r.Metrics.FillRejectedLength));
+        Assert.Contains(r.Pieces, p => p.Kind == PieceKinds.Gap);
+
+        var ok = await MatchAsync(points, PerCall(vertices), new RouteOnlyEngine());
+        Assert.Equal(1, ok.Metrics.Filled);
+    }
+
+    [Fact]
+    public void A_reversal_is_found_near_either_end_but_not_in_the_middle_or_through_a_roundabout()
+    {
+        List<(double Lat, double Lon)> Line(params double[] lats) => lats.Select(l => (31.5 + l, 34.8)).ToList();
+        Assert.False(GapFiller.Reverses(Line(0, 0.01, 0.02)));
+        Assert.True(GapFiller.Reverses(Line(0, -0.002, 0.02))); // 220 m back at the start
+        Assert.True(GapFiller.Reverses(Line(0, 0.02, 0.018))); // 220 m back at the end
+        Assert.False(GapFiller.Reverses(Line(0, 0.01, 0.005, 0.02))); // a long way round in the middle
+        Assert.False(GapFiller.Reverses(Line(0, -0.005, 0.02))); // 550 m back is not near the end
+        // A 30 m roundabout passed straight through, 100 m after the start
+        var round = new List<(double Lat, double Lon)> { (31.5, 34.8), (31.5009, 34.8) };
+        for (var a = -90; a <= 90; a += 15)
+        {
+            var rad = a * Math.PI / 180;
+            round.Add((31.50105 + 0.000135 * Math.Sin(rad), 34.8 + 0.000158 * Math.Cos(rad)));
+        }
+
+        round.Add((31.51, 34.8));
+        Assert.False(GapFiller.Reverses(round));
+    }
+
+    [Fact]
+    public async Task Each_anchor_carries_the_matched_shape_s_heading_to_the_route()
+    {
+        var (vertices, points) = CutGapDrive();
+        var engine = new RouteOnlyEngine();
+        await MatchAsync(points, PerCall(vertices), engine);
+
+        var locations = Assert.Single(engine.Routes)["locations"]!.AsArray();
+        // The synthetic road runs due north
+        Assert.Equal((0.0, 45.0), ((double)locations[0]!["heading"]!, (double)locations[0]!["heading_tolerance"]!));
+        Assert.Equal(0.0, (double)locations[1]!["heading"]!);
+
+        var off = await MatchAsync(points, PerCall(vertices), engine = new RouteOnlyEngine(), o => o.GapFillHeadingTolerance = 0);
+        Assert.Null(Assert.Single(engine.Routes)["locations"]!.AsArray()[0]!["heading"]);
+        Assert.Equal(1, off.Metrics.Filled);
+    }
+
+    [Fact]
+    public async Task A_filled_detour_does_not_count_against_the_observed_part_s_plausibility()
+    {
+        var (vertices, points) = CutGapDrive();
+        // The road round the jump goes 3 km east, north, and 3 km back west (within 2.5 × + slack)
+        var engine = new RouteOnlyEngine
+        {
+            Answer = q =>
+            {
+                var at = RouteOnlyEngine.Locations(q);
+                const double east = 3000 / 94900.0;
+                var shape = new List<(double Lat, double Lon)> { at[0], (at[0].Lat, at[0].Lon + east), (at[1].Lat, at[1].Lon + east), at[1] };
+                var lengthM = Enumerable.Range(1, 3).Sum(i => Geo.Haversine(shape[i - 1].Lat, shape[i - 1].Lon, shape[i].Lat, shape[i].Lon));
+                return JsonDocument.Parse(new JsonObject
+                {
+                    ["trip"] = new JsonObject
+                    {
+                        ["legs"] = new JsonArray(new JsonObject { ["shape"] = SyntheticTrace.Encode(shape, 6) }),
+                        ["summary"] = new JsonObject { ["length"] = lengthM / 1000, ["time"] = lengthM / (120 / 3.6) }
+                    }
+                }.ToJsonString());
+            }
+        };
+        var r = await MatchAsync(points, PerCall(vertices), engine);
+
+        Assert.Equal(1, r.Metrics.Filled);
+        Assert.True(r.LengthM / r.Metrics.TrackM > 1.7, $"{r.LengthM} / {r.Metrics.TrackM}");
+        Assert.Equal((1.0, 1.0), (r.Metrics.LengthRatio, r.Metrics.Plausibility));
+        Assert.Equal(RouteStatuses.Matched, r.Status);
+    }
+
+    [Fact]
+    public async Task A_single_anchor_scores_no_lower_than_none()
+    {
+        // Cut gaps all round; the 5-point middle part matches only its first point
+        var vertices = new List<int> { 0, 55, 110, 112, 114, 116, 118, 173 };
+        var points = At(vertices, new double[] { 0, 300, 600, 660, 720, 780, 840, 1140 });
+        Func<TraceCall, JsonDocument?> one = PerCall(vertices, i => i == 2 ? M(vertices[i]) : new SyntheticTrace.Label("unmatched", vertices[i]));
+        var single = await MatchAsync(points, one, new RouteOnlyEngine { Answer = q => SyntheticTrace.RouteAnswer(RouteOnlyEngine.Locations(q), 90) });
+        var none = await MatchAsync(points, _ => null, new RouteOnlyEngine { Answer = q => SyntheticTrace.RouteAnswer(RouteOnlyEngine.Locations(q), 90) });
+
+        Assert.Equal((1, 5), (single.Metrics.Anchors, single.Metrics.PointsSent));
+        Assert.False(single.Metrics.RoutedOnly);
+        Assert.True(none.Metrics.RoutedOnly);
+        // Not 1/5: the accepted routes carry the routed-only weight
+        Assert.Equal(0.6, single.Metrics.AnchorQuality);
+        Assert.Equal(0.6, none.Metrics.AnchorQuality);
+    }
+
+    [Fact]
+    public async Task A_routed_only_drive_joins_a_point_far_off_the_road_by_a_gap()
+    {
+        var vertices = new List<int> { 0, 10, 20, 30, 40 };
+        var points = SyntheticTrace.Points(vertices, 60);
+        // The road runs 50 m east of the recorded points
+        var engine = new RouteOnlyEngine
+        {
+            Answer = q => SyntheticTrace.RouteAnswer(RouteOnlyEngine.Locations(q).Select(p => (p.Lat, p.Lon + 0.00053)).ToList(), 50)
+        };
+        var r = await MatchAsync(points, _ => null, engine);
+
+        Assert.True(r.Metrics.RoutedOnly);
+        Assert.Equal(4, r.Metrics.Filled);
+        Assert.Contains(r.Pieces, p => p.Kind == PieceKinds.Gap);
+        Assert.InRange(r.Metrics.GapM, 300, 500); // 8 connectors of ~50 m
+        Assert.Contains(r.Pieces, p => p.Kind == PieceKinds.Inferred);
     }
 
     [Fact]
@@ -355,9 +580,14 @@ public class RoutesGapFillTests
     [Theory]
     [InlineData(240, 5000, 200, 5100, GapFiller.Filled)]
     [InlineData(240, 5000, 505, 5100, GapFiller.RejectedTime)] // over 240 × 1.6 + 120
-    [InlineData(1200, 5000, 290, 5100, GapFiller.RejectedTime)] // under 1200 × 0.25: the trip went elsewhere
+    [InlineData(1200, 5000, 290, 5100, GapFiller.Filled)] // a jam or a stop: over 1200 × 0.1
+    [InlineData(1200, 5000, 110, 5100, GapFiller.RejectedTime)] // under 1200 × 0.1: the trip went elsewhere
     [InlineData(120, 300, 20, 400, GapFiller.Filled)] // short elapsed: no lower limit
     [InlineData(240, 1000, 100, 3100, GapFiller.RejectedLength)] // over 2.5 × 1000 + 500
+    [InlineData(60, 100, 30, 440, GapFiller.Filled)] // a short stretch: 2.5 × 100 + max(100, 200)
+    [InlineData(60, 100, 30, 460, GapFiller.RejectedLength)]
+    [InlineData(60, 30, 30, 170, GapFiller.Filled)] // 2.5 × 30 + 100
+    [InlineData(60, 30, 30, 180, GapFiller.RejectedLength)]
     [InlineData(4000, 59000, 2400, 61000, GapFiller.TooLong)] // over the 60 km cap
     public void The_acceptance_rule(double elapsedS, double straightM, double routeS, double routeM, string result)
     {

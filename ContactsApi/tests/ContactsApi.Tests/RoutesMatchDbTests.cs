@@ -466,11 +466,12 @@ public class RoutesMatchDbTests
     }
 
     [Fact]
-    public async Task A_route_timeout_while_filling_a_gap_stores_the_record_with_its_gap()
+    public async Task A_route_timeout_while_filling_a_gap_stores_the_record_with_its_gap_and_retries_it_a_bounded_number_of_times()
     {
         var backend = new FakeRoutesBackend();
-        var engine = new EchoEngine { FailRoute = _ => new EngineUnavailableException("the engine did not answer within 15 s", true) };
-        await using var sp = Services(backend, engine);
+        var engine = new EchoEngine { FailRoute = _ => new EngineUnavailableException("the engine did not answer within 5 s", true) };
+        var clock = new EngineClientTests.Clock();
+        await using var sp = Services(backend, engine, clock);
         if (sp == null)
         {
             return;
@@ -485,16 +486,26 @@ public class RoutesMatchDbTests
         }
 
         await AssessAllAsync(sp, owner);
-        var r = await PendingBatchAsync(sp, owner);
+        // The first match and three retries, each one minute (the first backoff step) later
+        foreach (var attempt in new[] { 1, 2, 3, 4 })
+        {
+            var r = await PendingBatchAsync(sp, owner);
+            Assert.Equal((1, 0), (r.Processed, r.Tally.Retrying));
+            Assert.Equal(attempt, engine.Routes.Count);
+            var row = await Db(sp).MatchedRoutes.AsNoTracking().SingleAsync(m => m.OwnerId == owner);
+            Assert.Equal((attempt, attempt <= 3 ? clock.Now.UtcDateTime.AddMinutes(1) : (DateTime?)null), (row.Attempts, row.NextAttemptAt));
+            Assert.NotNull(row.Polyline);
+            Assert.Matches(@"""kind"":\s*""gap""", row.Pieces);
+            Assert.Matches(@"""fillTimeouts"":\s*1\b", row.MetricsAfter);
+            // A lone timeout is not the engine's: the breaker does not count it
+            Assert.Equal(0, sp.GetRequiredService<EngineBreaker>().ConsecutiveFailures);
+            Assert.Equal(0, (await PendingBatchAsync(sp, owner)).Seen);
+            clock.Now = clock.Now.AddMinutes(1);
+        }
 
-        Assert.Equal((2, 1), (engine.Requests.Count, engine.Routes.Count));
-        Assert.Equal(0, r.Tally.Retrying);
-        var row = await Db(sp).MatchedRoutes.AsNoTracking().SingleAsync(m => m.OwnerId == owner);
-        Assert.Equal((0, (DateTime?)null), (row.Attempts, row.NextAttemptAt));
-        Assert.NotNull(row.Polyline);
-        Assert.Matches(@"""kind"":\s*""gap""", row.Pieces);
-        Assert.Matches(@"""fillTimeouts"":\s*1\b", row.MetricsAfter);
-        Assert.Equal(1, sp.GetRequiredService<EngineBreaker>().ConsecutiveFailures);
+        // After the last retry the result is kept: nothing waits
+        clock.Now = clock.Now.AddDays(1);
+        Assert.Equal(0, (await PendingBatchAsync(sp, owner)).Seen);
 
         // With the engine answering, the same jump is routed and the record is matched
         engine.FailRoute = _ => null;
@@ -504,8 +515,51 @@ public class RoutesMatchDbTests
                 () => false, default);
         }
 
+        var done = await Db(sp).MatchedRoutes.AsNoTracking().SingleAsync(m => m.OwnerId == owner);
+        Assert.DoesNotMatch(@"""kind"":\s*""gap""", done.Pieces);
+        Assert.Equal((RouteStatuses.Matched, 0, (DateTime?)null), (done.Status, done.Attempts, done.NextAttemptAt));
+    }
+
+    [Fact]
+    public async Task Interactive_work_during_filling_stores_the_record_and_retries_it_soon()
+    {
+        var backend = new FakeRoutesBackend();
+        var engine = new EchoEngine();
+        var clock = new EngineClientTests.Clock();
+        await using var sp = Services(backend, engine, clock);
+        if (sp == null)
+        {
+            return;
+        }
+
+        var owner = "fill-yield-" + Guid.NewGuid();
+        var drive = backend.Add(owner, 1, 20)[0];
+        // Two 5.6 km jumps (cut before the calls): two stretches
+        for (var k = 7; k < drive.Points.Count; k++)
+        {
+            var jumps = k >= 14 ? 2 : 1;
+            drive.Points[k] = drive.Points[k] with { Lat = drive.Points[k].Lat + 0.05 * jumps, T = drive.Points[k].T.AddSeconds(240 * jumps) };
+        }
+
+        await AssessAllAsync(sp, owner);
+        var waiting = false;
+        engine.FailRoute = _ =>
+        {
+            waiting = true;
+            return null;
+        };
+        await PendingBatchAsync(sp, owner, yield: () => waiting);
+
+        Assert.Single(engine.Routes);
+        var row = await Db(sp).MatchedRoutes.AsNoTracking().SingleAsync(m => m.OwnerId == owner);
+        Assert.Equal((0, (DateTime?)clock.Now.UtcDateTime.AddMinutes(1)), (row.Attempts, row.NextAttemptAt));
+        Assert.Matches(@"""fillDeferred"":\s*1\b", row.MetricsAfter);
+        Assert.NotNull(row.Polyline);
+
+        clock.Now = clock.Now.AddMinutes(1);
+        await PendingBatchAsync(sp, owner);
         row = await Db(sp).MatchedRoutes.AsNoTracking().SingleAsync(m => m.OwnerId == owner);
-        Assert.DoesNotMatch(@"""kind"":\s*""gap""", row.Pieces);
-        Assert.Equal(RouteStatuses.Matched, row.Status);
+        Assert.Equal((RouteStatuses.Matched, (DateTime?)null), (row.Status, row.NextAttemptAt));
+        Assert.Matches(@"""filled"":\s*2\b", row.MetricsAfter);
     }
 }

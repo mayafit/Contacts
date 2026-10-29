@@ -25,10 +25,10 @@ public record MatchMetrics
     /// <summary>Share of the stored line that is observed or inferred (gap length counts against it)</summary>
     public double Coverage { get; init; }
 
-    /// <summary>Points sent that matched within the anchor tolerance, over points sent (routed-only drives: the routed-only weight)</summary>
+    /// <summary>max((anchors − off-road) / points sent, routed-only weight × the accepted share of the stretches' line)</summary>
     public double AnchorQuality { get; init; }
 
-    /// <summary>Detour ratio and speed against the type's maximum (every filled leg already passed its route-time test)</summary>
+    /// <summary>Detour ratio of the part not filled by routes, and speed against the type's maximum (every filled leg passed its own tests)</summary>
     public double Plausibility { get; init; }
 
     /// <summary>1 − 0.15 × the engine's breaks that no accepted route bridged</summary>
@@ -56,6 +56,7 @@ public record MatchMetrics
     public int Calls { get; init; }
     public int CutGaps { get; init; }
     public double TrackM { get; init; }
+    /// <summary>The line over the recorded track, both without the filled stretches</summary>
     public double LengthRatio { get; init; }
     public double ObservedM { get; init; }
     public double InferredM { get; init; }
@@ -74,6 +75,12 @@ public record MatchMetrics
     public int FillNoRoute { get; init; }
     public int FillTimeouts { get; init; }
 
+    /// <summary>Stretches not routed: over the per-drive cap (they stay gaps)</summary>
+    public int FillSkipped { get; init; }
+
+    /// <summary>Stretches not routed because the record's filling stopped early (timeouts, or interactive work waiting)</summary>
+    public int FillDeferred { get; init; }
+
     /// <summary>No point matched: the line is built only from routes between the recorded points</summary>
     public bool RoutedOnly { get; init; }
 }
@@ -87,8 +94,9 @@ public record MatchResult(string Status, double Confidence, string? Polyline, Li
 
 /// <summary>An anchor or a recorded point on the skeleton</summary>
 /// <param name="Vertex">Its vertex in the skeleton</param>
+/// <param name="Point">Its index in the recorded points</param>
 /// <param name="BreakBefore">The engine broke the path between the anchor before and this one</param>
-internal sealed record SkeletonNode(int Vertex, DateTime T, bool Anchor, bool BreakBefore);
+internal sealed record SkeletonNode(int Vertex, int Point, DateTime T, bool Anchor, bool BreakBefore);
 
 /// <summary>
 /// The line as the engine's answers leave it: vertices, the kind of the segment into
@@ -102,6 +110,9 @@ public sealed class RouteSkeleton
     internal readonly List<SkeletonNode> Nodes = new();
     internal readonly List<double> AnchorFromTrace = new();
 
+    /// <summary>The recorded track's length up to each point</summary>
+    internal double[] TrackCum = Array.Empty<double>();
+
     public int Sent { get; internal set; }
     public int Anchors { get; internal set; }
     public int Calls { get; internal set; }
@@ -114,10 +125,11 @@ public sealed class RouteSkeleton
         Kind.Add(kind);
     }
 
-    internal void AddRecorded(RoutePoint p, string kind)
+    internal void AddRecorded(IReadOnlyList<RoutePoint> points, int i, string kind)
     {
+        var p = points[i];
         Add((p.Lat, p.Lon), kind);
-        Nodes.Add(new SkeletonNode(V.Count - 1, p.T, false, false));
+        Nodes.Add(new SkeletonNode(V.Count - 1, i, p.T, false, false));
     }
 }
 
@@ -143,7 +155,12 @@ public static class RouteAssembler
     public static RouteSkeleton Build(IReadOnlyList<RoutePoint> points, IReadOnlyList<TraceSegment> plan,
         IReadOnlyDictionary<TraceCall, TraceResponse?> answers, RouteProfile profile)
     {
-        var sk = new RouteSkeleton();
+        var sk = new RouteSkeleton { TrackCum = new double[points.Count] };
+        for (var i = 1; i < points.Count; i++)
+        {
+            sk.TrackCum[i] = sk.TrackCum[i - 1] + Geo.Haversine(points[i - 1].Lat, points[i - 1].Lon, points[i].Lat, points[i].Lon);
+        }
+
         var straightJump = profile.StraightJumpM ?? 500;
         for (var si = 0; si < plan.Count; si++)
         {
@@ -161,7 +178,7 @@ public static class RouteAssembler
                 // Points the plan left out of every call stay as recorded
                 for (; next < call.Start; next++)
                 {
-                    sk.AddRecorded(points[next], PieceKinds.Gap);
+                    sk.AddRecorded(points, next, PieceKinds.Gap);
                     joint = PieceKinds.Gap;
                 }
 
@@ -182,7 +199,7 @@ public static class RouteAssembler
                 {
                     for (var i = call.Start; i < call.End; i++)
                     {
-                        sk.AddRecorded(points[i], i == call.Start ? joint : PieceKinds.Gap);
+                        sk.AddRecorded(points, i, i == call.Start ? joint : PieceKinds.Gap);
                     }
                 }
                 else
@@ -197,7 +214,7 @@ public static class RouteAssembler
 
             for (; next < segment.Start + segment.Count; next++)
             {
-                sk.AddRecorded(points[next], next == segment.Start ? joint ?? PieceKinds.Gap : PieceKinds.Gap);
+                sk.AddRecorded(points, next, next == segment.Start ? joint ?? PieceKinds.Gap : PieceKinds.Gap);
             }
         }
 
@@ -207,8 +224,10 @@ public static class RouteAssembler
     /// <summary>
     /// The stretches a route may fill: between two consecutive anchors (or the first or
     /// last recorded point) wherever the skeleton has a gap: a cut gap, an engine break,
-    /// a leg touching an unmatched point, or recorded points no call matched. A drive with
-    /// no anchor at all is routed point to point (at most MaxRoutedOnlyLegs legs).
+    /// a leg skipping an unmatched point across a break, or recorded points no call
+    /// matched. A drive with no anchor at all is routed point to point (at most
+    /// MaxRoutedOnlyLegs legs). Each carries the matched shape's heading into its first
+    /// anchor and out of its last one, where the shape has one.
     /// </summary>
     public static List<GapStretch> Stretches(RouteSkeleton sk, GapFillSettings g)
     {
@@ -256,11 +275,46 @@ public static class RouteAssembler
 
             var from = sk.V[a.Vertex];
             var to = sk.V[b.Vertex];
+            var trackM = sk.TrackCum.Length > b.Point ? sk.TrackCum[b.Point] - sk.TrackCum[a.Point] : 0;
             result.Add(new GapStretch(a.Vertex, b.Vertex, from, to, Math.Max(0, (b.T - a.T).TotalSeconds),
-                Geo.Haversine(from.Lat, from.Lon, to.Lat, to.Lon), lineM, breaks, routedOnly));
+                Geo.Haversine(from.Lat, from.Lon, to.Lat, to.Lon), lineM, breaks, routedOnly, Math.Max(0, trackM),
+                a.Anchor ? Heading(sk, a.Vertex, -1) : null, b.Anchor ? Heading(sk, b.Vertex, +1) : null));
         }
 
         return result;
+    }
+
+    /// <summary>How far along the matched shape a heading is measured</summary>
+    private const double HeadingM = 30;
+
+    /// <summary>
+    /// The direction of travel at a vertex along the matched (non-gap) shape: arriving at
+    /// it (<paramref name="dir"/> −1) or leaving it (+1), over up to 30 m; null when the
+    /// shape there is a gap or shorter than 10 m
+    /// </summary>
+    private static double? Heading(RouteSkeleton sk, int vertex, int dir)
+    {
+        double m = 0;
+        var j = vertex;
+        while (m < HeadingM)
+        {
+            // The segment between j and j + dir; its kind is the kind of its later vertex
+            var k = j + dir;
+            if (k < 0 || k >= sk.V.Count || sk.Kind[Math.Max(j, k)] == PieceKinds.Gap)
+            {
+                break;
+            }
+
+            m += Geo.Haversine(sk.V[j].Lat, sk.V[j].Lon, sk.V[k].Lat, sk.V[k].Lon);
+            j = k;
+        }
+
+        if (m < 10)
+        {
+            return null;
+        }
+
+        return dir < 0 ? GapFiller.Bearing(sk.V[j], sk.V[vertex]) : GapFiller.Bearing(sk.V[vertex], sk.V[j]);
     }
 
     /// <summary>
@@ -289,12 +343,13 @@ public static class RouteAssembler
                 {
                     var f = accepted[fi++];
                     var from = line.LengthM;
-                    foreach (var v in f.Route!.Shape)
+                    var shape = f.Route!.Shape;
+                    for (var k = 0; k < shape.Count; k++)
                     {
-                        line.Add(v, PieceKinds.Inferred);
+                        line.Add(shape[k], k == 0 ? Connector(sk.V[i], shape[0], f.Stretch.RoutedOnly) : PieceKinds.Inferred);
                     }
 
-                    line.Add(sk.V[f.Stretch.To], PieceKinds.Inferred);
+                    line.Add(sk.V[f.Stretch.To], Connector(shape[^1], sk.V[f.Stretch.To], f.Stretch.RoutedOnly));
                     filledM += line.LengthM - from;
                     bridged += f.Stretch.Breaks;
                     i = f.Stretch.To;
@@ -310,11 +365,7 @@ public static class RouteAssembler
             }
         }
 
-        double trackM = 0;
-        for (var i = 1; i < points.Count; i++)
-        {
-            trackM += Geo.Haversine(points[i - 1].Lat, points[i - 1].Lon, points[i].Lat, points[i].Lon);
-        }
+        var trackM = sk.TrackCum.Length > 0 ? sk.TrackCum[^1] : 0;
 
         // The factors (AD-35 rule 6, routes.v2)
         var routedOnly = sk.Anchors == 0 && accepted.Count > 0;
@@ -322,8 +373,15 @@ public static class RouteAssembler
         var offRoad = sk.AnchorFromTrace.Count(d => d > toleranceM);
         var matchedShare = sk.Sent > 0 ? (double)sk.Anchors / sk.Sent : 0;
         var proximity = sk.Anchors > 0 ? 1 - (double)offRoad / sk.Anchors : 0;
-        var anchorQuality = routedOnly ? routedOnlyWeight : sk.Sent > 0 ? (double)(sk.Anchors - offRoad) / sk.Sent : 0;
-        var ratio = trackM > 0 ? lengthM / trackM : 1;
+        // No cliff between zero anchors and one: accepted routes carry the routed-only
+        // weight, in proportion to the stretches' line they replaced
+        var stretchM = fills.Sum(f => f.Stretch.LineM);
+        var acceptedShare = stretchM > 0 ? accepted.Sum(f => f.Stretch.LineM) / stretchM : accepted.Count > 0 ? 1 : 0;
+        var anchorQuality = Math.Max(sk.Sent > 0 ? (double)(sk.Anchors - offRoad) / sk.Sent : 0, routedOnlyWeight * acceptedShare);
+        // The detour ratio of the part not filled: a filled leg passed its own length test
+        var restLineM = lengthM - filledM;
+        var restTrackM = trackM - accepted.Sum(f => f.Stretch.TrackM);
+        var ratio = restTrackM > 1 && restLineM > 1 ? restLineM / restTrackM : 1;
         var plausibility = ratio <= 1.5 ? 1 : ratio >= 2.5 ? 0 : 2.5 - ratio;
         var duration = points.Count > 1 ? (points[^1].T - points[0].T).TotalSeconds : 0;
         var tooFast = duration > 0 && profile.MaxSpeedKmh.HasValue && lengthM / duration * 3.6 > profile.MaxSpeedKmh.Value;
@@ -372,7 +430,9 @@ public static class RouteAssembler
             FillRejectedTime = Count(GapFiller.RejectedTime),
             FillRejectedLength = Count(GapFiller.RejectedLength) + Count(GapFiller.TooLong),
             FillNoRoute = Count(GapFiller.NoRoute),
-            FillTimeouts = Count(GapFiller.Timeout) + Count(GapFiller.Skipped),
+            FillTimeouts = Count(GapFiller.Timeout),
+            FillSkipped = Count(GapFiller.Skipped),
+            FillDeferred = Count(GapFiller.Deferred),
             RoutedOnly = routedOnly
         };
 
@@ -420,6 +480,8 @@ public static class RouteAssembler
             {
                 GapFiller.RejectedTime => $"a {d} stretch with no road that fits the {Elapsed(worst.Stretch.ElapsedS)} elapsed",
                 GapFiller.RejectedLength or GapFiller.NoRoute or GapFiller.TooLong => $"a {d} straight jump that no road explains",
+                GapFiller.Skipped => $"a {d} stretch with no road match (too many stretches to route)",
+                GapFiller.Deferred => $"a {d} stretch with no road match yet (routing it resumes shortly)",
                 _ => $"a {d} stretch with no road match (the engine did not answer in time)"
             };
         }
@@ -495,10 +557,19 @@ public static class RouteAssembler
         {
             var a = anchors[k - 1];
             var b = anchors[k];
-            if (b.Index > a.Index + 1)
+            var broke = a.Label.BeginDiscontinuity || b.Label.EndDiscontinuity || ShapeBreak(answer.Edges, a.Label.EdgeIndex!.Value, b.Label.EdgeIndex!.Value);
+            if (b.Index > a.Index + 1 && (broke || Discontinuity(answer.Labels, a.Index + 1, b.Index - 1)))
             {
-                // A leg touching an unmatched point: a gap (counted in matchedShare only)
+                // A leg skipping an unmatched point across a break: a gap (counted in matchedShare only)
                 kinds[k] = PieceKinds.Gap;
+            }
+            else if (b.Index > a.Index + 1)
+            {
+                // A leg skipping an unmatched point on a continuous matched shape: the shape
+                // is the road, and no route is asked for (counted in matchedShare only)
+                var p = points[call.Start + a.Index];
+                var q = points[call.Start + b.Index];
+                kinds[k] = Geo.Haversine(p.Lat, p.Lon, q.Lat, q.Lon) > straightJump ? PieceKinds.Inferred : PieceKinds.Observed;
             }
             else if (a.Label.BeginDiscontinuity || b.Label.EndDiscontinuity || ShapeBreak(answer.Edges, a.Label.EdgeIndex!.Value, b.Label.EdgeIndex!.Value))
             {
@@ -549,7 +620,8 @@ public static class RouteAssembler
                 }
             }
 
-            sk.Nodes.Add(new SkeletonNode(sk.V.Count - 1, points[call.Start + anchors[k].Index].T, true, breaks[k]));
+            var point = call.Start + anchors[k].Index;
+            sk.Nodes.Add(new SkeletonNode(sk.V.Count - 1, point, points[point].T, true, breaks[k]));
             sk.AnchorFromTrace.Add(anchors[k].Label.FromTrace ?? 0);
         }
 
@@ -558,6 +630,30 @@ public static class RouteAssembler
             sk.Add(shape[++si], lastKind);
         }
     }
+
+    /// <summary>Whether any label in [from, to] marks a route discontinuity</summary>
+    private static bool Discontinuity(List<TraceLabel> labels, int from, int to)
+    {
+        for (var i = Math.Max(0, from); i <= to && i < labels.Count; i++)
+        {
+            if (labels[i].BeginDiscontinuity || labels[i].EndDiscontinuity)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>A routed-only connector longer than this (metres) is a gap</summary>
+    public const double MaxConnectorM = 20;
+
+    /// <summary>
+    /// The kind of the straight connector between a recorded point and a route's end: a
+    /// routed-only drive's point more than 20 m off the road is joined by a gap, not inferred
+    /// </summary>
+    private static string Connector((double Lat, double Lon) a, (double Lat, double Lon) b, bool routedOnly) =>
+        routedOnly && Geo.Haversine(a.Lat, a.Lon, b.Lat, b.Lon) > MaxConnectorM ? PieceKinds.Gap : PieceKinds.Inferred;
 
     /// <summary>Whether the shape jumps between the edges of two anchors (a path Valhalla restarted)</summary>
     private static bool ShapeBreak(List<TraceEdge> edges, int from, int to)

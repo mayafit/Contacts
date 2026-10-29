@@ -257,7 +257,7 @@ public class MatchRunner
 
             try
             {
-                tally.Add(await MatchOneAsync(row, current, stale, t, hash, costing, engineVersion, ct));
+                tally.Add(await MatchOneAsync(row, current, stale, t, hash, costing, engineVersion, yield, ct));
                 await _db.SaveChangesAsync(ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException and not BackendBusyException)
@@ -274,8 +274,10 @@ public class MatchRunner
 
     /// <summary>Matches one record and fills its row; returns the status, or "retrying"</summary>
     private async Task<string> MatchOneAsync(MatchedRouteRow row, bool current, bool stale, RouteTrack t, string hash, string costing,
-        string? engineVersion, CancellationToken ct)
+        string? engineVersion, Func<bool> yield, CancellationToken ct)
     {
+        // Re-matches so far of a stored result whose filling timed out (see the end)
+        var fillRetries = current && row.Status != RouteStatuses.Failed && row.Polyline != null ? row.Attempts : 0;
         var watch = Stopwatch.StartNew();
         var plan = TracePlanner.Plan(t.Points, _settings);
         var answers = new Dictionary<TraceCall, TraceResponse?>();
@@ -312,10 +314,11 @@ public class MatchRunner
         {
             try
             {
-                // One /route call per stretch (AD-35 rule 7). A timeout leaves that gap and is
-                // counted by the breaker; only an engine that is down makes the record wait
+                // One /route call per stretch, longest first, at most N (AD-35 rule 7). A
+                // timeout leaves that gap; timeouts in a row count for the breaker, and only
+                // an engine that is down makes the record wait. Interactive work stops it.
                 fills = await GapFiller.FillAsync(stretches, costing, _settings.GapFill, profile.MaxSpeedKmh, _engine,
-                    ex => _breaker.Failure(ex.Message) | ex.Unreachable, _breaker.Success, ct);
+                    ex => _breaker.Failure(ex.Message) | ex.Unreachable, _breaker.Success, ct, yield);
             }
             catch (EngineUnavailableException ex)
             {
@@ -340,6 +343,21 @@ public class MatchRunner
         row.Attempts = 0;
         row.NextAttemptAt = null;
         row.ComputedAt = Now;
+        var soon = Now + (_backoff.Length > 0 ? _backoff[0] : TimeSpan.FromMinutes(1));
+        if (result.Metrics.FillTimeouts > 0)
+        {
+            // The result is stored with its gaps, and re-matched soon a bounded number of
+            // times (Attempts counts them); after the last one the gaps stay
+            row.Attempts = fillRetries + 1;
+            row.NextAttemptAt = row.Attempts <= _settings.GapFill.Retries ? soon : null;
+        }
+        else if (result.Metrics.FillDeferred > 0)
+        {
+            // Interactive work stopped the filling: re-matched soon, not counted
+            row.Attempts = fillRetries;
+            row.NextAttemptAt = soon;
+        }
+
         watch.Stop();
         _breaker.RecordTime(watch.Elapsed);
         return result.Status;

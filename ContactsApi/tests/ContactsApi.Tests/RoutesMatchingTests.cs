@@ -471,6 +471,20 @@ public class EngineClientTests
     }
 
     [Fact]
+    public async Task A_route_call_has_its_own_shorter_timeout()
+    {
+        var handler = new Handler { Answer = async (_, ct) => { await Task.Delay(TimeSpan.FromSeconds(30), ct); return new HttpResponseMessage(); } };
+        var client = new ValhallaClient(new Factory(handler), Options.Create(new RoutesOptions { EngineTimeoutSeconds = 20, GapFillTimeoutSeconds = 1 }));
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+
+        var ex = await Assert.ThrowsAsync<EngineUnavailableException>(() => client.RouteAsync(new JsonObject(), default));
+
+        Assert.True(ex.Timeout);
+        Assert.InRange(watch.Elapsed.TotalSeconds, 0.9, 5);
+        Assert.Contains("within 1 s", ex.Message);
+    }
+
+    [Fact]
     public async Task A_refusal_is_final_for_the_trace_and_a_5xx_is_the_engine_failing()
     {
         var handler = new Handler();

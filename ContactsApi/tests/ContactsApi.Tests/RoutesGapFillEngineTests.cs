@@ -147,4 +147,64 @@ public class RoutesGapFillEngineTests
         Assert.Equal(RouteStatuses.Matched, with.Result.Status);
         Assert.True(with.Result.Metrics.Filled >= 1);
     }
+
+    /// <summary>A point every <paramref name="stepM"/> along the road; every <paramref name="every"/>th one pushed <paramref name="offM"/> east</summary>
+    private static List<RoutePoint> Noisy(List<(double Lat, double Lon)> road, double timeS, double stepM, int every, double offM)
+    {
+        double total = 0;
+        for (var i = 1; i < road.Count; i++)
+        {
+            total += Geo.Haversine(road[i - 1].Lat, road[i - 1].Lon, road[i].Lat, road[i].Lon);
+        }
+
+        var speed = total / timeS;
+        var t0 = new DateTime(2026, 9, 1, 8, 0, 0, DateTimeKind.Utc);
+        var points = new List<RoutePoint> { new(t0, road[0].Lat, road[0].Lon) };
+        double along = 0, acc = 0;
+        for (var i = 1; i < road.Count; i++)
+        {
+            var leg = Geo.Haversine(road[i - 1].Lat, road[i - 1].Lon, road[i].Lat, road[i].Lon);
+            along += leg;
+            acc += leg;
+            if (acc >= stepM || i == road.Count - 1)
+            {
+                var off = points.Count % every == 0 && i < road.Count - 1 ? offM / 94_900 : 0;
+                points.Add(new RoutePoint(t0.AddSeconds(along / speed), road[i].Lat, road[i].Lon + off));
+                acc = 0;
+            }
+        }
+
+        return points;
+    }
+
+    [EngineFact]
+    public async Task A_noisy_dense_drive_makes_at_most_the_capped_number_of_route_calls()
+    {
+        var url = TestEngine.Url!;
+        var (road, timeS) = await RoadAsync(url, (32.0853, 34.7818), (31.7683, 35.2137)); // Tel Aviv to Jerusalem
+        var points = Noisy(road, timeS, 300, 3, 400);
+
+        await MatchAsync(url, points, true);
+        var off = new List<double>();
+        var on = new List<double>();
+        (MatchResult Result, double Ms, int Routes) without = default, with = default;
+        for (var i = 0; i < 3; i++)
+        {
+            without = await MatchAsync(url, points, false);
+            off.Add(without.Ms);
+            with = await MatchAsync(url, points, true);
+            on.Add(with.Ms);
+        }
+
+        double Median(List<double> xs) => xs.OrderBy(x => x).ElementAt(xs.Count / 2);
+        var m = with.Result.Metrics;
+        var routed = m.Stretches - m.FillSkipped - m.FillDeferred - m.FillRejectedTime;
+        _out.WriteLine($"Noisy Route 1: {points.Count} points, {m.TrackM / 1000:0.0} km, {m.Calls} calls, {m.EngineBreaks} breaks, " +
+                       $"{m.Stretches} stretches ({m.FillSkipped} over the cap); off {Median(off):0} ms conf {without.Result.Confidence}; " +
+                       $"on {Median(on):0} ms conf {with.Result.Confidence} (filled {m.Filled}, rejected {m.FillRejectedLength + m.FillRejectedTime}, " +
+                       $"no route {m.FillNoRoute}, gap {m.GapM:0} m; {with.Result.Reason})");
+
+        Assert.InRange(routed, 0, 20);
+        Assert.True(with.Result.Confidence >= without.Result.Confidence, $"{with.Result.Confidence} < {without.Result.Confidence}");
+    }
 }
