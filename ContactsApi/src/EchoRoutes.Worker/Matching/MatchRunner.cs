@@ -268,8 +268,10 @@ public class MatchRunner
             }
             catch (EngineUnavailableException ex)
             {
-                _breaker.Failure(ex.Message);
-                return Failure(row, current, t, hash, costing, ex.Message);
+                // The whole engine down (no connection, or the breaker opened or its probe
+                // failed) is no attempt of this record; a timeout or an error is
+                var down = _breaker.Failure(ex.Message) | ex.Unreachable;
+                return down ? EngineDown(row, current, t, hash, costing, ex.Message) : Failure(row, current, t, hash, costing, ex.Message);
             }
         }
 
@@ -296,8 +298,40 @@ public class MatchRunner
     }
 
     /// <summary>
-    /// An engine failure: back off (1 min, 10 min, 1 h by default), then failed. A
-    /// current good match is kept as it is (a forced re-match that failed).
+    /// The whole engine is down: the record waits for it (until the breaker closes, or one
+    /// backoff step) without using an attempt, so an outage never fails records for good.
+    /// A current good match is kept as it is.
+    /// </summary>
+    private string EngineDown(MatchedRouteRow row, bool current, RouteTrack t, string hash, string costing, string reason)
+    {
+        if (current && row.Polyline != null && row.Status != RouteStatuses.Failed)
+        {
+            return "retrying";
+        }
+
+        if (!current)
+        {
+            row.Attempts = 0;
+        }
+
+        Identify(row, t, hash, costing);
+        row.Status = RouteStatuses.Failed;
+        row.Confidence = null;
+        row.Polyline = null;
+        row.ListPolyline = null;
+        row.DensityPolyline = null;
+        row.Pieces = "[]";
+        row.MatchedDistanceM = null;
+        row.ComputedAt = Now;
+        var wait = Now + (_backoff.Length > 0 ? _backoff[0] : TimeSpan.FromMinutes(1));
+        row.NextAttemptAt = _breaker.OpenUntil is { } open && open > wait ? open : wait;
+        row.Reason = Truncate($"{reason} (the engine is unavailable; not counted as an attempt)");
+        return "retrying";
+    }
+
+    /// <summary>
+    /// An engine failure of this record: back off (1 min, 10 min, 1 h by default), then
+    /// failed. A current good match is kept as it is (a forced re-match that failed).
     /// </summary>
     private string Failure(MatchedRouteRow row, bool current, RouteTrack t, string hash, string costing, string reason)
     {

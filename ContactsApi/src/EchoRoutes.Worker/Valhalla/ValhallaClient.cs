@@ -13,17 +13,25 @@ using Microsoft.Extensions.Options;
 
 namespace EchoRoutes.Worker.Valhalla;
 
-/// <summary>The engine timed out, could not be reached or failed (5xx): back off and count it</summary>
+/// <summary>
+/// The engine timed out, could not be reached or failed (5xx): back off. A timeout or an
+/// error is the record's attempt; an engine that cannot be reached at all is not
+/// </summary>
 public class EngineUnavailableException : Exception
 {
     /// <summary>Creates the exception</summary>
-    public EngineUnavailableException(string reason, bool timeout, Exception? inner = null) : base(reason, inner)
+    /// <param name="unreachable">No connection at all (refused, reset, DNS): the whole engine is down, not this record</param>
+    public EngineUnavailableException(string reason, bool timeout, Exception? inner = null, bool unreachable = false) : base(reason, inner)
     {
         Timeout = timeout;
+        Unreachable = unreachable;
     }
 
     /// <summary>The call hit the hard timeout</summary>
     public bool Timeout { get; }
+
+    /// <summary>The engine could not be reached at all (the pod's engine is down or restarting)</summary>
+    public bool Unreachable { get; }
 }
 
 /// <summary>The engine answered that it cannot match this trace (4xx, e.g. no road near a point)</summary>
@@ -138,7 +146,7 @@ public class ValhallaClient : IValhallaClient
         }
         catch (HttpRequestException ex)
         {
-            throw new EngineUnavailableException("the engine cannot be reached: " + ex.Message, false, ex);
+            throw new EngineUnavailableException("the engine cannot be reached: " + ex.Message, false, ex, unreachable: true);
         }
         catch (JsonException ex)
         {
@@ -243,8 +251,12 @@ public class EngineBreaker
         }
     }
 
-    /// <summary>The engine failed or timed out</summary>
-    public void Failure(string reason)
+    /// <summary>
+    /// The engine failed or timed out. Returns whether the breaker is open now: this
+    /// failure opened it, or it was the one call let through after a pause (the probe)
+    /// and the engine is still unwell. Such a failure is the engine's, not the record's.
+    /// </summary>
+    public bool Failure(string reason)
     {
         lock (_lock)
         {
@@ -256,7 +268,10 @@ public class EngineBreaker
             {
                 OpenUntil = LastFailureAt + _pause;
                 Trips++;
+                return true;
             }
+
+            return false;
         }
     }
 
