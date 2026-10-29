@@ -1,6 +1,6 @@
 /**
  * @fileoverview From Valhalla's answers to a stored Matched Route (AD-35 rules 6 and 7,
- * rule routes.v2): the trace_attributes answers become a skeleton (vertices, a kind per
+ * rule routes.v3): the trace_attributes answers become a skeleton (vertices, a kind per
  * segment, the anchors and recorded points on it); every unbridged stretch between
  * two anchors can then be filled with a /route answer (GapFiller); the result is the
  * line at precision 5 with at most N vertices, its pieces {fromM, toM, kind}, the
@@ -13,7 +13,7 @@ using ContactsApi.Infrastructure.Routes;
 
 namespace EchoRoutes.Worker.Matching;
 
-/// <summary>How the confidence came out, stored as matched_routes.MetricsAfter (AD-35 rule 6, routes.v2)</summary>
+/// <summary>How the confidence came out, stored as matched_routes.MetricsAfter (AD-35 rule 6, routes.v3)</summary>
 public record MatchMetrics
 {
     /// <summary>The rule that computed it</summary>
@@ -72,6 +72,12 @@ public record MatchMetrics
     public double FilledM { get; init; }
     public int FillRejectedTime { get; init; }
     public int FillRejectedLength { get; init; }
+
+    /// <summary>Stretches whose route back-tracked near an end (a U-turn); routes.v2 counted them in FillRejectedLength</summary>
+    public int FillRejectedReversal { get; init; }
+
+    /// <summary>Stretches asked once more without headings after the headed route was rejected</summary>
+    public int FillRetried { get; init; }
     public int FillNoRoute { get; init; }
     public int FillTimeouts { get; init; }
 
@@ -136,7 +142,7 @@ public sealed class RouteSkeleton
 /// <summary>Assembles the calls' answers (and the gap fills) into one line</summary>
 public static class RouteAssembler
 {
-    /// <summary>The confidence formula (AD-35 rule 6, routes.v2), stored with the metrics</summary>
+    /// <summary>The confidence formula (AD-35 rule 6, routes.v2 and later), stored with the metrics</summary>
     public const string Formula = "min(coverage, anchorQuality, plausibility, continuity)";
 
     /// <summary>A matched point farther than this from its road is off-road (AD-35 rule 6); Timeline uses a larger tolerance</summary>
@@ -429,6 +435,8 @@ public static class RouteAssembler
             FilledM = Math.Round(filledM, 1),
             FillRejectedTime = Count(GapFiller.RejectedTime),
             FillRejectedLength = Count(GapFiller.RejectedLength) + Count(GapFiller.TooLong),
+            FillRejectedReversal = Count(GapFiller.RejectedReversal),
+            FillRetried = fills.Count(f => f.Retried),
             FillNoRoute = Count(GapFiller.NoRoute),
             FillTimeouts = Count(GapFiller.Timeout),
             FillSkipped = Count(GapFiller.Skipped),
@@ -479,7 +487,7 @@ public static class RouteAssembler
             return worst.Result switch
             {
                 GapFiller.RejectedTime => $"a {d} stretch with no road that fits the {Elapsed(worst.Stretch.ElapsedS)} elapsed",
-                GapFiller.RejectedLength or GapFiller.NoRoute or GapFiller.TooLong => $"a {d} straight jump that no road explains",
+                GapFiller.RejectedLength or GapFiller.RejectedReversal or GapFiller.NoRoute or GapFiller.TooLong => $"a {d} straight jump that no road explains",
                 GapFiller.Skipped => $"a {d} stretch with no road match (too many stretches to route)",
                 GapFiller.Deferred => $"a {d} stretch with no road match yet (routing it resumes shortly)",
                 _ => $"a {d} stretch with no road match (the engine did not answer in time)"

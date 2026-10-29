@@ -169,14 +169,16 @@ public class AtlasRoutesFeed
         var owned = records.Select(r => r.Id).ToArray();
         var steps = records.Select(r => ThinStep(r.PointCount)).ToArray();
         var counts = records.Select(r => r.PointCount).ToArray();
+        // Points with the same time (a Timeline segment's end and the next one's start)
+        // keep their recorded order (Id): in any other order the track runs backwards
         var points = (await _db.Database.SqlQuery<PointRow>($@"
                 SELECT p.""ActivityId"", p.""Time"", p.""Lat"", p.""Lon""
-                  FROM (SELECT tp.""ActivityId"", tp.""Time"", tp.""Lat"", tp.""Lon"", s.step, s.n,
-                               row_number() OVER (PARTITION BY tp.""ActivityId"" ORDER BY tp.""Time"") AS rn
+                  FROM (SELECT tp.""ActivityId"", tp.""Time"", tp.""Lat"", tp.""Lon"", tp.""Id"", s.step, s.n,
+                               row_number() OVER (PARTITION BY tp.""ActivityId"" ORDER BY tp.""Time"", tp.""Id"") AS rn
                           FROM unnest({owned}, {steps}, {counts}) AS s(id, step, n)
                           JOIN atlas.track_points tp ON tp.""ActivityId"" = s.id) p
                  WHERE p.step = 1 OR (p.rn - 1) % p.step = 0 OR p.rn = p.n
-                 ORDER BY p.""ActivityId"", p.""Time""").ToListAsync(ct))
+                 ORDER BY p.""ActivityId"", p.""Time"", p.""Id""").ToListAsync(ct))
             .GroupBy(p => p.ActivityId)
             // Thin again only when PointCount understated the track
             .ToDictionary(g => g.Key, g => Thin(g.Select(p => new RoutePoint(Utc(p.Time), p.Lat, p.Lon)).ToList()));

@@ -294,8 +294,11 @@ Acceptance criteria:
   drive, with the matched shape's heading at each anchor
   (`GapFillHeadingTolerance` 45°); the route is kept when it fits the elapsed
   time (at least elapsed × 0.1) and the straight line (slack min(500 m,
-  max(100 m, 2 × straight))) and does not turn back near either end (AD-35 rule
-  7), and is stored as `inferred`; otherwise the straight `gap` stays. A leg
+  max(100 m, 2 × straight))) and does not back-track near either end (AD-35 rule
+  7), and is stored as `inferred`; otherwise the straight `gap` stays. A
+  motorway loop ramp is not a back-track; a headed route rejected for its length
+  or a back-track is retried once without headings, within the cap
+  (`routes.v3`). A leg
   skipping an unmatched point on a continuous matched shape keeps that shape
   (no call). A drive with no matched point is routed point to point at a lower
   weight. Every number is `Routes__GapFill*` configuration, and
@@ -322,6 +325,17 @@ Acceptance criteria:
   `reject` decisions win; status shows `rematchRemaining`.
 - When "Fix this route" still lands below the threshold, the panel shows the
   confidence and the main reason.
+- Fix (`routes.v3`, after the `routes.v2` rollout): two live Timeline drives
+  were rejected on obviously correct roads. A 5.5 km Route 4 jump was routed
+  through a loop ramp (5,984 m, 242 s, inside every limit) and rejected as a
+  U-turn, because the check was a bearing change of more than 150° near an end;
+  it now needs a true back-track (back the opposite way within 50 m of the way
+  out), counted as `fillRejectedReversal`, and the drive scores 0.882 instead
+  of 0.686. On a 42 km drive the backend returned points with the same
+  timestamp (Timeline segment boundaries) in a different order than recorded,
+  so two engine breaks were routed backwards (12 km and 5.7 km for 850 m and
+  920 m) and rejected; the feed now orders by time, then id, and the drive
+  scores 0.957 instead of 0.7 with both breaks bridged.
 
 ### 12.5 Runs after import, the backfill, and round-robin scheduling — R1
 

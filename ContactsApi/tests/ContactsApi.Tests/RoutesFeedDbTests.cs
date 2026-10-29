@@ -326,6 +326,48 @@ public class RoutesFeedDbTests
     }
 
     [Fact]
+    public async Task Points_with_the_same_time_keep_their_recorded_order()
+    {
+        await using var db = await DbAsync();
+        if (db == null)
+        {
+            return;
+        }
+
+        // A Timeline drive's segments meet at one time: the end of one at its place, the
+        // start of the next 850 m on. In any other order the track runs backwards there
+        var owner = "ties-" + Guid.NewGuid();
+        var svc = new AtlasService(db, NullLogger<AtlasService>.Instance);
+        var points = Track(10, 32.0);
+        points.Insert(5, points[4] with { Lat = points[4].Lat + 0.0005 });
+        points.Insert(9, points[8] with { Lat = points[8].Lat + 0.0005 });
+        await svc.IngestAsync(owner, new IngestRequest
+        {
+            Source = "google-timeline",
+            Activities = { new ActivityInput("tied", "IN_PASSENGER_VEHICLE", null, T0, T0.AddMinutes(10), Points: points) }
+        });
+        var id = await db.Activities.AsNoTracking().Where(a => a.OwnerId == owner).Select(a => a.Id).SingleAsync();
+        // Rewriting a row (its time away and back) gives it a later place on disk and in
+        // the time index: its place is not the order
+        var first = new[] { points[4], points[8] };
+        var moved = 0;
+        foreach (var (shift, at) in new[] { (60, 0), (-60, 60) })
+        {
+            foreach (var p in first)
+            {
+                moved += await db.Database.ExecuteSqlInterpolatedAsync(
+                    $@"UPDATE atlas.track_points SET ""Time"" = ""Time"" + make_interval(secs => {shift})
+                        WHERE ""ActivityId"" = {id} AND ""Time"" = {p.T.AddSeconds(at)} AND ""Lat"" = {p.Lat}");
+            }
+        }
+
+        Assert.Equal(4, moved);
+
+        var track = Assert.Single(await new AtlasRoutesFeed(db).TracksAsync(owner, new[] { id }));
+        Assert.Equal(points.Select(p => (p.T, p.Lat)), track.Points.Select(p => (p.T, p.Lat)));
+    }
+
+    [Fact]
     public async Task A_page_of_changes_and_a_batch_of_tracks_take_a_fixed_number_of_queries()
     {
         var counter = new CommandCounter();
