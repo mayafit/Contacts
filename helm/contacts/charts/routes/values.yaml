@@ -98,19 +98,29 @@ config:
   Routes__MaxPointsPerCall: "2000"
   Routes__MaxKmPerCall: "200"
   # ---- Gap filling (story 12.4a, AD-35 rule 7): each unbridged stretch gets one
-  # /route call; the route is kept when time <= elapsed x 1.6 + 120 s (and >=
-  # elapsed x 0.25 unless elapsed <= 180 s) and length <= 2.5 x straight + 500 m
+  # /route call (longest first, at most N per drive); the route is kept when
+  # time <= elapsed x 1.6 + 120 s (and >= elapsed x 0.1 unless elapsed <= 180 s),
+  # length <= 2.5 x straight + min(500 m, max(100 m, 2 x straight)), and it does
+  # not turn back near either end
   Routes__GapFill: "true"
   Routes__GapFillMaxKm: "60"
   Routes__GapFillTimeFactor: "1.6"
   Routes__GapFillTimeSlackSeconds: "120"
-  Routes__GapFillMinTimeFactor: "0.25"
+  Routes__GapFillMinTimeFactor: "0.1"
   Routes__GapFillShortElapsedSeconds: "180"
   Routes__GapFillLengthFactor: "2.5"
   Routes__GapFillLengthSlackM: "500"
   # A drive with no matched point, routed point to point (at most N legs)
   Routes__GapFillRoutedOnlyWeight: "0.6"
   Routes__GapFillMaxRoutedOnlyLegs: "40"
+  # Most /route calls of an anchored drive; a /route call's own timeout; the
+  # heading tolerance at each anchor (0: no heading); timeouts in a row that count
+  # once for the breaker; re-matches of a record whose filling timed out
+  Routes__GapFillMaxCallsPerDrive: "20"
+  Routes__GapFillTimeoutSeconds: "5"
+  Routes__GapFillHeadingTolerance: "45"
+  Routes__GapFillTimeoutsInARow: "3"
+  Routes__GapFillRetries: "3"
   # A Timeline anchor is off-road only beyond this (confidence v2, AD-35 rule 6)
   Routes__OffRoadTimelineM: "100"
   # Per-record backoff after engine failures, then failed
