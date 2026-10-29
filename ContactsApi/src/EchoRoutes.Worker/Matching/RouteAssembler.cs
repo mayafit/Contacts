@@ -4,10 +4,11 @@
  * segment, the anchors and recorded points on it); every unbridged stretch between
  * two anchors can then be filled with a /route answer (GapFiller); the result is the
  * line at precision 5 with at most N vertices, its pieces {fromM, toM, kind}, the
- * confidence and the status. Pure.
+ * roads it follows (AD-37), the confidence and the status. Pure.
  * @module EchoRoutes.Worker.Matching
  */
 using System.Globalization;
+using ContactsApi.Core.Interfaces;
 using ContactsApi.Infrastructure.Atlas;
 using ContactsApi.Infrastructure.Routes;
 
@@ -95,8 +96,9 @@ public record MatchMetrics
 /// <param name="Polyline">Google encoded, precision 5; null when nothing matched</param>
 /// <param name="Pieces">Metres along the stored line</param>
 /// <param name="Reason">Why it is not matched (null when it is): the weakest factor in words</param>
+/// <param name="Roads">The roads the line follows, in travel order (AD-37); null without a line</param>
 public record MatchResult(string Status, double Confidence, string? Polyline, List<RoutePiece> Pieces, double LengthM,
-    MatchMetrics Metrics, string? Reason);
+    MatchMetrics Metrics, string? Reason, List<RouteRoad>? Roads = null);
 
 /// <summary>An anchor or a recorded point on the skeleton</summary>
 /// <param name="Vertex">Its vertex in the skeleton</param>
@@ -113,6 +115,8 @@ public sealed class RouteSkeleton
 {
     internal readonly List<(double Lat, double Lon)> V = new();
     internal readonly List<string> Kind = new();
+    /// <summary>The road names of the segment into each vertex (AD-37); null where unknown</summary>
+    internal readonly List<string[]?> Road = new();
     internal readonly List<SkeletonNode> Nodes = new();
     internal readonly List<double> AnchorFromTrace = new();
 
@@ -125,10 +129,11 @@ public sealed class RouteSkeleton
     public int CutGaps { get; internal set; }
     public int Breaks { get; internal set; }
 
-    internal void Add((double Lat, double Lon) v, string kind)
+    internal void Add((double Lat, double Lon) v, string kind, string[]? road = null)
     {
         V.Add(v);
         Kind.Add(kind);
+        Road.Add(road);
     }
 
     internal void AddRecorded(IReadOnlyList<RoutePoint> points, int i, string kind)
@@ -350,9 +355,11 @@ public static class RouteAssembler
                     var f = accepted[fi++];
                     var from = line.LengthM;
                     var shape = f.Route!.Shape;
+                    var roads = f.Route.Roads;
                     for (var k = 0; k < shape.Count; k++)
                     {
-                        line.Add(shape[k], k == 0 ? Connector(sk.V[i], shape[0], f.Stretch.RoutedOnly) : PieceKinds.Inferred);
+                        line.Add(shape[k], k == 0 ? Connector(sk.V[i], shape[0], f.Stretch.RoutedOnly) : PieceKinds.Inferred,
+                            k > 0 && roads != null && k < roads.Count ? roads[k] : null);
                     }
 
                     line.Add(sk.V[f.Stretch.To], Connector(shape[^1], sk.V[f.Stretch.To], f.Stretch.RoutedOnly));
@@ -367,7 +374,7 @@ public static class RouteAssembler
                     break;
                 }
 
-                line.Add(sk.V[i], sk.Kind[i]);
+                line.Add(sk.V[i], sk.Kind[i], sk.Road[i]);
             }
         }
 
@@ -398,7 +405,7 @@ public static class RouteAssembler
 
         var continuity = Math.Max(0, 1 - 0.15 * (sk.Breaks - bridged));
 
-        var (polyline, pieces, storedM) = line.Store(maxVertices);
+        var (polyline, pieces, storedM, roadList) = line.Store(maxVertices);
         double Sum(string kind) => pieces.Where(p => p.Kind == kind).Sum(p => p.ToM - p.FromM);
         var observed = Sum(PieceKinds.Observed);
         var inferred = Sum(PieceKinds.Inferred);
@@ -459,7 +466,7 @@ public static class RouteAssembler
             reason = $"low confidence {confidence.ToString("0.###", CultureInfo.InvariantCulture)}: {why}";
         }
 
-        return new MatchResult(status, confidence, polyline, pieces, Math.Round(storedM, 1), metrics, reason);
+        return new MatchResult(status, confidence, polyline, pieces, Math.Round(storedM, 1), metrics, reason, roadList);
     }
 
     /// <summary>The weakest factor in words, for the Owner ("Fix this route")</summary>
@@ -599,6 +606,7 @@ public static class RouteAssembler
         var lastKind = anchors.Count > 1 ? kinds[^1] : PieceKinds.Observed;
         var shape = answer.Shape;
         var cum = Cumulative(shape);
+        var road = SegmentRoads(answer);
         sk.Add(shape[0], joint);
         var si = 0;
         double lastPos = 0;
@@ -608,7 +616,7 @@ public static class RouteAssembler
             var pos = anchors[k].PosM;
             while (si + 1 < shape.Count && cum[si + 1] < pos - 0.01)
             {
-                sk.Add(shape[++si], kind);
+                sk.Add(shape[++si], kind, road[si]);
                 lastPos = cum[si];
             }
 
@@ -616,14 +624,15 @@ public static class RouteAssembler
             {
                 if (cum[si + 1] <= pos + 0.01)
                 {
-                    sk.Add(shape[++si], kind);
+                    sk.Add(shape[++si], kind, road[si]);
                     lastPos = cum[si];
                 }
                 else
                 {
                     // A vertex at the anchor, on the shape's segment
                     var t = (pos - cum[si]) / (cum[si + 1] - cum[si]);
-                    sk.Add((shape[si].Lat + t * (shape[si + 1].Lat - shape[si].Lat), shape[si].Lon + t * (shape[si + 1].Lon - shape[si].Lon)), kind);
+                    sk.Add((shape[si].Lat + t * (shape[si + 1].Lat - shape[si].Lat), shape[si].Lon + t * (shape[si + 1].Lon - shape[si].Lon)), kind,
+                        road[si + 1]);
                     lastPos = pos;
                 }
             }
@@ -635,8 +644,28 @@ public static class RouteAssembler
 
         while (si + 1 < shape.Count)
         {
-            sk.Add(shape[++si], lastKind);
+            sk.Add(shape[++si], lastKind, road[si]);
         }
+    }
+
+    /// <summary>The names of the edge each shape segment lies on: the segment into vertex j, for j in (begin, end] of its edge</summary>
+    private static string[]?[] SegmentRoads(TraceResponse answer)
+    {
+        var road = new string[]?[answer.Shape.Count];
+        foreach (var e in answer.Edges)
+        {
+            if (e.Names == null)
+            {
+                continue;
+            }
+
+            for (var j = Math.Max(e.BeginShape + 1, 1); j <= e.EndShape && j < road.Length; j++)
+            {
+                road[j] = e.Names;
+            }
+        }
+
+        return road;
     }
 
     /// <summary>Whether any label in [from, to] marks a route discontinuity</summary>
@@ -713,22 +742,33 @@ public static class RouteAssembler
         return pos;
     }
 
-    /// <summary>The line being built, with pieces in metres along it</summary>
+    /// <summary>The line being built, with pieces in metres along it and the metres on each road</summary>
     private sealed class LineBuilder
     {
         private readonly List<(double Lat, double Lon)> _points = new();
         private readonly List<double> _cum = new();
         private readonly List<RoutePiece> _pieces = new();
+        private readonly Dictionary<string, (double M, double FromM)> _roads = new(StringComparer.Ordinal);
 
         public double LengthM => _cum.Count > 0 ? _cum[^1] : 0;
 
-        /// <summary>Adds a vertex; the segment to it is a piece of <paramref name="kind"/></summary>
-        public void Add((double Lat, double Lon) p, string kind)
+        /// <summary>
+        /// Adds a vertex; the segment to it is a piece of <paramref name="kind"/>, on the
+        /// roads <paramref name="road"/> names. A gap's straight leg is on no road.
+        /// </summary>
+        public void Add((double Lat, double Lon) p, string kind, string[]? road = null)
         {
             var from = LengthM;
             _cum.Add(_points.Count == 0 ? 0 : LengthM + Geo.Haversine(_points[^1].Lat, _points[^1].Lon, p.Lat, p.Lon));
             _points.Add(p);
             Piece(from, LengthM, kind);
+            if (road != null && kind != PieceKinds.Gap && LengthM > from)
+            {
+                foreach (var name in road)
+                {
+                    _roads[name] = _roads.TryGetValue(name, out var r) ? (r.M + LengthM - from, r.FromM) : (LengthM - from, from);
+                }
+            }
         }
 
         private void Piece(double from, double to, string kind)
@@ -751,11 +791,11 @@ public static class RouteAssembler
         /// Rounds to precision 5, simplifies to at most <paramref name="max"/> vertices, and
         /// carries each piece over to metres along the stored line
         /// </summary>
-        public (string Polyline, List<RoutePiece> Pieces, double LengthM) Store(int max)
+        public (string Polyline, List<RoutePiece> Pieces, double LengthM, List<RouteRoad> Roads) Store(int max)
         {
             if (_points.Count == 0)
             {
-                return (string.Empty, new List<RoutePiece>(), 0);
+                return (string.Empty, new List<RoutePiece>(), 0, new List<RouteRoad>());
             }
 
             var rounded = _points.Select(p => (Math.Round(p.Lat, 5), Math.Round(p.Lon, 5))).ToList();
@@ -806,7 +846,9 @@ public static class RouteAssembler
                 }
             }
 
-            return (Geo.EncodePolyline(stored), pieces, newCum.Length > 0 ? newCum[^1] : 0);
+            // Each road's metres as built (the true length on it); where it starts, on the stored line
+            var roads = RouteRoads.Keep(_roads.Select(r => (r.Key, r.Value.M, Map(r.Value.FromM))));
+            return (Geo.EncodePolyline(stored), pieces, newCum.Length > 0 ? newCum[^1] : 0, roads);
         }
     }
 }

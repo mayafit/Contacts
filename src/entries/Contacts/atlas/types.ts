@@ -139,6 +139,18 @@ export interface RouteDescription {
   reason: string | null;
 }
 
+/** A road a matched route follows (AD-37) */
+export interface RouteRoad {
+  /** A route number ("431") or a street name, as the map data spells it */
+  name: string;
+  /** A route number */
+  ref: boolean;
+  /** Metres of the route on it */
+  m: number;
+  /** Where the route first takes it, in metres along the route */
+  fromM: number;
+}
+
 /** Route quality in the detail view (missing when route quality is off) */
 export interface ActivityRouteInfo {
   /** The records whose track is drawn: what "Fix this route" queues */
@@ -147,6 +159,8 @@ export interface ActivityRouteInfo {
   description: RouteDescription | null;
   observedShare: number | null;
   inferredShare: number | null;
+  /** The roads the drawn matched route follows, in travel order; missing when it is not drawn */
+  roads?: RouteRoad[] | null;
 }
 
 /** A route job's progress (GET /api/routes/jobs/{id}) */
@@ -477,6 +491,8 @@ export interface AtlasQuery {
   limit?: number;
   /** Only fused activities whose sources disagree */
   conflictsOnly?: boolean;
+  /** Only activities whose matched route follows this road: a route number (431) or part of a street name */
+  road?: string;
 }
 
 /** One track of the density map */

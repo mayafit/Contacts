@@ -30,10 +30,11 @@ internal static class SyntheticTrace
 
     /// <summary>
     /// An answer: shape vertices [first, first + n) (shape indexes from 0), edges of
-    /// <paramref name="perEdge"/> vertices, the labels (at absolute vertices)
+    /// <paramref name="perEdge"/> vertices, the labels (at absolute vertices), and each
+    /// edge's names by its index (<paramref name="names"/>; none when null)
     /// </summary>
     public static JsonDocument Answer(int vertices, IEnumerable<Label> labels, int perEdge = 4, IEnumerable<(int Begin, int End)>? edges = null,
-        int first = 0)
+        int first = 0, Func<int, string[]?>? names = null)
     {
         labels = labels.Select(l => l with { Vertex = l.Vertex - first }).ToList();
         var edgeList = edges?.ToList() ?? Enumerable.Range(0, (vertices - 1 + perEdge - 1) / perEdge)
@@ -70,9 +71,18 @@ internal static class SyntheticTrace
         {
             ["units"] = "kilometers",
             ["shape"] = Encode(Enumerable.Range(first, vertices).Select(Vertex), 6),
-            ["edges"] = new JsonArray(edgeList.Select(e => (JsonNode)new JsonObject
+            ["edges"] = new JsonArray(edgeList.Select((e, i) =>
             {
-                ["id"] = 1000 + e.Item1, ["begin_shape_index"] = e.Item1, ["end_shape_index"] = e.Item2, ["length"] = 0.1
+                var edge = new JsonObject
+                {
+                    ["id"] = 1000 + e.Item1, ["begin_shape_index"] = e.Item1, ["end_shape_index"] = e.Item2, ["length"] = 0.1
+                };
+                if (names?.Invoke(i) is { } n)
+                {
+                    edge["names"] = new JsonArray(n.Select(x => (JsonNode)JsonValue.Create(x)!).ToArray());
+                }
+
+                return (JsonNode)edge;
             }).ToArray()),
             ["matched_points"] = matched
         };
@@ -82,9 +92,11 @@ internal static class SyntheticTrace
     /// <summary>
     /// A /route answer: the straight synthetic road between the locations, a vertex
     /// about every 111 m, at <paramref name="kmh"/>; <paramref name="lengthFactor"/>
-    /// stretches the reported length (a detour the shape does not show)
+    /// stretches the reported length (a detour the shape does not show); with
+    /// <paramref name="streetNames"/>, one maneuver along the whole shape on those streets
     /// </summary>
-    public static JsonDocument RouteAnswer(IReadOnlyList<(double Lat, double Lon)> locations, double kmh, double lengthFactor = 1)
+    public static JsonDocument RouteAnswer(IReadOnlyList<(double Lat, double Lon)> locations, double kmh, double lengthFactor = 1,
+        string[]? streetNames = null)
     {
         var (a, b) = (locations[0], locations[^1]);
         var straight = Geo.Haversine(a.Lat, a.Lon, b.Lat, b.Lon);
@@ -95,7 +107,17 @@ internal static class SyntheticTrace
         {
             ["trip"] = new JsonObject
             {
-                ["legs"] = new JsonArray(new JsonObject { ["shape"] = Encode(shape, 6) }),
+                ["legs"] = new JsonArray(new JsonObject
+                {
+                    ["shape"] = Encode(shape, 6),
+                    ["maneuvers"] = streetNames == null
+                        ? new JsonArray()
+                        : new JsonArray(new JsonObject
+                        {
+                            ["begin_shape_index"] = 0, ["end_shape_index"] = shape.Count - 1,
+                            ["street_names"] = new JsonArray(streetNames.Select(x => (JsonNode)JsonValue.Create(x)!).ToArray())
+                        })
+                }),
                 ["summary"] = new JsonObject { ["length"] = lengthM / 1000, ["time"] = lengthM / (kmh / 3.6) },
                 ["units"] = "kilometers"
             }

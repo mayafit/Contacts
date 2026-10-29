@@ -48,6 +48,7 @@ import PhotoViewer from './PhotoViewer';
 import AiAccessDialog from './AiAccessDialog';
 import FusionSettingsDialog from './FusionSettingsDialog';
 import AtlasFilterBar from './AtlasFilterBar';
+import { parseRoadQuery } from './filters';
 import AssistantPanel from '../components/assistant/AssistantPanel';
 import { atlasToolset } from './atlasTools';
 import { tokens } from '../theme/contactsTheme';
@@ -91,6 +92,8 @@ const AtlasHome: React.FC = () => {
   const [types, setTypes] = useState<string[]>([]);
   // Only fused activities whose sources disagree
   const [conflictsOnly, setConflictsOnly] = useState(false);
+  // Only activities whose matched route follows this road ('' for none)
+  const [road, setRoad] = useState('');
   // The right panel's tab, kept while the filters change and while a detail is open
   const [panelTab, setPanelTab] = useState<'results' | 'insights'>('results');
   // A question for the assistant ("Explain with AI"); a new id sends it
@@ -237,11 +240,26 @@ const AtlasHome: React.FC = () => {
       .catch(() => setAssistantEnabled(false));
   }, [loadSummary]);
 
-  // Debounced text search
+  // Debounced text search; "road 431" waits for Enter, which makes it the road filter
   useEffect(() => {
-    const t = setTimeout(() => setQuery(text.trim()), 350);
+    const t = setTimeout(() => {
+      if (!parseRoadQuery(text)) {
+        setQuery(text.trim());
+      }
+    }, 350);
     return () => clearTimeout(t);
   }, [text]);
+
+  /** Enter in the search box: "road 431" or "כביש 431" becomes the road filter */
+  const searchKey = (e: React.KeyboardEvent) => {
+    const typedRoad = e.key === 'Enter' ? parseRoadQuery(text) : null;
+    if (typedRoad) {
+      e.preventDefault();
+      setRoad(typedRoad);
+      setText('');
+      setQuery('');
+    }
+  };
 
   // The filters (time, area, types, text, conflicts): the insights use them as they are
   const filters: AtlasQuery = useMemo(
@@ -252,8 +270,9 @@ const AtlasHome: React.FC = () => {
       types: types.length ? types : undefined,
       text: query || undefined,
       conflictsOnly: conflictsOnly || undefined,
+      road: road || undefined,
     }),
-    [selection, area, types, query, conflictsOnly],
+    [selection, area, types, query, conflictsOnly, road],
   );
   const q: AtlasQuery = useMemo(() => ({ ...filters, limit: 500 }), [filters]);
   const fitKey = JSON.stringify(q);
@@ -268,8 +287,9 @@ const AtlasHome: React.FC = () => {
       types: types.length ? types : undefined,
       text: query || undefined,
       conflictsOnly: conflictsOnly || undefined,
+      road: road || undefined,
     }),
-    [area, types, query, conflictsOnly],
+    [area, types, query, conflictsOnly, road],
   );
 
   // The selected activity or visit, marked on the timeline
@@ -388,7 +408,16 @@ const AtlasHome: React.FC = () => {
     );
     setTypes(s.types ?? []);
     setConflictsOnly(!!s.conflictsOnly);
+    setRoad(s.road ?? '');
     setText(s.text ?? '');
+  }, []);
+
+  /** Every activity whose route follows a road (from the panel's roads) */
+  const showRoad = useCallback((r: string) => {
+    setDetail(null);
+    setVisit(null);
+    setRoad(r);
+    setPanelTab('results');
   }, []);
 
   const toolset = useMemo(
@@ -441,6 +470,7 @@ const AtlasHome: React.FC = () => {
     setDrawing(false);
     setTypes([]);
     setConflictsOnly(false);
+    setRoad('');
     setText('');
     setQuery('');
   };
@@ -455,7 +485,8 @@ const AtlasHome: React.FC = () => {
   };
 
   const showInsights = !mergeFrom && !detail && !visit && panelTab === 'insights';
-  const filtered = !!selection || !!area || types.length > 0 || query !== '' || conflictsOnly;
+  const filtered =
+    !!selection || !!area || types.length > 0 || query !== '' || conflictsOnly || road !== '';
 
   if (status && !status.ready) {
     return (
@@ -522,7 +553,8 @@ const AtlasHome: React.FC = () => {
           <InputBase
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder="Search places and activities…"
+            onKeyDown={searchKey}
+            placeholder="Search places, activities or road 431…"
             inputProps={{ 'aria-label': 'Search Atlas', dir: 'auto' }}
             sx={{ flex: 1, fontSize: { xs: 16, sm: 14 } }}
           />
@@ -605,6 +637,7 @@ const AtlasHome: React.FC = () => {
         types={types}
         text={query}
         conflictsOnly={conflictsOnly}
+        road={road}
         result={result}
         loading={loading}
         onClearTime={() => setSelection(null)}
@@ -616,6 +649,7 @@ const AtlasHome: React.FC = () => {
         onFocusArea={() => setFocusArea((n) => n + 1)}
         onClearTypes={() => setTypes([])}
         onClearConflicts={() => setConflictsOnly(false)}
+        onClearRoad={() => setRoad('')}
         onClearText={() => {
           setText('');
           setQuery('');
@@ -810,6 +844,7 @@ const AtlasHome: React.FC = () => {
                 onOpenPhoto={(index) => setViewer({ photos: panelPhotos, index })}
                 routeView={routeView}
                 onRouteView={setRouteView}
+                onRoad={showRoad}
                 onRouteChanged={async () => {
                   // The list and the map draw the new choice too
                   setReloadKey((k) => k + 1);

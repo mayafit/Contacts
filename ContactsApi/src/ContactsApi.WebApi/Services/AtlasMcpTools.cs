@@ -57,10 +57,11 @@ public class AtlasMcpTools
         [Description("Bounding box east longitude")] double? maxLon = null,
         [Description("Activity types: ride, hike, run, walk, drive, flight, transit, ski, swim, other")] string[]? types = null,
         [Description("Text in activity names/notes or place names")] string? text = null,
+        [Description("Only activities whose road-matched route follows this road: a route number (431) or part of a street name (Hebrew)")] string? road = null,
         [Description("IANA time zone for weekdays and hours, e.g. Asia/Jerusalem")] string? timeZone = null) =>
         _atlas.InsightsAsync(Owner, new AtlasQuery
         {
-            From = from, To = to, MinLat = minLat, MinLon = minLon, MaxLat = maxLat, MaxLon = maxLon, Types = types?.ToList(), Text = text
+            From = from, To = to, MinLat = minLat, MinLon = minLon, MaxLat = maxLat, MaxLon = maxLon, Types = types?.ToList(), Text = text, Road = road
         }, timeZone);
 
     [McpServerTool(Name = "atlas_merge_activities"), Description("Join two activities that are the same real-world activity (the user's decision is remembered). Returns the merged activity.")]
@@ -84,7 +85,7 @@ public class AtlasMcpTools
     [McpServerTool(Name = "atlas_summary"), Description("Totals of the user's activities, places, visits and health samples, the date range they cover, distance per activity type, and the imports.")]
     public Task<AtlasSummary> Summary() => _atlas.SummaryAsync(Owner);
 
-    [McpServerTool(Name = "atlas_search"), Description("Search activities (rides, hikes, runs, walks, drives, flights…) and place visits. All filters are optional and combine: time range, bounding box, activity types, text in names/places.")]
+    [McpServerTool(Name = "atlas_search"), Description("Search activities (rides, hikes, runs, walks, drives, flights…) and place visits. All filters are optional and combine: time range, bounding box, activity types, text in names/places, a road the route followed.")]
     public Task<SearchResult> Search(
         [Description("Start of the time range, ISO 8601")] DateTime? from = null,
         [Description("End of the time range, ISO 8601")] DateTime? to = null,
@@ -94,13 +95,14 @@ public class AtlasMcpTools
         [Description("Bounding box east longitude")] double? maxLon = null,
         [Description("Activity types: ride, hike, run, walk, drive, flight, transit, ski, swim, other")] string[]? types = null,
         [Description("Text in activity names/notes or place names/addresses")] string? text = null,
+        [Description("Only activities whose road-matched route follows this road: a route number (431) or part of a street name (Hebrew)")] string? road = null,
         [Description("Include activities")] bool activities = true,
         [Description("Include visits")] bool visits = true,
         [Description("Maximum results of each kind (default 100)")] int limit = 100) =>
         _atlas.SearchAsync(Owner, new AtlasQuery
         {
             From = from, To = to, MinLat = minLat, MinLon = minLon, MaxLat = maxLat, MaxLon = maxLon,
-            Types = types?.ToList(), Text = text, Activities = activities, Visits = visits, Limit = limit
+            Types = types?.ToList(), Text = text, Road = road, Activities = activities, Visits = visits, Limit = limit
         });
 
     [McpServerTool(Name = "atlas_get_activity"), Description("One activity with its track (time, position, elevation, heart rate, speed) and its heart rate series (from the track, or from health samples recorded at the same time). Activities are fused from several sources (Sports Tracker, Google Timeline, Google Fit, Fitbit…): the result lists the source records (members), which source supplied each value (fieldSources), what they disagree on (conflicts), and the places visited at the start, end or on the way. Points carry distance from the start (d), speed and cadence. The analysis has moving vs stopped time, splits (per km for runs/walks/hikes, per 5 km for rides) with pace, heart rate and climb, time in heart-rate zones (from the user's own max), aerobic decoupling (drift), best efforts with their all-time rank, and the comparison with the same route and the same type over the last year.")]

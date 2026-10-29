@@ -1,18 +1,27 @@
 /**
  * @fileoverview The active filters under the Atlas header: one removable chip per
- * filter (time, area, types, text, sources disagree), "Clear all" and the result count
+ * filter (time, area, types, text, road, sources disagree), "Clear all" and the result count
  * @module Contacts/atlas/AtlasFilterBar
  */
 
 import React from 'react';
 import { Box, Button, Chip, Tooltip, Typography } from '@mui/material';
-import { Category, CropFree, FilterAlt, Schedule, Search, WarningAmber } from '@mui/icons-material';
+import {
+  AltRoute,
+  Category,
+  CropFree,
+  FilterAlt,
+  Schedule,
+  Search,
+  WarningAmber,
+} from '@mui/icons-material';
 import type { SearchResult } from './types';
 import { FILTER_COLOR } from './types';
 import type { AreaBox } from './filters';
 import {
   formatAreaFilter,
   formatResultCount,
+  formatRoadFilter,
   formatTimeFilter,
   formatTypesFilter,
 } from './filters';
@@ -30,6 +39,8 @@ export interface AtlasFilterBarProps {
   text: string;
   /** Only activities whose sources disagree */
   conflictsOnly?: boolean;
+  /** Only activities whose matched route follows this road ('' for none) */
+  road?: string;
   /** The search result (for the count), null while none has arrived */
   result: SearchResult | null;
   loading: boolean;
@@ -42,6 +53,7 @@ export interface AtlasFilterBarProps {
   onClearTypes: () => void;
   onClearText: () => void;
   onClearConflicts?: () => void;
+  onClearRoad?: () => void;
   onClearAll: () => void;
 }
 
@@ -70,6 +82,7 @@ const AtlasFilterBar: React.FC<AtlasFilterBarProps> = ({
   types,
   text,
   conflictsOnly = false,
+  road = '',
   result,
   loading,
   onClearTime,
@@ -79,9 +92,11 @@ const AtlasFilterBar: React.FC<AtlasFilterBarProps> = ({
   onClearTypes,
   onClearText,
   onClearConflicts,
+  onClearRoad,
   onClearAll,
 }) => {
-  const active = !!selection || !!area || types.length > 0 || text !== '' || conflictsOnly;
+  const active =
+    !!selection || !!area || types.length > 0 || text !== '' || conflictsOnly || road !== '';
   const count = loading ? 'Searching…' : result ? formatResultCount(result) : '';
 
   return (
@@ -147,6 +162,17 @@ const AtlasFilterBar: React.FC<AtlasFilterBarProps> = ({
                 icon={<Search />}
                 label={`“${text}”`}
                 onDelete={onClearText}
+                sx={chipSx}
+              />
+            </Tooltip>
+          )}
+          {road !== '' && (
+            <Tooltip title="Only routes on this road (drives drawn on the roads)">
+              <Chip
+                size="small"
+                icon={<AltRoute />}
+                label={formatRoadFilter(road)}
+                onDelete={onClearRoad}
                 sx={chipSx}
               />
             </Tooltip>

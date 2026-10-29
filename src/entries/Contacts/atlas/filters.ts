@@ -107,6 +107,46 @@ export const formatAreaFilter = (area: AreaBox): string =>
 export const formatTypesFilter = (types: string[]): string =>
   types.map((t) => ACTIVITY_TYPES[t]?.label ?? t).join(', ');
 
+/**
+ * The road filter's chip label.
+ * @param road - The road as filtered
+ * @returns "Road 431" for a route number, else the street name
+ */
+export const formatRoadFilter = (road: string): string =>
+  /^[0-9]{1,4}[A-Za-z]?$/.test(road.trim()) ? `Road ${road.trim()}` : road.trim();
+
+/** "road 431", "route 4", "כביש 431": a road search typed into the search box */
+const ROAD_QUERY = /^(?:road|route|rd|hwy|highway|כביש)\s+(.+)$/i;
+
+/**
+ * A road typed into the search box, as the road filter.
+ * @param text - The search text
+ * @returns The road ("431" for "road 431"), or null when the text is not a road search
+ */
+export const parseRoadQuery = (text: string): string | null => {
+  const m = ROAD_QUERY.exec(text.trim());
+  return m ? m[1].trim() || null : null;
+};
+
+/**
+ * The roads to show at first: route numbers and the longest streets, in travel order.
+ * @param roads - The roads in travel order
+ * @param max - How many to show
+ * @returns The shown roads (in travel order) and how many are left out
+ */
+export const visibleRoads = <T extends { name: string; ref: boolean; m: number }>(
+  roads: T[],
+  max = 8,
+): { shown: T[]; hidden: number } => {
+  if (roads.length <= max) {
+    return { shown: roads, hidden: 0 };
+  }
+  const keep = new Set(
+    [...roads].sort((a, b) => Number(b.ref) - Number(a.ref) || b.m - a.m).slice(0, max),
+  );
+  return { shown: roads.filter((r) => keep.has(r)), hidden: roads.length - max };
+};
+
 /** "1 activity", "12 activities", "12 of 40 activities" */
 const counted = (shown: number, total: number, one: string, many: string): string => {
   const n = total > shown ? `${shown} of ${total}` : String(total);

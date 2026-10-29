@@ -36,6 +36,9 @@ const QUERY = {
     description: 'ride, hike, run, walk, drive, flight, transit, ski, swim, other',
   },
   text: S('Text in activity names/notes or place names/addresses'),
+  road: S(
+    'Only activities whose road-matched route followed this road: a route number ("431") or part of a street name (street names are in Hebrew, e.g. "איילון"). Leaves out visits.',
+  ),
 };
 
 const DECLARATIONS = [
@@ -109,6 +112,7 @@ const DECLARATIONS = [
         maxLon: QUERY.maxLon,
         types: QUERY.types,
         text: QUERY.text,
+        road: QUERY.road,
         conflictsOnly: {
           type: 'boolean',
           description: 'Only activities whose sources disagree (the "Sources disagree" filter)',
@@ -155,6 +159,7 @@ const describeFilters = (f: AtlasQuery | undefined): string => {
     f.types?.length ? `types ${f.types.join(', ')}` : '',
     f.text ? `text "${f.text}"` : '',
     f.conflictsOnly ? 'only activities whose sources disagree' : '',
+    f.road ? `only routes on road "${f.road}"` : '',
   ].filter(Boolean);
   return parts.length ? parts.join('; ') : 'none';
 };
@@ -383,6 +388,7 @@ export const atlasToolset = (ui: AtlasUi): Toolset => ({
       types: args.types as string[] | undefined,
       text: args.text as string | undefined,
       conflictsOnly: args.conflictsOnly === true || undefined,
+      road: typeof args.road === 'string' && args.road.trim() ? args.road.trim() : undefined,
     };
     switch (name) {
       case 'atlas_search': {

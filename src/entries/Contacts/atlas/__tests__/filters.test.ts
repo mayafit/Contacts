@@ -3,9 +3,12 @@ import {
   formatAreaFilter,
   formatAreaSize,
   formatResultCount,
+  formatRoadFilter,
   formatSpan,
   formatTimeFilter,
   formatTypesFilter,
+  parseRoadQuery,
+  visibleRoads,
 } from '../filters';
 import type { SearchResult } from '../types';
 
@@ -76,5 +79,40 @@ describe('atlas filter bar texts', () => {
     expect(formatResultCount(result(500, 812, 30, 30))).toBe('500 of 812 activities · 30 visits');
     expect(formatResultCount(result(1, 1, 1, 1))).toBe('1 activity · 1 visit');
     expect(formatResultCount(result(0, 0, 0, 0))).toBe('0 activities · 0 visits');
+  });
+});
+
+describe('road filter', () => {
+  it('labels a route number as a road and a street by its name', () => {
+    expect(formatRoadFilter('431')).toBe('Road 431');
+    expect(formatRoadFilter(' 20A ')).toBe('Road 20A');
+    expect(formatRoadFilter('איילון צפון')).toBe('איילון צפון');
+  });
+
+  it('reads "road 431" typed into the search box', () => {
+    expect(parseRoadQuery('road 431')).toBe('431');
+    expect(parseRoadQuery('  Route 4 ')).toBe('4');
+    expect(parseRoadQuery('כביש 431')).toBe('431');
+    expect(parseRoadQuery('highway 6')).toBe('6');
+    expect(parseRoadQuery('דרך נמיר')).toBeNull();
+    expect(parseRoadQuery('road אבן גבירול')).toBe('אבן גבירול');
+    expect(parseRoadQuery('431')).toBeNull();
+    expect(parseRoadQuery('Roadrunner')).toBeNull();
+    expect(parseRoadQuery('cafe road')).toBeNull();
+  });
+
+  it('shows route numbers and the longest streets first, in travel order', () => {
+    const r = (name: string, ref: boolean, m: number) => ({ name, ref, m });
+    const roads = [
+      r('a', false, 900),
+      r('4', true, 100),
+      r('b', false, 200),
+      r('c', false, 950),
+      r('431', true, 50),
+    ];
+    expect(visibleRoads(roads, 10)).toEqual({ shown: roads, hidden: 0 });
+    const { shown, hidden } = visibleRoads(roads, 3);
+    expect(shown.map((x) => x.name)).toEqual(['4', 'c', '431']);
+    expect(hidden).toBe(2);
   });
 });

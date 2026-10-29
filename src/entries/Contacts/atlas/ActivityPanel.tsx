@@ -63,6 +63,7 @@ import {
 } from './AnalysisSections';
 import { tokens } from '../theme/contactsTheme';
 import RouteLine, { type RouteView } from './RouteLine';
+import RouteRoads from './RouteRoads';
 
 /** Props for ActivityPanel */
 export interface ActivityPanelProps {
@@ -88,6 +89,8 @@ export interface ActivityPanelProps {
   onRouteView?: (view: RouteView) => void;
   /** Loads the activity again after a route change (revert, fix) */
   onRouteChanged?: () => Promise<ActivityDetail | null>;
+  /** Finds every activity whose route follows a road */
+  onRoad?: (road: string) => void;
 }
 
 /** Icon and text of a linked place's role */
@@ -201,6 +204,7 @@ const ActivityPanel: React.FC<ActivityPanelProps> = ({
   routeView = 'roads',
   onRouteView,
   onRouteChanged,
+  onRoad,
 }) => {
   const s = detail.summary;
   const [editing, setEditing] = useState(false);
@@ -313,6 +317,9 @@ const ActivityPanel: React.FC<ActivityPanelProps> = ({
           onView={onRouteView}
           onChanged={onRouteChanged}
         />
+      )}
+      {onRoad && s.geometry === 'matched' && routeView === 'roads' && detail.route?.roads && (
+        <RouteRoads roads={detail.route.roads} onRoad={onRoad} />
       )}
 
       {editing && (

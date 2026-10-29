@@ -104,21 +104,27 @@ public class MatchRunner
     {
         public RouteQualityRow Q { get; init; } = null!;
 
-        /// <summary>0: new, changed or a due retry; 1: an older rule's low_confidence or failed match; 2: an older rule's matched one</summary>
+        /// <summary>
+        /// 0: new, changed or a due retry; 1: an older rule's low_confidence or failed match, or a
+        /// well-recorded record never matched (matched for its roads, AD-37); 2: an older rule's matched one
+        /// </summary>
         public int Rank { get; init; }
     }
 
     /// <summary>
-    /// The Owner's records waiting for a match. A row of an older rule version waits
-    /// for a re-match (AD-34 rule 7), unless its re-match is backing off; a reject
+    /// The Owner's records waiting for a match: those that need improvement, and every
+    /// other matchable record of a matched type (AD-37). A row of an older rule version
+    /// waits for a re-match (AD-34 rule 7), unless its re-match is backing off; a reject
     /// decision always wins.
     /// </summary>
     public IQueryable<PendingRow> PendingRows(string owner)
     {
         var now = Now;
         const string rule = RouteQuality.RuleVersion;
+        // A well-recorded drive is matched too: its roads are needed for the road filter (AD-37)
+        var matchedTypes = RouteQuality.MatchedTypes;
         return from q in _db.Quality.AsNoTracking()
-            where q.OwnerId == owner && q.NeedsImprovement && q.Matchable == Matchability.Yes
+            where q.OwnerId == owner && q.Matchable == Matchability.Yes && (q.NeedsImprovement || matchedTypes.Contains(q.Type))
             from m in _db.MatchedRoutes.Where(m => m.OwnerId == owner && m.ActivityId == q.ActivityId).DefaultIfEmpty()
             where m == null || m.InputHash != q.InputHash || m.FusedType != q.Type
                   || ((m.RuleVersion != rule || m.NextAttemptAt != null) && (m.NextAttemptAt == null || m.NextAttemptAt <= now))
@@ -126,7 +132,8 @@ public class MatchRunner
             select new PendingRow
             {
                 Q = q,
-                Rank = m == null || m.InputHash != q.InputHash || m.FusedType != q.Type || m.RuleVersion == rule ? 0
+                Rank = m == null ? (q.NeedsImprovement ? 0 : 1)
+                    : m.InputHash != q.InputHash || m.FusedType != q.Type || m.RuleVersion == rule ? 0
                     : m.Status == RouteStatuses.Matched ? 2 : 1
             };
     }
@@ -236,7 +243,9 @@ public class MatchRunner
             // A re-match for a new rule: the old line is served until its replacement is written
             var stale = sameInput && !current && Serves(row!);
             var retryDue = row?.NextAttemptAt != null && row.NextAttemptAt <= Now;
-            if (!force && (!a.NeedsImprovement || (current && !retryDue)))
+            // Every matchable record is matched, not only those that need improvement: the road
+            // filter needs the roads of well-recorded drives too (AD-37)
+            if (!force && current && !retryDue)
             {
                 tally.Skipped++;
                 continue;
@@ -338,6 +347,9 @@ public class MatchRunner
         (row.ListPolyline, row.DensityPolyline) = result.Polyline != null ? RouteLines.Derive(result.Polyline) : (null, null);
         row.Pieces = JsonSerializer.Serialize(result.Pieces, Json);
         row.MatchedDistanceM = result.Polyline != null ? result.LengthM : null;
+        // The roads it follows, for the panel and the road filter (AD-37)
+        row.Roads = result.Polyline != null ? RouteRoads.Serialize(result.Roads ?? new()) : null;
+        row.RoadNames = result.Polyline != null ? (result.Roads ?? new()).Select(r => r.Name).ToArray() : null;
         row.MetricsAfter = JsonSerializer.Serialize(result.Metrics, Json);
         row.Reason = Truncate(result.Reason != null && refusal != null ? $"{result.Reason}; {refusal}" : result.Reason);
         row.Attempts = 0;
@@ -402,6 +414,8 @@ public class MatchRunner
         row.DensityPolyline = null;
         row.Pieces = "[]";
         row.MatchedDistanceM = null;
+        row.Roads = null;
+        row.RoadNames = null;
         row.ComputedAt = Now;
         row.NextAttemptAt = wait;
         row.Reason = Truncate($"{reason} (the engine is unavailable; not counted as an attempt)");
@@ -466,6 +480,8 @@ public class MatchRunner
         row.DensityPolyline = null;
         row.Pieces = "[]";
         row.MatchedDistanceM = null;
+        row.Roads = null;
+        row.RoadNames = null;
         row.ComputedAt = Now;
         if (row.Attempts <= _backoff.Length)
         {

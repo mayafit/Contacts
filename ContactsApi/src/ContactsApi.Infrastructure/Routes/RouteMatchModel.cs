@@ -5,6 +5,8 @@
  * @module ContactsApi.Infrastructure.Routes
  */
 using System.Text.Json;
+using System.Text.RegularExpressions;
+using ContactsApi.Core.Interfaces;
 
 namespace ContactsApi.Infrastructure.Routes;
 
@@ -41,6 +43,76 @@ public static class RouteStatuses
 
 /// <summary>One piece of a matched line, in metres along the stored (precision 5) line</summary>
 public record RoutePiece(double FromM, double ToM, string Kind);
+
+/// <summary>The roads of a matched line (AD-37): what counts, how they are stored and searched</summary>
+public static class RouteRoads
+{
+    /// <summary>A road the line follows for less than this (metres) is left out: a junction crossed, a snapping slip</summary>
+    public const double MinM = 100;
+
+    /// <summary>Most roads stored per line (the longest are kept)</summary>
+    public const int Max = 40;
+
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    private static readonly Regex RefPattern = new(@"^[0-9]{1,4}[A-Za-z]?$", RegexOptions.Compiled);
+    private static readonly Regex Prefix = new(@"^(road|route|rd|hwy|highway|כביש)\s+", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    /// <summary>A route number ("431", "4"), not a street name</summary>
+    public static bool IsRef(string name) => RefPattern.IsMatch(name);
+
+    /// <summary>
+    /// The roads to store from metres per name: at least <see cref="MinM"/>, at most
+    /// <see cref="Max"/> (the longest), in travel order
+    /// </summary>
+    public static List<RouteRoad> Keep(IEnumerable<(string Name, double M, double FromM)> roads) =>
+        roads.Where(r => r.M >= MinM && !string.IsNullOrWhiteSpace(r.Name))
+            .OrderByDescending(r => r.M).Take(Max)
+            .OrderBy(r => r.FromM)
+            .Select(r => new RouteRoad(r.Name.Trim(), IsRef(r.Name.Trim()), Math.Round(r.M), Math.Round(r.FromM, 1)))
+            .ToList();
+
+    public static string Serialize(IReadOnlyList<RouteRoad> roads) => JsonSerializer.Serialize(roads, Json);
+
+    /// <summary>The stored roads of a row; empty when it has none or they cannot be read</summary>
+    public static List<RouteRoad> Parse(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return new List<RouteRoad>();
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<RouteRoad>>(json, Json) ?? new List<RouteRoad>();
+        }
+        catch (JsonException)
+        {
+            return new List<RouteRoad>();
+        }
+    }
+
+    /// <summary>
+    /// What the Owner typed, as searched: trimmed, without a "road" / "כביש" prefix, a
+    /// route number's letter in capitals; null when nothing is left. "Road 431" and
+    /// "כביש 431" search for 431. "דרך" is kept: it begins many street names.
+    /// </summary>
+    public static string? Normalize(string? road)
+    {
+        var s = road?.Trim();
+        if (string.IsNullOrEmpty(s))
+        {
+            return null;
+        }
+
+        s = Prefix.Replace(s, string.Empty).Trim();
+        if (IsRef(s))
+        {
+            s = s.ToUpperInvariant();
+        }
+
+        return s.Length == 0 ? null : s.Length > 100 ? s[..100] : s;
+    }
+}
 
 /// <summary>Decision kinds (route_decisions.Kind)</summary>
 public static class RouteDecisionKinds

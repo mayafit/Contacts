@@ -162,7 +162,12 @@ Built in PRs #56–#110 (from a91a5c7 "Personal site with Atlas" to 1e05abc phot
 - Indexes start with OwnerId, plus partial indexes for photos.
 
 ## 6A. Routes (route quality and road matching, Epic 12 R1)
-Architecture §5A, AD-32 to AD-36; plan `docs/planning/epic-12-route-quality.md`.
+Architecture §5A, AD-32 to AD-37; plan `docs/planning/epic-12-route-quality.md`.
+- **Roads travelled (AD-37, rule `routes.v4`).**
+  - **Stored.** Every matched line stores the roads it follows: `matched_routes.Roads` holds `[{name, ref, m, fromM}]` in travel order, and `RoadNames` holds the names alone for the filter. The names come from Valhalla's `edge.names` and from the gap fills' maneuver `street_names`. Only observed and inferred metres count, and a road needs 100 m.
+  - **Matched.** Every matchable drive is matched, not only the sparse ones.
+  - **Shown.** The panel's "Via" line (`RouteRoads.tsx`) lists the roads.
+  - **Searched.** `AtlasQuery.Road` filters search, density, the histogram and Insights through `IRouteGeometryReader.OnRoadAsync`. It is set from the panel, by "road 431" or "כביש 431" in the search box, or by the Assistant and MCP `road` argument.
 - **Service.** `EchoRoutes.Worker` (with Valhalla in the same pod, `helm/contacts/charts/routes`) pulls each Owner's change feed through `/internal/routes/*`, assesses every record (rule `routes.v1`, stage A: grade, flags, matchability) and matches drives and bus or taxi transit in Israel (stage B). It writes only the `routes` schema: `route_quality`, `matched_routes` (polyline at precision 5, pieces `[{fromM, toM, kind}]` in metres, status, confidence, the record's `UpdatedAt`, point count and fused type at match time), `route_decisions`, `settings`, `jobs`, `owner_cursors`.
 - **Read-time choice (AD-34 rule 3).** Atlas reads the geometry only through `IRouteGeometryReader` (`Core`), implemented by `Infrastructure/Routes/RouteGeometryReader.cs`:
   - one set-based query per read, by record ids: `matched_routes` by `(OwnerId, ActivityId)`, left-joined to `route_decisions` by `(OwnerId, SourceKey)`, the Owner's settings as a scalar subquery. No points are read and nothing is hashed; existing unique indexes serve it, so no index was added;

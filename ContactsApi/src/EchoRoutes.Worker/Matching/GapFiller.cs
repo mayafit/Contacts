@@ -63,7 +63,8 @@ public record GapStretch(int From, int To, (double Lat, double Lon) Start, (doub
     double LineM, int Breaks, bool RoutedOnly, double TrackM = 0, double? StartHeading = null, double? EndHeading = null);
 
 /// <summary>A /route answer: its shape (precision 6 decoded), length and time</summary>
-public record RouteFill(List<(double Lat, double Lon)> Shape, double LengthM, double TimeS);
+/// <param name="Roads">The road names of the segment into each shape vertex (from the maneuvers, AD-37); null when unknown</param>
+public record RouteFill(List<(double Lat, double Lon)> Shape, double LengthM, double TimeS, List<string[]?>? Roads = null);
 
 /// <summary>What became of a stretch</summary>
 /// <param name="Result">filled, rejected_time, rejected_length, rejected_reversal, too_long, no_route, timeout, skipped (over the per-drive cap), deferred (the record's filling stopped early)</param>
@@ -117,7 +118,8 @@ public static class GapFiller
         ["locations"] = new JsonArray(Location(s.Start, s.StartHeading, headingTolerance), Location(s.End, s.EndHeading, headingTolerance)),
         ["costing"] = costing,
         ["units"] = "kilometers",
-        ["directions_type"] = "none"
+        // Maneuvers carry the street names of the filled stretch (AD-37); no narrative text
+        ["directions_type"] = "maneuvers"
     };
 
     private static JsonObject Location((double Lat, double Lon) p, double? heading, double tolerance)
@@ -141,11 +143,33 @@ public static class GapFiller
         }
 
         var shape = new List<(double Lat, double Lon)>();
+        var roads = new List<string[]?>();
         foreach (var leg in legs.EnumerateArray())
         {
             if (leg.TryGetProperty("shape", out var s) && s.ValueKind == JsonValueKind.String)
             {
-                shape.AddRange(ValhallaTrace.DecodePolyline(s.GetString()!, 6));
+                var offset = shape.Count;
+                var legShape = ValhallaTrace.DecodePolyline(s.GetString()!, 6);
+                shape.AddRange(legShape);
+                roads.AddRange(Enumerable.Repeat<string[]?>(null, legShape.Count));
+                if (leg.TryGetProperty("maneuvers", out var maneuvers) && maneuvers.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var m in maneuvers.EnumerateArray())
+                    {
+                        var names = ValhallaTrace.Names(m, "street_names");
+                        if (names == null || !m.TryGetProperty("begin_shape_index", out var b) || !b.TryGetInt32(out var begin)
+                            || !m.TryGetProperty("end_shape_index", out var e) || !e.TryGetInt32(out var end))
+                        {
+                            continue;
+                        }
+
+                        // The segment into vertex j is on the maneuver's road for j in (begin, end]
+                        for (var j = Math.Max(begin + 1, 1); j <= end && j < legShape.Count; j++)
+                        {
+                            roads[offset + j] = names;
+                        }
+                    }
+                }
             }
         }
 
@@ -174,7 +198,7 @@ public static class GapFiller
             }
         }
 
-        return new RouteFill(shape, lengthM, timeS);
+        return new RouteFill(shape, lengthM, timeS, roads.Any(r => r != null) ? roads : null);
     }
 
     /// <summary>

@@ -170,6 +170,31 @@ public class RoutesEngineIntegrationTests
     }
 
     [EngineFact]
+    public async Task A_matched_drive_lists_the_roads_it_followed_in_travel_order()
+    {
+        var url = TestEngine.Url!;
+        // Ramla to Modi'in: 423, then most of the way on 431 (AD-37)
+        var road = await RoadAsync(url, (31.9300, 34.8200), (31.9010, 34.9600));
+        var points = Sample(road, 800);
+
+        var r = await MatchAsync(url, points);
+
+        Assert.Equal(RouteStatuses.Matched, r.Status);
+        var on431 = Assert.Single(r.Roads!, x => x.Name == "431");
+        Assert.True(on431.Ref);
+        Assert.True(on431.M > 10_000, $"{on431.M} m on 431");
+        Assert.True(r.Roads!.Single(x => x.Name == "423").FromM < on431.FromM);
+        Assert.All(r.Roads!, x => Assert.True(x.M >= RouteRoads.MinM));
+
+        // A stretch with nothing recorded and not filled (no gap filling here) is on no road
+        var cut = points.Take(4).Concat(points.Skip(11).Select(p => p with { T = p.T.AddMinutes(2) })).ToList();
+        var gapped = await MatchAsync(url, cut);
+        var gap = gapped.Pieces.Where(p => p.Kind == PieceKinds.Gap).Sum(p => p.ToM - p.FromM);
+        Assert.True(gap > 4_000, $"{gap} m of gap");
+        Assert.InRange(gapped.Roads!.Single(x => x.Name == "431").M, on431.M - gap - 1_500, on431.M - gap + 1_500);
+    }
+
+    [EngineFact]
     public async Task A_long_gap_in_the_recording_stays_a_gap_and_the_rest_is_matched()
     {
         var url = TestEngine.Url!;
