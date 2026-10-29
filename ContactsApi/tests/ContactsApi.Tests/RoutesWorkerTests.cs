@@ -19,6 +19,8 @@ internal sealed class FakeRoutesBackend : IRoutesBackend
     public readonly Dictionary<string, List<RouteTrack>> Records = new();
     public readonly List<(string Call, string Owner, int Count, bool Interactive)> Calls = new();
     public readonly Dictionary<string, TimeSpan> BusyFor = new();
+    /// <summary>When set, tracks calls fail with it</summary>
+    public Exception? TracksError;
 
     /// <summary>Adds records to an Owner: sparse drives, or trackless ones</summary>
     public List<RouteTrack> Add(string owner, int count, int points = 13)
@@ -73,9 +75,24 @@ internal sealed class FakeRoutesBackend : IRoutesBackend
     public Task<List<RouteTrack>> TracksAsync(string owner, IReadOnlyCollection<Guid> ids, bool interactive, CancellationToken ct)
     {
         Calls.Add(("tracks", owner, ids.Count, interactive));
+        if (TracksError != null)
+        {
+            throw TracksError;
+        }
+
         Assert.True(ids.Count <= RoutesFeedLimits.TracksMax);
         // Only the Owner's own records, as the backend does
         return Task.FromResult(Records.GetValueOrDefault(owner, new()).Where(r => ids.Contains(r.Id)).ToList());
+    }
+
+    public Task<RouteIdsPage> RangeAsync(string owner, DateTime from, DateTime to, string? after, int limit, bool interactive, CancellationToken ct)
+    {
+        Calls.Add(("range", owner, limit, interactive));
+        var all = Records.GetValueOrDefault(owner, new()).Where(r => r.Start >= from && r.Start < to)
+            .OrderBy(r => r.Start).ThenBy(r => r.Id).ToList();
+        var skip = after == null ? 0 : int.Parse(after);
+        var page = all.Skip(skip).Take(limit).Select(r => r.Id).ToList();
+        return Task.FromResult(new RouteIdsPage(page, (skip + page.Count).ToString(), skip + page.Count < all.Count));
     }
 
     public Task<List<Guid>> ExistsAsync(string owner, IReadOnlyCollection<Guid> ids, CancellationToken ct) =>

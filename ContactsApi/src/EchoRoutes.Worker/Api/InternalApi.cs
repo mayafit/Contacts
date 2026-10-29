@@ -7,6 +7,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using ContactsApi.Infrastructure.Routes;
+using EchoRoutes.Worker.Matching;
 using EchoRoutes.Worker.Scheduling;
 using EchoRoutes.Worker.Valhalla;
 using Microsoft.EntityFrameworkCore;
@@ -108,35 +109,16 @@ public static class InternalApi
                     Counts = JsonDocument.Parse(job.Counts).RootElement, job.LastError, job.CreatedAt, job.StartedAt, job.FinishedAt
                 });
         });
-        v1.MapGet("/status", async (string? ownerId, RoutesDbContext db, GraphInfoSource graph, RegionCoverage coverage,
-            IValhallaClient valhalla, CancellationToken ct) =>
+        v1.MapGet("/status", async (string? ownerId, RoutesDbContext db, MatchRunner matcher, GraphInfoSource graph, RegionCoverage coverage,
+            IValhallaClient valhalla, EngineBreaker breaker, IOptions<RoutesOptions> options, CancellationToken ct) =>
         {
             if (!ValidOwner(ownerId))
             {
                 return ApiEnvelope.Fail(StatusCodes.Status400BadRequest, "INVALID_INPUT", "ownerId is required.");
             }
 
-            var jobs = await db.Jobs.AsNoTracking()
-                .Where(j => j.OwnerId == ownerId && (j.State == RouteJobStates.Queued || j.State == RouteJobStates.Running))
-                .GroupBy(j => new { j.State, j.Priority })
-                .Select(g => new { g.Key.State, g.Key.Priority, Count = g.Count() })
-                .ToListAsync(ct);
-            var cursor = await db.Cursors.AsNoTracking().FirstOrDefaultAsync(c => c.OwnerId == ownerId, ct);
-            return ApiEnvelope.Ok(new
-            {
-                Queued = new
-                {
-                    Interactive = jobs.Where(j => j.State == RouteJobStates.Queued && j.Priority == RouteJobPriorities.Interactive).Sum(j => j.Count),
-                    Batch = jobs.Where(j => j.State == RouteJobStates.Queued && j.Priority == RouteJobPriorities.Batch).Sum(j => j.Count)
-                },
-                Running = jobs.Where(j => j.State == RouteJobStates.Running).Sum(j => j.Count),
-                LastRunAt = cursor?.LastRunAt,
-                LastError = cursor?.LastError,
-                Backfilled = cursor?.Cursor != null,
-                EngineVersion = await valhalla.VersionAsync(ct),
-                GraphVersion = graph.Current?.Version,
-                Regions = coverage.Names
-            });
+            var status = await StatusAsync(ownerId!, db, matcher, graph, coverage, valhalla, breaker, options.Value, ct);
+            return ApiEnvelope.Ok(status);
         });
     }
 
@@ -183,6 +165,62 @@ public static class InternalApi
         }
 
         return ApiEnvelope.Ok(new { jobId = job.Id, job.Priority }, StatusCodes.Status202Accepted);
+    }
+
+    /// <summary>
+    /// The Owner's route work (AD-33 rule 4): jobs queued per priority and running, the
+    /// records waiting for a match, an ETA, the engine's health and the breaker's state,
+    /// the graph and the regions. Polling it is never interactive load.
+    /// </summary>
+    public static async Task<object> StatusAsync(string ownerId, RoutesDbContext db, MatchRunner matcher, GraphInfoSource graph,
+        RegionCoverage coverage, IValhallaClient valhalla, EngineBreaker breaker, RoutesOptions options, CancellationToken ct)
+    {
+        var jobs = await db.Jobs.AsNoTracking()
+            .Where(j => j.OwnerId == ownerId && (j.State == RouteJobStates.Queued || j.State == RouteJobStates.Running))
+            .Select(j => new { j.State, j.Priority, j.Kind, j.Total, j.Done, j.NextAttemptAt })
+            .ToListAsync(ct);
+        var cursor = await db.Cursors.AsNoTracking().FirstOrDefaultAsync(c => c.OwnerId == ownerId, ct);
+        var waiting = await matcher.PendingCountAsync(ownerId, ct);
+        var jobRecords = jobs.Where(j => j.Kind == RouteJobKinds.Improve).Sum(j => Math.Max(0, j.Total - j.Done));
+        // Per record: the measured match time, plus the batch pause spread over the batch
+        var perRecordS = (breaker.AvgRecordMs > 0 ? breaker.AvgRecordMs / 1000 : 1.0)
+                         + options.MatchPauseMs / 1000.0 / Math.Max(1, options.MatchBatch);
+        var engineUp = await valhalla.PingAsync(ct);
+        return new
+        {
+            Queued = new
+            {
+                Interactive = jobs.Count(j => j.State == RouteJobStates.Queued && j.Priority == RouteJobPriorities.Interactive),
+                Batch = jobs.Count(j => j.State == RouteJobStates.Queued && j.Priority == RouteJobPriorities.Batch)
+            },
+            Running = jobs.Count(j => j.State == RouteJobStates.Running),
+            Retrying = jobs.Count(j => j.NextAttemptAt != null),
+            WaitingForMatch = waiting,
+            EtaSeconds = (int)Math.Ceiling((waiting + jobRecords) * perRecordS),
+            LastRunAt = cursor?.LastRunAt,
+            LastError = cursor?.LastError,
+            Backfilled = cursor?.Cursor != null && waiting == 0,
+            SweptAt = cursor?.SweptAt,
+            Engine = new
+            {
+                Up = engineUp,
+                Version = await valhalla.VersionAsync(ct),
+                AvgRecordMs = Math.Round(breaker.AvgRecordMs),
+                Calls = breaker.Successes + breaker.Failures,
+                breaker.Failures,
+                Breaker = new
+                {
+                    Open = breaker.IsOpen,
+                    breaker.OpenUntil,
+                    breaker.ConsecutiveFailures,
+                    breaker.Trips,
+                    breaker.LastFailure,
+                    breaker.LastFailureAt
+                }
+            },
+            GraphVersion = graph.Current?.Version,
+            Regions = coverage.Names
+        };
     }
 
     private static bool ValidOwner(string? owner) => !string.IsNullOrWhiteSpace(owner) && owner.Length <= 64;

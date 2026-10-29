@@ -50,7 +50,8 @@ public class AssessRunner
         var (assessed, skipped) = await AssessChangesAsync(owner, page.Items, interactive, ct);
         if (cursor == null)
         {
-            cursor = new OwnerCursor { OwnerId = owner };
+            // The first orphan sweep is a week after the backfill starts
+            cursor = new OwnerCursor { OwnerId = owner, SweptAt = DateTime.UtcNow };
             _db.Cursors.Add(cursor);
         }
 

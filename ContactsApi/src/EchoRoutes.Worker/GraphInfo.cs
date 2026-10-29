@@ -54,7 +54,8 @@ public class GraphInfoSource
             : root.TryGetProperty("valhalla_version", out var v2) ? v2.GetString() : null;
         var extract = root.TryGetProperty("extractDate", out var e) ? e.GetString()
             : root.TryGetProperty("extract_date", out var e2) ? e2.GetString() : null;
-        var version = root.TryGetProperty("graphVersion", out var g) && g.GetString() is { Length: > 0 } given
+        var version = (root.TryGetProperty("graphVersion", out var g) || root.TryGetProperty("graph_version", out g))
+                      && g.ValueKind == JsonValueKind.String && g.GetString() is { Length: > 0 } given
             ? given
             : $"{(regions.Count > 0 ? string.Join(",", regions) : "unknown")}@{extract ?? "unknown"}+valhalla-{valhalla ?? "unknown"}";
         return new GraphInfo(version, regions, valhalla, extract);

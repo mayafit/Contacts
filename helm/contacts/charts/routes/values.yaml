@@ -61,6 +61,34 @@ config:
   DOTNET_RUNNING_IN_CONTAINER: "true"
   Routes__GraphJsonPath: /tiles/graph.json
   Routes__RegionsPath: /tiles
+  # ---- Stage B engine settings (story 12.4). Every engine-facing number is
+  # here so the Pi spike's findings are a values change, not a release.
+  # Engine requests in flight (AD-36 rule 3: one)
+  Routes__EngineConcurrency: "1"
+  # Hard per-call timeout; a timeout backs the record off and counts for the breaker
+  Routes__EngineTimeoutSeconds: "15"
+  Routes__BreakageDistanceM: "5000"
+  Routes__SearchRadiusM: "100"
+  Routes__GpsAccuracyTimelineM: "75"
+  Routes__GpsAccuracyDenseM: "15"
+  # Gaps cut before the call (they become gap pieces)
+  Routes__SplitGapM: "5000"
+  Routes__SplitGapMinutes: "15"
+  # Per call (must not exceed the engine's service_limits.trace)
+  Routes__MaxPointsPerCall: "2000"
+  Routes__MaxKmPerCall: "600"
+  # Per-record backoff after engine failures, then failed
+  Routes__BackoffMinutes: "1,10,60"
+  # N engine failures in a row pause all matching for M minutes
+  Routes__BreakerFailures: "5"
+  Routes__BreakerPauseMinutes: "10"
+  # ---- Scheduling (story 12.5, AD-36): stage A 500 / 400 ms, stage B 25 / 1 s
+  Routes__AssessBatch: "500"
+  Routes__PauseMs: "400"
+  Routes__MatchBatch: "25"
+  Routes__MatchPauseMs: "1000"
+  Routes__PollSeconds: "120"
+  Routes__SweepDays: "7"
 
 # Only Routes__ServiceToken, Routes__BackendToken and Routes__ConnectionString
 # are exported into this pod (never the backend's own database credentials)

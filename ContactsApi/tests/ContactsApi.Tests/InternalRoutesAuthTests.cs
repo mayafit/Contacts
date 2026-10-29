@@ -44,6 +44,7 @@ public class InternalRoutesAuthTests
     [InlineData("/internal/routes/changes")]
     [InlineData("/internal/routes/tracks")]
     [InlineData("/internal/routes/exists")]
+    [InlineData("/internal/routes/range")]
     public async Task The_routes_token_is_accepted_on_internal_routes(string path)
     {
         var result = await AuthenticateAsync(path, "Bearer " + RoutesToken);
@@ -88,7 +89,8 @@ public class InternalRoutesAuthTests
         var controller = Assert.Single(controllers);
         Assert.Equal(EchoServiceDefaults.RoutesPolicy, controller.GetCustomAttribute<AuthorizeAttribute>()?.Policy);
         var actions = controller.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
-        Assert.Equal(5, actions.Length);
+        // owners, changes, tracks, exists (GET and POST), range
+        Assert.Equal(6, actions.Length);
         Assert.All(actions, a => Assert.Null(a.GetCustomAttribute<AllowAnonymousAttribute>()));
         Assert.Null(controller.GetCustomAttribute<AllowAnonymousAttribute>());
         // And no other controller is routed under /internal or carries the service policy

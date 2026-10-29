@@ -112,8 +112,11 @@ public class RouteJob
     /// <summary>JSON: counts per outcome</summary>
     public string Counts { get; set; } = "{}";
     public int Attempts { get; set; }
+    /// <summary>Not run before then (retry backoff, or an open engine breaker)</summary>
     public DateTime? NextAttemptAt { get; set; }
     public string? LastError { get; set; }
+    /// <summary>A time-range job's paging cursor (durable, so the job resumes after a restart)</summary>
+    public string? Cursor { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? StartedAt { get; set; }
     public DateTime? FinishedAt { get; set; }
@@ -128,6 +131,10 @@ public class OwnerCursor
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? LastRunAt { get; set; }
     public string? LastError { get; set; }
+    /// <summary>When the last orphan sweep of this Owner finished</summary>
+    public DateTime? SweptAt { get; set; }
+    /// <summary>A sweep in progress: the last record id it checked</summary>
+    public Guid? SweepAfter { get; set; }
 }
 
 /// <summary>Job kinds</summary>

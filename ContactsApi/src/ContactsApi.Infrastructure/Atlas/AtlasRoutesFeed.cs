@@ -161,6 +161,35 @@ public class AtlasRoutesFeed
         }).ToList();
     }
 
+    /// <summary>
+    /// The owner's source records that start in [from, to), oldest first, a page at a
+    /// time (a date-range job). Ids only, over the (OwnerId, StartTime) index.
+    /// </summary>
+    /// <exception cref="ArgumentException">The cursor is not one this feed wrote</exception>
+    public async Task<RouteIdsPage> RangeAsync(string owner, DateTime from, DateTime to, string? after, int limit = RoutesFeedLimits.ChangesMax,
+        CancellationToken ct = default)
+    {
+        limit = Math.Clamp(limit, 1, RoutesFeedLimits.ChangesMax);
+        from = Utc(from);
+        to = Utc(to);
+        var (t, id) = after == null ? (from, Guid.Empty) : ParseCursor(after);
+        var rows = await _db.Activities.AsNoTracking()
+            .Where(a => a.OwnerId == owner && a.StartTime >= from && a.StartTime < to
+                        && (a.StartTime > t || (a.StartTime == t && a.Id.CompareTo(id) > 0)))
+            .OrderBy(a => a.StartTime).ThenBy(a => a.Id)
+            .Select(a => new { a.Id, a.StartTime })
+            .Take(limit + 1)
+            .ToListAsync(ct);
+        var more = rows.Count > limit;
+        if (more)
+        {
+            rows.RemoveAt(rows.Count - 1);
+        }
+
+        var next = rows.Count > 0 ? Cursor(Utc(rows[^1].StartTime), rows[^1].Id) : after;
+        return new RouteIdsPage(rows.Select(r => r.Id).ToList(), next, more);
+    }
+
     /// <summary>Which of the ids still exist for the owner (the weekly orphan sweep)</summary>
     public Task<List<Guid>> ExistsAsync(string owner, IReadOnlyCollection<Guid> ids, CancellationToken ct = default)
     {

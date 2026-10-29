@@ -46,6 +46,11 @@ public record RouteChange(Guid Id, DateTime UpdatedAt, int PointCount, string Ty
 /// <param name="More">More changes wait after this page</param>
 public record RouteChangesPage(List<RouteChange> Items, string? Next, bool More);
 
+/// <summary>A page of record ids (a time-range job)</summary>
+/// <param name="Next">The cursor to ask from next</param>
+/// <param name="More">More records wait after this page</param>
+public record RouteIdsPage(List<Guid> Ids, string? Next, bool More);
+
 /// <summary>A track point: time and position</summary>
 public record RoutePoint(DateTime T, double Lat, double Lon);
 

@@ -10,6 +10,7 @@ using ContactsApi.Infrastructure.Routes;
 using EchoRoutes.Worker.Assess;
 using EchoRoutes.Worker.Backend;
 using EchoRoutes.Worker.Matching;
+using EchoRoutes.Worker.Valhalla;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -86,10 +87,28 @@ public class WakeSignal
 /// <param name="Force">improve only: skip the "needs improvement" gate (never a reject decision)</param>
 public record JobScope(List<Guid>? ActivityIds, bool? All, DateTime? From = null, DateTime? To = null, bool? Force = null);
 
+/// <summary>What one Owner's turn ran</summary>
+public enum BatchKind
+{
+    /// <summary>Nothing was due</summary>
+    None,
+    /// <summary>Stage A over the change feed</summary>
+    Assess,
+    /// <summary>Stage B (waiting records, or an improve job)</summary>
+    Match,
+    /// <summary>An assess job</summary>
+    Job,
+    /// <summary>A page of the orphan sweep</summary>
+    Sweep
+}
+
 /// <summary>
-/// The round-robin scheduler. Each turn: interactive jobs first (one batch per Owner),
-/// then one bounded batch per Owner (a queued job, else its change feed when due),
-/// with a pause after every batch. A 429 from the backend pauses the turn.
+/// The round-robin scheduler (AD-30, AD-36 rule 4). Each turn: interactive jobs first
+/// (at most one batch per Owner), then one bounded batch per Owner: a queued batch
+/// job, else the change feed when due, else the orphan sweep when due, else the
+/// records waiting for a match. Running batches stop between records when interactive
+/// work arrives; the interactive jobs run, then the turn goes on. A 429 from the
+/// backend pauses the turn.
 /// </summary>
 public class RoutesScheduler : BackgroundService
 {
@@ -103,13 +122,15 @@ public class RoutesScheduler : BackgroundService
     private readonly IPause _pause;
     private readonly RoutesOptions _options;
     private readonly ILogger<RoutesScheduler> _logger;
+    private readonly EngineBreaker? _breaker;
+    private readonly TimeSpan[] _backoff;
     private readonly Dictionary<string, OwnerState> _state = new();
     private List<string> _owners = new();
     private DateTime _ownersAt = DateTime.MinValue;
 
     /// <summary>Creates the scheduler</summary>
     public RoutesScheduler(IServiceScopeFactory scopes, IRoutesBackend backend, WakeSignal wake, IPause pause,
-        IOptions<RoutesOptions> options, ILogger<RoutesScheduler> logger)
+        IOptions<RoutesOptions> options, ILogger<RoutesScheduler> logger, EngineBreaker? breaker = null)
     {
         _scopes = scopes;
         _backend = backend;
@@ -117,11 +138,17 @@ public class RoutesScheduler : BackgroundService
         _pause = pause;
         _options = options.Value;
         _logger = logger;
+        _breaker = breaker;
+        _backoff = _options.Backoff();
     }
 
     private TimeSpan Poll => TimeSpan.FromSeconds(_options.PollSeconds);
 
     private TimeSpan Pause => TimeSpan.FromMilliseconds(_options.PauseMs);
+
+    private TimeSpan MatchPause => TimeSpan.FromMilliseconds(_options.MatchPauseMs);
+
+    private bool EngineOpen => _breaker?.IsOpen != true;
 
     /// <inheritdoc />
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -168,22 +195,22 @@ public class RoutesScheduler : BackgroundService
                 StateOf(owner).FeedDue = true;
             }
 
-            var did = false;
-            // Interactive work goes before background work (AD-8), one batch per Owner
+            var interactiveDone = new HashSet<string>();
+            // Interactive work goes before background work (AD-8)
+            var did = await InteractivePassAsync(interactiveDone, ct);
             foreach (var owner in _owners)
             {
-                if (await RunJobBatchAsync(owner, RouteJobPriorities.Interactive, ct))
+                if (_wake.InteractivePending)
                 {
-                    did = true;
+                    // A running batch stopped after its record for this: run it, then go on
+                    did |= await InteractivePassAsync(interactiveDone, ct);
                 }
-            }
 
-            foreach (var owner in _owners)
-            {
-                if (await RunOwnerBatchAsync(owner, ct))
+                var kind = await RunOwnerBatchAsync(owner, ct);
+                if (kind != BatchKind.None)
                 {
                     did = true;
-                    await _pause.DelayAsync(Pause, ct);
+                    await _pause.DelayAsync(kind == BatchKind.Match ? MatchPause : Pause, ct);
                 }
             }
 
@@ -197,20 +224,59 @@ public class RoutesScheduler : BackgroundService
         }
     }
 
-    /// <summary>One bounded batch of the Owner: a queued batch job, else its change feed when due</summary>
-    private async Task<bool> RunOwnerBatchAsync(string owner, CancellationToken ct)
+    /// <summary>One interactive batch of each Owner with a due interactive job, at most one per Owner per turn</summary>
+    private async Task<bool> InteractivePassAsync(HashSet<string> done, CancellationToken ct)
     {
-        if (await RunJobBatchAsync(owner, RouteJobPriorities.Batch, ct))
+        _wake.TakeInteractive();
+        List<string> owners;
+        using (var scope = _scopes.CreateScope())
         {
-            return true;
+            var now = DateTime.UtcNow;
+            owners = await scope.ServiceProvider.GetRequiredService<RoutesDbContext>().Jobs.AsNoTracking()
+                .Where(j => j.Priority == RouteJobPriorities.Interactive
+                            && (j.State == RouteJobStates.Queued || j.State == RouteJobStates.Running)
+                            && (j.NextAttemptAt == null || j.NextAttemptAt <= now))
+                .Select(j => j.OwnerId).Distinct().ToListAsync(ct);
+        }
+
+        var did = false;
+        foreach (var owner in owners.Where(o => !done.Contains(o)).OrderBy(o => o, StringComparer.Ordinal))
+        {
+            done.Add(owner);
+            if (await RunJobBatchAsync(owner, RouteJobPriorities.Interactive, ct) != BatchKind.None)
+            {
+                did = true;
+            }
+        }
+
+        return did;
+    }
+
+    /// <summary>One bounded batch of the Owner: a queued batch job, the feed, the sweep, or waiting matches</summary>
+    private async Task<BatchKind> RunOwnerBatchAsync(string owner, CancellationToken ct)
+    {
+        var job = await RunJobBatchAsync(owner, RouteJobPriorities.Batch, ct);
+        if (job != BatchKind.None)
+        {
+            return job;
         }
 
         var state = StateOf(owner);
-        if (!state.FeedDue && DateTime.UtcNow < state.NextPoll)
+        if ((state.FeedDue || DateTime.UtcNow >= state.NextPoll) && await RunFeedBatchAsync(owner, state, ct))
         {
-            return false;
+            return BatchKind.Assess;
         }
 
+        if (await RunSweepBatchAsync(owner, ct))
+        {
+            return BatchKind.Sweep;
+        }
+
+        return EngineOpen && await RunMatchBatchAsync(owner, ct) ? BatchKind.Match : BatchKind.None;
+    }
+
+    private async Task<bool> RunFeedBatchAsync(string owner, OwnerState state, CancellationToken ct)
+    {
         try
         {
             using var scope = _scopes.CreateScope();
@@ -228,7 +294,7 @@ public class RoutesScheduler : BackgroundService
         }
         catch (DerivationPendingException)
         {
-            // Fusion is running for this Owner: look again shortly
+            // Fusion is running for this Owner: look again shortly (409, AD-33 rule 5)
             state.FeedDue = false;
             state.NextPoll = DateTime.UtcNow + TimeSpan.FromSeconds(30);
             return false;
@@ -243,76 +309,211 @@ public class RoutesScheduler : BackgroundService
         }
     }
 
-    /// <summary>One batch of the Owner's oldest queued job of this priority</summary>
-    private async Task<bool> RunJobBatchAsync(string owner, string priority, CancellationToken ct)
+    /// <summary>Stage B over the Owner's waiting records (a backfill resumes here after a restart)</summary>
+    private async Task<bool> RunMatchBatchAsync(string owner, CancellationToken ct)
+    {
+        try
+        {
+            using var scope = _scopes.CreateScope();
+            var runner = scope.ServiceProvider.GetService<MatchRunner>();
+            if (runner == null)
+            {
+                return false;
+            }
+
+            var result = await runner.RunPendingBatchAsync(owner, _options.MatchBatch, () => _wake.InteractivePending, ct);
+            if (result.Processed > 0)
+            {
+                _logger.LogInformation("Routes: matched {Matched}, low confidence {Low}, failed {Failed}, retrying {Retrying} of {Seen}",
+                    result.Tally.Matched, result.Tally.LowConfidence, result.Tally.Failed, result.Tally.Retrying, result.Seen);
+            }
+
+            return result.Seen > 0;
+        }
+        catch (Exception ex) when (ex is not BackendBusyException && !ct.IsCancellationRequested)
+        {
+            _logger.LogWarning(ex, "Routes: a match batch failed");
+            await RecordErrorAsync(owner, ex.Message, ct);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// A page of the weekly orphan sweep (AD-34 rule 7): the derived rows of records
+    /// the backend no longer has are deleted. Decisions stay.
+    /// </summary>
+    private async Task<bool> RunSweepBatchAsync(string owner, CancellationToken ct)
     {
         using var scope = _scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<RoutesDbContext>();
-        var job = await db.Jobs
-            .Where(j => j.OwnerId == owner && (j.State == RouteJobStates.Queued || j.State == RouteJobStates.Running) && j.Priority == priority)
-            .OrderBy(j => j.CreatedAt)
-            .FirstOrDefaultAsync(ct);
-        if (job == null)
+        var cursor = await db.Cursors.FirstOrDefaultAsync(c => c.OwnerId == owner, ct);
+        var now = DateTime.UtcNow;
+        if (cursor == null || (cursor.SweepAfter == null && (cursor.SweptAt ?? cursor.UpdatedAt) + TimeSpan.FromDays(_options.SweepDays) > now))
         {
             return false;
         }
 
+        var after = cursor.SweepAfter ?? Guid.Empty;
+        var ids = await db.Quality.AsNoTracking()
+            .Where(q => q.OwnerId == owner && q.ActivityId.CompareTo(after) > 0)
+            .OrderBy(q => q.ActivityId).Select(q => q.ActivityId)
+            .Take(RoutesFeedLimits.ExistsMax).ToListAsync(ct);
+        var gone = 0;
+        if (ids.Count > 0)
+        {
+            var exist = (await _backend.ExistsAsync(owner, ids, ct)).ToHashSet();
+            var missing = ids.Where(id => !exist.Contains(id)).ToList();
+            if (missing.Count > 0)
+            {
+                gone = await scope.ServiceProvider.GetRequiredService<MatchRunner>().DeleteDerivedAsync(owner, missing, ct);
+            }
+        }
+
+        if (ids.Count < RoutesFeedLimits.ExistsMax)
+        {
+            cursor.SweptAt = now;
+            cursor.SweepAfter = null;
+        }
+        else
+        {
+            cursor.SweepAfter = ids[^1];
+        }
+
+        await db.SaveChangesAsync(ct);
+        if (gone > 0)
+        {
+            _logger.LogInformation("Routes: the orphan sweep removed the derived rows of {Count} deleted records", gone);
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// One batch of the Owner's oldest due job of this priority. A failed batch is
+    /// retried after the backoff (1 min, 10 min, 1 h by default), then the job fails;
+    /// an improve job waits while the engine breaker is open.
+    /// </summary>
+    private async Task<BatchKind> RunJobBatchAsync(string owner, string priority, CancellationToken ct)
+    {
+        using var scope = _scopes.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<RoutesDbContext>();
         var now = DateTime.UtcNow;
+        var job = await db.Jobs
+            .Where(j => j.OwnerId == owner && (j.State == RouteJobStates.Queued || j.State == RouteJobStates.Running) && j.Priority == priority
+                        && (j.NextAttemptAt == null || j.NextAttemptAt <= now))
+            .OrderBy(j => j.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+        if (job == null)
+        {
+            return BatchKind.None;
+        }
+
+        var jobScope = JsonSerializer.Deserialize<JobScope>(job.Scope, Json) ?? new JobScope(null, null);
+        var improve = job.Kind == RouteJobKinds.Improve;
+        if (improve && jobScope.All != true && !EngineOpen)
+        {
+            // Matching is paused: the job waits for the breaker, without using an attempt
+            job.NextAttemptAt = _breaker!.OpenUntil;
+            await db.SaveChangesAsync(CancellationToken.None);
+            return BatchKind.None;
+        }
+
         job.State = RouteJobStates.Running;
         job.StartedAt ??= now;
-        var jobScope = JsonSerializer.Deserialize<JobScope>(job.Scope, Json) ?? new JobScope(null, null);
+        var interactive = priority == RouteJobPriorities.Interactive;
         try
         {
             if (jobScope.All == true)
             {
-                // Everything: the feed starts over from an empty cursor (a backfill)
+                // Everything (the backfill): the feed starts over from an empty cursor; what
+                // needs a match is then matched from the waiting records
                 await db.Cursors.Where(c => c.OwnerId == owner).ExecuteUpdateAsync(s => s.SetProperty(c => c.Cursor, (string?)null), ct);
                 StateOf(owner).FeedDue = true;
-                job.State = RouteJobStates.Done;
-                job.FinishedAt = now;
+                Finish(job, RouteJobStates.Done);
+            }
+            else if (jobScope.From != null && jobScope.To != null)
+            {
+                var size = interactive ? InteractiveBatch : improve ? _options.MatchBatch : _options.AssessBatch;
+                var page = await _backend.RangeAsync(owner, jobScope.From.Value, jobScope.To.Value, job.Cursor, size, interactive, ct);
+                var done = await ProcessIdsAsync(scope.ServiceProvider, job, owner, page.Ids, interactive, improve, jobScope.Force == true, ct);
+                if (done < page.Ids.Count)
+                {
+                    // Stopped early (interactive work, or the breaker): this page is read again
+                    // from the same cursor; its finished records are skipped then
+                    job.Done += done;
+                }
+                else
+                {
+                    job.Done += page.Ids.Count;
+                    job.Cursor = page.Next;
+                    if (!page.More)
+                    {
+                        job.Total = job.Done;
+                        Finish(job, RouteJobStates.Done);
+                    }
+                }
             }
             else
             {
                 var ids = jobScope.ActivityIds ?? new List<Guid>();
-                var interactive = priority == RouteJobPriorities.Interactive;
-                if (job.Kind == RouteJobKinds.Improve)
-                {
-                    var slice = ids.Skip(job.Done).Take(interactive ? InteractiveBatch : _options.MatchBatch).ToList();
-                    var tally = await ImproveIdsAsync(scope.ServiceProvider, owner, slice, interactive, jobScope.Force == true, ct);
-                    job.Done += tally.Processed;
-                    job.Counts = AddCounts(job.Counts, tally.Tally);
-                }
-                else
-                {
-                    var slice = ids.Skip(job.Done).Take(interactive ? InteractiveBatch : _options.AssessBatch).ToList();
-                    var runner = scope.ServiceProvider.GetRequiredService<AssessRunner>();
-                    var result = slice.Count > 0
-                        ? await runner.AssessIdsAsync(owner, slice, interactive, ct)
-                        : new AssessBatchResult(0, 0, 0, false);
-                    job.Done += slice.Count;
-                    job.Counts = JsonSerializer.Serialize(new { assessed = Count(job.Counts, "assessed") + result.Assessed }, Json);
-                }
-
+                var slice = ids.Skip(job.Done).Take(interactive ? InteractiveBatch : improve ? _options.MatchBatch : _options.AssessBatch).ToList();
+                job.Done += await ProcessIdsAsync(scope.ServiceProvider, job, owner, slice, interactive, improve, jobScope.Force == true, ct);
                 if (job.Done >= ids.Count)
                 {
-                    job.State = RouteJobStates.Done;
-                    job.FinishedAt = DateTime.UtcNow;
+                    Finish(job, RouteJobStates.Done);
                 }
+            }
+
+            job.Attempts = 0;
+            if (job.State == RouteJobStates.Running)
+            {
+                job.NextAttemptAt = null;
             }
         }
         catch (Exception ex) when (ex is not BackendBusyException and not OperationCanceledException)
         {
             job.Attempts++;
             job.LastError = ex.Message.Length > 500 ? ex.Message[..500] : ex.Message;
-            if (job.Attempts >= 3)
+            if (job.Attempts <= _backoff.Length)
             {
-                job.State = RouteJobStates.Failed;
-                job.FinishedAt = DateTime.UtcNow;
+                job.NextAttemptAt = DateTime.UtcNow + _backoff[job.Attempts - 1];
+            }
+            else
+            {
+                Finish(job, RouteJobStates.Failed);
             }
         }
 
         await db.SaveChangesAsync(CancellationToken.None);
-        return true;
+        return improve ? BatchKind.Match : BatchKind.Job;
+    }
+
+    /// <summary>Assesses (and for improve, matches) ids; returns how many of them are done, in their order</summary>
+    private async Task<int> ProcessIdsAsync(IServiceProvider sp, RouteJob job, string owner, List<Guid> ids, bool interactive, bool improve,
+        bool force, CancellationToken ct)
+    {
+        if (ids.Count == 0)
+        {
+            return 0;
+        }
+
+        if (improve)
+        {
+            var result = await ImproveIdsAsync(sp, owner, ids, interactive, force, ct);
+            job.Counts = AddCounts(job.Counts, result.Tally);
+            return result.Processed;
+        }
+
+        var assessed = await sp.GetRequiredService<AssessRunner>().AssessIdsAsync(owner, ids, interactive, ct);
+        job.Counts = AddCounts(job.Counts, new MatchTally { Assessed = assessed.Assessed });
+        return ids.Count;
+    }
+
+    private static void Finish(RouteJob job, string state)
+    {
+        job.State = state;
+        job.FinishedAt = DateTime.UtcNow;
+        job.NextAttemptAt = null;
     }
 
     /// <summary>
@@ -404,7 +605,14 @@ public class RoutesScheduler : BackgroundService
 
     private TimeSpan NextPollIn()
     {
-        var next = _state.Values.Select(s => s.NextPoll).DefaultIfEmpty(DateTime.UtcNow + Poll).Min() - DateTime.UtcNow;
+        var at = _state.Values.Select(s => s.NextPoll).DefaultIfEmpty(DateTime.UtcNow + Poll).Min();
+        if (_breaker?.OpenUntil is { } open && open < at)
+        {
+            // The breaker closes before the next poll: waiting matches resume then
+            at = open;
+        }
+
+        var next = at - DateTime.UtcNow;
         return next < TimeSpan.FromSeconds(1) ? TimeSpan.FromSeconds(1) : next > Poll ? Poll : next;
     }
 
@@ -417,12 +625,6 @@ public class RoutesScheduler : BackgroundService
         }
 
         return s;
-    }
-
-    private static int Count(string json, string key)
-    {
-        using var doc = JsonDocument.Parse(string.IsNullOrEmpty(json) ? "{}" : json);
-        return doc.RootElement.TryGetProperty(key, out var v) && v.TryGetInt32(out var n) ? n : 0;
     }
 
     private sealed class OwnerState

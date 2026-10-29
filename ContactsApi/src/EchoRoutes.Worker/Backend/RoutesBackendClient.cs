@@ -45,6 +45,9 @@ public interface IRoutesBackend
     /// <summary>Tracks of at most 25 of the Owner's records</summary>
     Task<List<RouteTrack>> TracksAsync(string owner, IReadOnlyCollection<Guid> ids, bool interactive, CancellationToken ct);
 
+    /// <summary>A page of the ids of the Owner's records that start in [from, to)</summary>
+    Task<RouteIdsPage> RangeAsync(string owner, DateTime from, DateTime to, string? after, int limit, bool interactive, CancellationToken ct);
+
     /// <summary>Which of the Owner's records still exist</summary>
     Task<List<Guid>> ExistsAsync(string owner, IReadOnlyCollection<Guid> ids, CancellationToken ct);
 }
@@ -81,6 +84,15 @@ public class RoutesBackendClient : IRoutesBackend
     {
         var url = $"internal/routes/tracks?ownerId={Uri.EscapeDataString(owner)}" + string.Concat(ids.Select(id => $"&ids={id}"));
         return SendAsync<List<RouteTrack>>(new HttpRequestMessage(HttpMethod.Get, url), interactive, ct);
+    }
+
+    /// <inheritdoc />
+    public Task<RouteIdsPage> RangeAsync(string owner, DateTime from, DateTime to, string? after, int limit, bool interactive, CancellationToken ct)
+    {
+        var url = $"internal/routes/range?ownerId={Uri.EscapeDataString(owner)}&from={Uri.EscapeDataString(from.ToUniversalTime().ToString("O"))}"
+                  + $"&to={Uri.EscapeDataString(to.ToUniversalTime().ToString("O"))}&limit={limit}"
+                  + (after != null ? $"&after={Uri.EscapeDataString(after)}" : string.Empty);
+        return SendAsync<RouteIdsPage>(new HttpRequestMessage(HttpMethod.Get, url), interactive, ct);
     }
 
     /// <inheritdoc />

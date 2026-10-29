@@ -93,3 +93,24 @@ docker buildx build --platform linux/arm64 -f src/EchoRoutes.Worker/Dockerfile \
   `networkPolicy.extraBackendIngressFrom`. This policy exists only while
   `routes.enabled` is true. nginx proxies only `/api/`, so `/internal/**` is
   never reachable through the frontend.
+
+## Tuning matching on the Pi (stories 12.4, 12.5)
+
+Every engine-facing number is a `config` value (`Routes__*`), so a finding of the
+Pi spike is a values change, not a release: `EngineConcurrency` (1),
+`EngineTimeoutSeconds` (15), `BreakageDistanceM` (5000), `SearchRadiusM` (100),
+`GpsAccuracyTimelineM` / `GpsAccuracyDenseM` (75 / 15), `SplitGapM` /
+`SplitGapMinutes` (5000 / 15), `MaxPointsPerCall` / `MaxKmPerCall` (2000 / 600),
+`BackoffMinutes` (`1,10,60`), `BreakerFailures` / `BreakerPauseMinutes` (5 / 10),
+`MatchBatch` / `MatchPauseMs` (25 / 1000), `AssessBatch` / `PauseMs` (500 / 400),
+`PollSeconds` (120) and `SweepDays` (7).
+
+When the engine fails `BreakerFailures` times in a row, all matching pauses for
+`BreakerPauseMinutes`; `GET /api/routes/status` shows it under `engine.breaker`.
+
+To let the backend reach the service, set `backend.routes.enabled: true` together
+with `routes.enabled: true`. The backend then needs `Routes__BackendToken` (and
+`Routes__ServiceToken`) in Vault; its agent template exports them when present.
+
+The accuracy check (`scripts/routes/accuracy-check.py`) runs against the live
+database and engine through port-forwards and prints aggregates only.

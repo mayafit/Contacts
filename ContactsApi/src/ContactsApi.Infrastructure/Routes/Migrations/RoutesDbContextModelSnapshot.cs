@@ -141,6 +141,12 @@ namespace ContactsApi.Infrastructure.Routes.Migrations
                     b.Property<DateTime?>("LastRunAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<Guid?>("SweepAfter")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("SweptAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -196,6 +202,10 @@ namespace ContactsApi.Infrastructure.Routes.Migrations
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Cursor")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
 
                     b.Property<int>("Done")
                         .HasColumnType("integer");

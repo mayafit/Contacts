@@ -81,6 +81,11 @@ backend:
     type: ClusterIP
     port: 5000
 
+  # Turn on together with routes.enabled below (the backend's link to the service)
+  routes:
+    enabled: false
+    port: 8080
+
   resources:
     requests:
       cpu: 100m

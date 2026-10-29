@@ -51,6 +51,14 @@ public class InternalRoutesController : ControllerBase
     public Task<IActionResult> Tracks([FromQuery] string? ownerId, [FromQuery] List<Guid>? ids) =>
         Run(ownerId, () => _feed.TracksAsync(ownerId!, ids ?? new List<Guid>(), HttpContext.RequestAborted));
 
+    /// <summary>Ids of records that start in [from, to), a page at a time (a date-range job)</summary>
+    [HttpGet("range")]
+    public Task<IActionResult> Range([FromQuery] string? ownerId, [FromQuery] DateTime from, [FromQuery] DateTime to, [FromQuery] string? after,
+        [FromQuery] int limit = RoutesFeedLimits.ChangesMax) =>
+        Run(ownerId, () => from < to
+            ? _feed.RangeAsync(ownerId!, from, to, after, limit, HttpContext.RequestAborted)
+            : throw new ArgumentException("from must be before to."));
+
     /// <summary>Which records still exist (few ids, in the query)</summary>
     [HttpGet("exists")]
     public Task<IActionResult> Exists([FromQuery] string? ownerId, [FromQuery] List<Guid>? ids) =>

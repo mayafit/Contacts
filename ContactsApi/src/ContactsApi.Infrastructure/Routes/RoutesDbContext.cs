@@ -104,6 +104,7 @@ public class RoutesDbContext : DbContext
             e.Property(x => x.State).HasMaxLength(16);
             e.Property(x => x.Counts).HasColumnType("jsonb");
             e.Property(x => x.LastError).HasMaxLength(500);
+            e.Property(x => x.Cursor).HasMaxLength(128);
         });
 
         b.Entity<OwnerCursor>(e =>

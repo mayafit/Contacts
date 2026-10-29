@@ -19,3 +19,7 @@ data:
   Cors__AllowedOrigins__0: {{ $publicUrl | quote }}
   OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.config.OTEL_EXPORTER_OTLP_ENDPOINT | quote }}
   JAEGER_ENDPOINT: {{ .Values.config.JAEGER_ENDPOINT | quote }}
+  {{- if .Values.routes.enabled }}
+  # The route-quality service (/internal/v1, cluster-only); its token comes from Vault
+  Routes__ServiceUrl: {{ printf "http://%s-routes:%v" .Release.Name (.Values.routes.port | int) | quote }}
+  {{- end }}

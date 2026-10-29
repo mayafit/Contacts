@@ -22,6 +22,8 @@ internal sealed class EchoEngine : IValhallaClient
 {
     public readonly List<JsonObject> Requests = new();
     public Func<JsonObject, Exception?> Fail = _ => null;
+    /// <summary>Called with the number of requests so far, after each one</summary>
+    public Action<int>? OnCall;
 
     public Task<bool> PingAsync(CancellationToken ct) => Task.FromResult(true);
 
@@ -30,6 +32,7 @@ internal sealed class EchoEngine : IValhallaClient
     public Task<JsonDocument> TraceAttributesAsync(JsonObject request, CancellationToken ct)
     {
         Requests.Add(request);
+        OnCall?.Invoke(Requests.Count);
         if (Fail(request) is { } ex)
         {
             return Task.FromException<JsonDocument>(ex);
