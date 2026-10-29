@@ -851,6 +851,43 @@ export class BackendApiClient {
     );
   }
 
+  /**
+   * Rebuilds an activity's route on demand (AD-38): from similar drives, or through points
+   * marked on the map. The job's result is a suggestion (routesApply uses it).
+   * @param activityId - The activity
+   * @param method - similar or waypoints
+   * @param waypoints - waypoints only: [lat, lon] in the order marked
+   * @returns The job to poll with routesJob
+   */
+  async routesRebuild(
+    activityId: string,
+    method: 'similar' | 'waypoints',
+    waypoints?: [number, number][],
+  ): Promise<{ jobId: string }> {
+    return unwrap(
+      await this.request<{ jobId: string }>(`/routes/activities/${activityId}/rebuild`, {
+        method: 'POST',
+        body: JSON.stringify({ method, waypoints }),
+      }),
+      'Queueing the rebuild failed',
+    );
+  }
+
+  /**
+   * Uses a rebuild's suggestion as the activity's route (and keeps it shown).
+   * @param activityId - The activity
+   * @param jobId - The rebuild job
+   */
+  async routesApply(activityId: string, jobId: string): Promise<void> {
+    unwrap(
+      await this.request<unknown>(`/routes/activities/${activityId}/apply`, {
+        method: 'POST',
+        body: JSON.stringify({ jobId }),
+      }),
+      'Using the rebuilt route failed',
+    );
+  }
+
   /** A route job's progress */
   async routesJob(id: string): Promise<RouteJob> {
     return unwrap(await this.request<RouteJob>(`/routes/jobs/${id}`), 'Route job failed');

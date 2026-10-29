@@ -586,30 +586,36 @@ rebuilt from my other drives between the same places (or the same places reverse
 when I ask, and shown to me before it is used.
 
 Acceptance criteria (FR-62, AD-38):
-- [ ] `RoutePoint.Synthetic`: legs touching a synthetic anchor are `inferred`, and
+- [x] `RoutePoint.Synthetic`: legs touching a synthetic anchor are `inferred`, and
   `anchorQuality` counts real points only.
-- [ ] `matched_routes` gains `Method`, `Basis`, `StartLat`, `StartLon`, `EndLat` and
-  `EndLon`, written at match time; older rows take theirs from the line's first and
-  last vertex at start-up. `jobs` gains `Result`.
-- [ ] `SimilarRoutes` (pure):
+- [x] `matched_routes` gains `Method`, `Basis`, `StartedAt`, `StartLat`, `StartLon`,
+  `EndLat` and `EndLon`, written at match time (rule `routes.v5` re-matches every row
+  once to fill them). `jobs` gains `Result` (migration `RoutesRebuild`).
+- [x] `SimilarRoutes` (pure):
   - the pool: matched, at least 0.8, `auto`, not rejected, the same type, both ends within 500 m, same direction or reversed, the 200 nearest;
-  - the fit: the share of interior real points within 150 m, with no going back over 150 m, and at least 0.6;
+  - the fit: the share of real points along the line, projected in travel order (a round trip or a place passed twice reads in order), at least 0.6;
   - the rank: fit, then time of day, then recency;
-  - borrowing: every 200 m on legs longer than 300 m whose two ends both lie along the basis, timed by distance, and never faster than the type's maximum.
-- [ ] The `rebuild` job runs interactively and stores the suggestion (line, pieces,
-  roads, confidence `min(factors, fit)`, basis) on the job. With no basis, the outcome
-  is `no_similar`.
-- [ ] `/api/routes/activities/{id}/rebuild` and `/apply`; apply answers 409 when the
-  record changed, writes the row (`Method = similar`) and an `accept` decision.
-- [ ] A `similar` row is not re-matched for a new rule version, and is re-matched
+  - borrowing: on legs longer than 300 m whose two ends both lie along the basis, never on the basis's gap pieces, timed by distance, never faster than the type's maximum.
+- [x] `Rebuilder`: the best 3 bases at 200 m and 600 m, keeping the most confident
+  (stopping at 0.95); the off-road tolerance is 150 m; the confidence is `min(factors, fit)`.
+- [x] The `rebuild` job runs interactively and stores the suggestion (line, pieces,
+  roads, confidence, the current confidence, basis) on the job. With no basis, the
+  outcome is `no_similar`, with why.
+- [x] `/api/routes/activities/{id}/rebuild` and `/apply`; apply answers 409 when the
+  record changed, writes the row (`Method = similar`, `Basis`) and an `accept` decision.
+- [x] A `similar` row is not re-matched for a new rule version, and is re-matched
   `auto` when its points or type change.
-- [ ] The panel offers "Rebuild from similar drives". The suggestion is drawn on the
-  map, and the panel shows the basis ("From 14 similar drives (6 agree), the closest
-  on 3 Sep at 08:12, reversed"), the confidence, Use and Discard.
-- [ ] Tests: pure (pool, fit, reversal, borrowing, timing and speed limit, kinds and
-  confidence); Postgres (the pool query, apply, 409, lasting); the local engine (a
-  real-shaped sparse drive rebuilt from a matched twin); Jest (the panel and the
-  marking bar). Measured on a sample of the first Owner's weak drives.
+- [x] The panel offers "Rebuild: from similar drives". The suggestion is drawn on the
+  map as the selected route, and the panel shows the basis ("From 14 drives between
+  the same places (6 follow this one), the closest on 3 Sep at 08:12, the other way"),
+  the confidence against the current one, Use this route and Discard.
+- [x] Tests:
+  - pure: kinds and the confidence, fit, the other direction, round trips, rank, borrowing, timing, the speed limit and gaps, marked points;
+  - Postgres: the pool and its exclusions, a rebuild both ways, `no_similar`, apply, `not_found`, 409, lasting across rule versions, re-matched on change;
+  - the local engine: Ramla to Modi'in rebuilt both ways from a twin;
+  - Jest: the texts, the panel's flows and the marking bar.
+
+  Measured on 60 sampled weak drives (AD-38 rule 9): 38 matched after a rebuild, against 6 by the plain match.
 
 ### 12.18 Mark the way — R1
 
@@ -617,13 +623,17 @@ As the Owner, I want to click on the map where I drove, so that a drive with no
 similar drives can still be rebuilt, and I want those points kept.
 
 Acceptance criteria (FR-63, AD-38):
-- [ ] The map's marking mode: a click adds a numbered point, a click on a point
-  removes it, at most 50; the bar shows Rebuild and Cancel.
-- [ ] Marked points are placed on the nearest leg of the recorded track, in the order
+- [x] The map's marking mode: a click adds a numbered point, a click on a point
+  removes it, at most 50; selecting other activities pauses while marking; the panel's
+  bar shows the count, Rebuild and Cancel. Points marked before are offered again.
+- [x] Marked points are placed on the nearest leg of the recorded track, in the order
   marked, timed by distance; points over 5 km from the track are refused.
-- [ ] Using the result stores `route_waypoints`, and every later automatic match of
-  that record goes through them (`Method = waypoints`), including after a rule change.
-- [ ] `route_waypoints` is exported and erased with the Owner's routes data.
+- [x] Using the result stores `route_waypoints`, and every later automatic match of
+  that record goes through them (`Method = waypoints`), including after a rule change
+  and a forced "Fix this route". Marked points that no longer fit a changed track are
+  left out.
+- [x] `route_waypoints` is exported with the Owner's routes data and deleted with an
+  Owner who is gone.
 
 ## Coverage
 
