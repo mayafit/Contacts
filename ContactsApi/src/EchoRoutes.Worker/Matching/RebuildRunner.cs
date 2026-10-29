@@ -32,6 +32,9 @@ public static class RebuildOutcomes
 
     /// <summary>The record no longer exists</summary>
     public const string Gone = "gone";
+
+    /// <summary>The engine placed none of the (real or marked) points on a road</summary>
+    public const string NoMatch = "no_match";
 }
 
 /// <summary>A rebuild's result, as stored on the job and returned to the panel</summary>
@@ -152,7 +155,7 @@ public class RebuildRunner
         return new RebuildSuggestion
         {
             Method = method,
-            Outcome = r.Polyline == null ? RebuildOutcomes.NoSimilar : RebuildOutcomes.Suggested,
+            Outcome = r.Polyline == null ? RebuildOutcomes.NoMatch : RebuildOutcomes.Suggested,
             Message = r.Polyline == null ? "The engine placed none of the points on a road." : null,
             ActivityId = activityId,
             SourceKey = t.SourceKey,
@@ -195,7 +198,7 @@ public class RebuildRunner
         double DLon(double lat) => SimilarRoutes.EndpointM / (111_320 * Math.Max(0.1, Math.Cos(lat * Math.PI / 180)));
         double sLat0 = s.Lat - dLat, sLat1 = s.Lat + dLat, sLon0 = s.Lon - DLon(s.Lat), sLon1 = s.Lon + DLon(s.Lat);
         double eLat0 = e.Lat - dLat, eLat1 = e.Lat + dLat, eLon0 = e.Lon - DLon(e.Lat), eLon1 = e.Lon + DLon(e.Lat);
-        var rows = await _db.MatchedRoutes.AsNoTracking()
+        var ends = await _db.MatchedRoutes.AsNoTracking()
             .Where(m => m.OwnerId == owner && m.ActivityId != t.Id && m.Status == RouteStatuses.Matched && m.Confidence >= PoolMinConfidence
                         && m.Method == RebuildMethods.Auto && m.FusedType == t.Type && m.Polyline != null
                         && m.StartLat != null && m.StartLon != null && m.EndLat != null && m.EndLon != null
@@ -204,27 +207,39 @@ public class RebuildRunner
                             || (m.StartLat >= eLat0 && m.StartLat <= eLat1 && m.StartLon >= eLon0 && m.StartLon <= eLon1
                                 && m.EndLat >= sLat0 && m.EndLat <= sLat1 && m.EndLon >= sLon0 && m.EndLon <= sLon1)))
             .Where(m => !_db.Decisions.Any(d => d.OwnerId == owner && d.SourceKey == m.SourceKey && d.Kind == RouteDecisionKinds.Reject))
-            .Select(m => new { m.ActivityId, m.StartedAt, m.ComputedAt, m.Polyline, m.Pieces, m.StartLat, m.StartLon, m.EndLat, m.EndLon })
+            .Select(m => new { m.ActivityId, m.StartedAt, m.ComputedAt, m.StartLat, m.StartLon, m.EndLat, m.EndLon })
             .ToListAsync(ct);
-        var pool = new List<(SimilarCandidate C, double D)>();
-        foreach (var m in rows)
+        // Each direction whose two ends are within reach is a candidate: a round trip (home
+        // to home) has both, and only its line tells which one this drive followed
+        var nearest = new List<(Guid Id, DateTime Start, bool Reversed, double D)>();
+        foreach (var m in ends)
         {
-            var same = Geo.Haversine(m.StartLat!.Value, m.StartLon!.Value, s.Lat, s.Lon) + Geo.Haversine(m.EndLat!.Value, m.EndLon!.Value, e.Lat, e.Lon);
-            var reversed = Geo.Haversine(m.StartLat.Value, m.StartLon.Value, e.Lat, e.Lon) + Geo.Haversine(m.EndLat.Value, m.EndLon.Value, s.Lat, s.Lon);
-            var isReversed = reversed < same;
-            var (a, b) = isReversed
-                ? (Geo.Haversine(m.StartLat.Value, m.StartLon.Value, e.Lat, e.Lon), Geo.Haversine(m.EndLat.Value, m.EndLon.Value, s.Lat, s.Lon))
-                : (Geo.Haversine(m.StartLat.Value, m.StartLon.Value, s.Lat, s.Lon), Geo.Haversine(m.EndLat.Value, m.EndLon.Value, e.Lat, e.Lon));
-            if (a > SimilarRoutes.EndpointM || b > SimilarRoutes.EndpointM)
+            var sameA = Geo.Haversine(m.StartLat!.Value, m.StartLon!.Value, s.Lat, s.Lon);
+            var sameB = Geo.Haversine(m.EndLat!.Value, m.EndLon!.Value, e.Lat, e.Lon);
+            var revA = Geo.Haversine(m.StartLat.Value, m.StartLon.Value, e.Lat, e.Lon);
+            var revB = Geo.Haversine(m.EndLat.Value, m.EndLon.Value, s.Lat, s.Lon);
+            if (sameA <= SimilarRoutes.EndpointM && sameB <= SimilarRoutes.EndpointM)
             {
-                continue;
+                nearest.Add((m.ActivityId, m.StartedAt ?? m.ComputedAt, false, sameA + sameB));
             }
 
-            pool.Add((new SimilarCandidate(m.ActivityId, m.StartedAt ?? m.ComputedAt, m.Polyline!, isReversed,
-                JsonSerializer.Deserialize<List<RoutePiece>>(m.Pieces, Json)), a + b));
+            if (revA <= SimilarRoutes.EndpointM && revB <= SimilarRoutes.EndpointM)
+            {
+                nearest.Add((m.ActivityId, m.StartedAt ?? m.ComputedAt, true, revA + revB));
+            }
         }
 
-        return pool.OrderBy(x => x.D).Take(SimilarRoutes.MaxCandidates).Select(x => x.C).ToList();
+        nearest = nearest.OrderBy(x => x.D).Take(SimilarRoutes.MaxCandidates).ToList();
+        // The lines of the nearest only (a years-long commute has thousands of rows)
+        var ids = nearest.Select(x => x.Id).Distinct().ToList();
+        var lines = await _db.MatchedRoutes.AsNoTracking()
+            .Where(m => m.OwnerId == owner && ids.Contains(m.ActivityId))
+            .Select(m => new { m.ActivityId, m.Polyline, m.Pieces })
+            .ToDictionaryAsync(m => m.ActivityId, ct);
+        return nearest.Where(x => lines.TryGetValue(x.Id, out var l) && l.Polyline != null)
+            .Select(x => new SimilarCandidate(x.Id, x.Start, lines[x.Id].Polyline!, x.Reversed,
+                JsonSerializer.Deserialize<List<RoutePiece>>(lines[x.Id].Pieces, Json)))
+            .ToList();
     }
 
     /// <summary>
@@ -251,13 +266,35 @@ public class RebuildRunner
             return (r, "There is no suggestion to use.");
         }
 
-        var quality = await _db.Quality.AsNoTracking().Where(q => q.OwnerId == owner && q.ActivityId == r.ActivityId)
-            .Select(q => q.InputHash).FirstOrDefaultAsync(ct);
-        if (quality != null && quality != r.InputHash)
+        // The drive as it is now, not as last assessed
+        var t = (await _backend.TracksAsync(owner, new[] { r.ActivityId }, true, ct)).FirstOrDefault();
+        if (t == null)
+        {
+            return (null, "not_found");
+        }
+
+        if (RouteQuality.InputHash(t.Points) != r.InputHash || t.Type != r.FusedType)
         {
             return (r, "The drive changed after the rebuild; rebuild it again.");
         }
 
+        try
+        {
+            await WriteAsync(owner, r, ct);
+        }
+        catch (DbUpdateException)
+        {
+            _db.ChangeTracker.Clear();
+            return (r, "The route changed at the same time; try again.");
+        }
+
+        return (r, null);
+    }
+
+    /// <summary>Writes a suggestion as the record's match, with its marked points, in one transaction</summary>
+    private async Task WriteAsync(string owner, RebuildSuggestion r, CancellationToken ct)
+    {
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
         var row = await _db.MatchedRoutes.FirstOrDefaultAsync(m => m.OwnerId == owner && m.ActivityId == r.ActivityId, ct);
         if (row == null)
         {
@@ -310,10 +347,38 @@ public class RebuildRunner
         else if (r.Method == RebuildMethods.Similar)
         {
             // A similar rebuild replaces a route through marked points: those points go
-            await _db.Waypoints.Where(w => w.OwnerId == owner && w.SourceKey == r.SourceKey).ExecuteDeleteAsync(ct);
+            var marks = await _db.Waypoints.FirstOrDefaultAsync(w => w.OwnerId == owner && w.SourceKey == r.SourceKey, ct);
+            if (marks != null)
+            {
+                _db.Waypoints.Remove(marks);
+            }
         }
 
         await _db.SaveChangesAsync(ct);
-        return (r, null);
+        await tx.CommitAsync(ct);
+    }
+
+    /// <summary>
+    /// Clears the points the Owner marked for a record ("clear marked points"): the record
+    /// is then matched again as the matcher's own, soon (a due retry). Returns whether there were any.
+    /// </summary>
+    public async Task<bool> ClearMarksAsync(string owner, Guid activityId, CancellationToken ct)
+    {
+        var key = await _db.MatchedRoutes.Where(m => m.OwnerId == owner && m.ActivityId == activityId).Select(m => m.SourceKey)
+                      .FirstOrDefaultAsync(ct)
+                  ?? await _db.Quality.Where(q => q.OwnerId == owner && q.ActivityId == activityId).Select(q => q.SourceKey).FirstOrDefaultAsync(ct);
+        if (key == null)
+        {
+            return false;
+        }
+
+        var removed = await _db.Waypoints.Where(w => w.OwnerId == owner && w.SourceKey == key).ExecuteDeleteAsync(ct);
+        if (removed > 0)
+        {
+            await _db.MatchedRoutes.Where(m => m.OwnerId == owner && m.ActivityId == activityId && m.Method == RebuildMethods.Waypoints)
+                .ExecuteUpdateAsync(x => x.SetProperty(m => m.NextAttemptAt, DateTime.UtcNow), ct);
+        }
+
+        return removed > 0;
     }
 }

@@ -682,7 +682,7 @@ Details:
 #### FR-63: Mark the way — Proposed (Phase R1)
 When even similar drives are not enough, the Owner can tell Echo where they drove. They choose **Mark the way** in the Activity panel, click points on the map in the order they drove through them, and choose **Rebuild**.
 - **Placement.** Each marked point is placed in time between the drive's real points, by where it lies along the drive and in the order the Owner marked it. Echo then matches the drive through the real and marked points (FR-56), and the result is offered as a suggestion, as in FR-62. Up to 50 points can be marked; a point can be removed by clicking it.
-- **Owner's input.** The marked points are a **decision**, like "Keep the original" (P-5). They are stored when the Owner uses the route, and every later match of that drive goes through them, including after a rule change or a re-import. They are exported and erased with the Owner's route data, and backed up.
+- **Owner's input.** The marked points are a **decision**, like "Keep the original" (P-5). They are stored when the Owner uses the route, and every later match of that drive goes through them, including after a rule change or a re-import. The Owner can clear them ("clear them" in the panel), and the drive is then matched as usual again. They are exported and erased with the Owner's route data, and backed up.
 - **Provenance.** Stretches through marked points are *inferred* pieces. A route the Owner used is shown whatever its confidence, as long as it is at least 0.3.
 
 #### FR-60: Routes abroad — Proposed (Phase R3)

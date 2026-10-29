@@ -312,6 +312,9 @@ describe('rebuild texts (AD-38)', () => {
   });
 
   it('explains a rebuild without a suggestion', () => {
+    expect(noSuggestionText(suggestion({ outcome: 'no_match', message: null }))).toBe(
+      'The engine placed none of the points on a road',
+    );
     expect(
       noSuggestionText(
         suggestion({ outcome: 'no_similar', message: 'None of the 3 drives follows this one.' }),

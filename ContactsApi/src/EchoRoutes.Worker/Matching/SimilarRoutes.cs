@@ -113,10 +113,13 @@ public static class SimilarRoutes
         }
 
         var ranked = kept.OrderByDescending(s => Math.Round(s.Fit, 2)).ThenBy(s => s.HourDiff).ThenByDescending(s => s.Candidate.Start).ToList();
-        var examples = ranked.Take(3).Select(s => new SimilarExample(s.Candidate.ActivityId, s.Candidate.Start, s.Candidate.Reversed)).ToList();
-        var scored = Math.Min(candidates.Count, MaxCandidates);
+        // Counted per drive: a round trip is a candidate in both directions
+        var examples = ranked.DistinctBy(s => s.Candidate.ActivityId).Take(3)
+            .Select(s => new SimilarExample(s.Candidate.ActivityId, s.Candidate.Start, s.Candidate.Reversed)).ToList();
+        var scored = candidates.Take(MaxCandidates).Select(c => c.ActivityId).Distinct().Count();
+        var agreeing = kept.Select(s => s.Candidate.ActivityId).Distinct().Count();
         return ranked.Take(Math.Max(1, take))
-            .Select(s => (new SimilarBasis(s.Candidate.ActivityId, s.Candidate.Start, s.Candidate.Reversed, Math.Round(s.Fit, 3), scored, kept.Count,
+            .Select(s => (new SimilarBasis(s.Candidate.ActivityId, s.Candidate.Start, s.Candidate.Reversed, Math.Round(s.Fit, 3), scored, agreeing,
                 examples), new BasisLine(s.Line, s.Cum, Gaps(s.Candidate, s.Cum[^1]))))
             .ToList();
     }

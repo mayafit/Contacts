@@ -160,7 +160,7 @@ export interface RebuildBasis {
 /** A rebuild's result: a suggestion to use or discard (AD-38) */
 export interface RebuildSuggestion {
   method: 'similar' | 'waypoints';
-  outcome: 'suggested' | 'no_similar' | 'invalid' | 'not_matchable' | 'gone';
+  outcome: 'suggested' | 'no_similar' | 'no_match' | 'invalid' | 'not_matchable' | 'gone';
   /** Why there is no suggestion */
   message?: string | null;
   activityId: string;

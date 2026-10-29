@@ -379,6 +379,8 @@ export const noSuggestionText = (s: RebuildSuggestion): string => {
       return s.message ? `No similar drive found: ${s.message}` : 'No similar drive found';
     case 'gone':
       return 'The activity no longer exists';
+    case 'no_match':
+      return s.message ?? 'The engine placed none of the points on a road';
     default:
       return s.message ?? 'The route could not be rebuilt';
   }

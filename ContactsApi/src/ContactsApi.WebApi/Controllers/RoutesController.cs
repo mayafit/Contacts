@@ -188,6 +188,11 @@ public class RoutesController : ControllerBase
             return Pass(answer);
         });
 
+    /// <summary>Clears the points the Owner marked for the Activity's route (AD-38 rule 7)</summary>
+    [HttpDelete("activities/{id:guid}/waypoints")]
+    public Task<IActionResult> ClearWaypoints(Guid id) =>
+        WithRouteRecord(id, async (owner, record, ct) => Pass(await _routes.ClearMarksAsync(owner, record.Id, ct)));
+
     /// <summary>
     /// The Activity's one route record (the primary); a rebuild of an outing of several
     /// recordings is refused (400). The Owner comes from the session only.
@@ -203,6 +208,11 @@ public class RoutesController : ControllerBase
         try
         {
             var records = await _services.GetRequiredService<AtlasService>().RouteRecordsAsync(owner, id, HttpContext.RequestAborted);
+            if (records.Count == 0)
+            {
+                return NotFound(ApiResponse<object>.ErrorResponse("NOT_FOUND", "Activity not found."));
+            }
+
             if (records.Count != 1)
             {
                 return BadRequest(ApiResponse<object>.ErrorResponse("INVALID_INPUT",

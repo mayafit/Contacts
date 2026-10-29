@@ -409,7 +409,8 @@ public class RoutesScheduler : BackgroundService
         var job = await db.Jobs
             .Where(j => j.OwnerId == owner && (j.State == RouteJobStates.Queued || j.State == RouteJobStates.Running) && j.Priority == priority
                         && (j.NextAttemptAt == null || j.NextAttemptAt <= now))
-            .OrderBy(j => j.CreatedAt)
+            // A rebuild first: the Owner is watching the panel for it (AD-38)
+            .OrderBy(j => j.Kind == RouteJobKinds.Rebuild ? 0 : 1).ThenBy(j => j.CreatedAt)
             .FirstOrDefaultAsync(ct);
         if (job == null)
         {

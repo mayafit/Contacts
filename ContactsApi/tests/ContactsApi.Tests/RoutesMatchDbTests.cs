@@ -391,6 +391,14 @@ public class RoutesMatchDbTests
         Assert.Contains(engine.Requests.SelectMany(q => q["shape"]!.AsArray()), p => Math.Abs((double)p!["lon"]! - 34.853) < 1e-9);
         var row = await Db(sp).MatchedRoutes.AsNoTracking().SingleAsync(m => m.OwnerId == owner && m.ActivityId == drives[0].Id);
         Assert.Equal(RebuildMethods.Waypoints, row.Method);
+
+        // Cleared by the Owner: matched again as the matcher's own, soon
+        Assert.True(await Rebuild(sp).ClearMarksAsync(owner, drives[0].Id, default));
+        Assert.False(await Rebuild(sp).ClearMarksAsync(owner, drives[0].Id, default));
+        Assert.False(await Db(sp).Waypoints.AnyAsync(w => w.OwnerId == owner));
+        Assert.Equal(1, (await PendingBatchAsync(sp, owner)).Seen);
+        row = await Db(sp).MatchedRoutes.AsNoTracking().SingleAsync(m => m.OwnerId == owner && m.ActivityId == drives[0].Id);
+        Assert.Equal((RebuildMethods.Auto, (DateTime?)null), (row.Method, row.NextAttemptAt));
     }
 
     [Fact]

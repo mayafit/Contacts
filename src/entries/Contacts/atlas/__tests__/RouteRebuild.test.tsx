@@ -25,6 +25,7 @@ jest.mock('../../../../services/api/BackendApiClient', () => {
       routesRebuild: jest.fn(),
       routesApply: jest.fn(),
       routesJob: jest.fn(),
+      routesClearWaypoints: jest.fn(),
     },
   };
 });
@@ -184,6 +185,7 @@ describe('RouteRebuild', () => {
     expect(screen.getByRole('status')).toHaveTextContent(
       'No similar drive found: None of the 3 drives follows this one.',
     );
+    expect(screen.getByRole('button', { name: 'clear them' })).toBeInTheDocument();
     // The points marked before are offered again
     fireEvent.click(screen.getByRole('button', { name: 'change the 1 marked points' }));
     expect(onMarking).toHaveBeenLastCalledWith([[32, 34.8]]);
@@ -278,5 +280,34 @@ describe('RouteRebuild', () => {
     expect(screen.getByRole('status')).toHaveTextContent(
       'The drive changed after the rebuild; rebuild it again.',
     );
+  });
+});
+
+describe('RouteRebuild clearing', () => {
+  it('clears the marked points and reloads', async () => {
+    client.routesClearWaypoints.mockResolvedValue(undefined);
+    const onApplied = jest.fn().mockResolvedValue(null);
+    render(
+      <RouteRebuild
+        detail={detail({
+          waypoints: [
+            [32, 34.8],
+            [32.1, 34.8],
+          ],
+        })}
+        suggestion={null}
+        onSuggestion={jest.fn()}
+        marking={null}
+        onMarking={jest.fn()}
+        onApplied={onApplied}
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'clear them' }));
+    });
+    expect(client.routesClearWaypoints).toHaveBeenCalledWith('a1');
+    expect(onApplied).toHaveBeenCalled();
+    expect(screen.getByRole('status')).toHaveTextContent('Marked points cleared');
   });
 });

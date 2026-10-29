@@ -87,6 +87,29 @@ public class RouteRebuildTests
     }
 
     [Fact]
+    public void A_round_trip_candidate_in_both_directions_counts_once_and_its_right_direction_wins()
+    {
+        // Home → out on one road → back on another road 1 km east → home
+        var outward = Road(28);
+        var back = Road(28, 34.81).AsEnumerable().Reverse().ToList();
+        var loop = outward.Concat(new (double Lat, double Lon)[] { (outward[^1].Lat, 34.805) }).Concat(back)
+            .Concat(new (double Lat, double Lon)[] { (31.5, 34.805), outward[0] }).ToList();
+        // This drive went out the eastern road and back the western one: the loop reversed
+        var reversed = Enumerable.Reverse(loop).ToList();
+        var points = Enumerable.Range(0, reversed.Count).Where(i => i % 6 == 0 || i == reversed.Count - 1)
+            .Select((i, k) => new RoutePoint(T0.AddMinutes(k), reversed[i].Lat, reversed[i].Lon)).ToList();
+        var id = Guid.NewGuid();
+        var line = Line(loop);
+
+        var ranked = SimilarRoutes.Rank(points, new[] { new SimilarCandidate(id, T0, line, false), new SimilarCandidate(id, T0, line, true) });
+
+        Assert.True(ranked[0].Basis.Reversed);
+        Assert.Equal(1.0, ranked[0].Basis.Fit);
+        Assert.Equal((1, 1), (ranked[0].Basis.Candidates, ranked[0].Basis.Agreeing));
+        Assert.Single(ranked[0].Basis.Examples);
+    }
+
+    [Fact]
     public void Ranking_prefers_the_fit_then_the_time_of_day()
     {
         var points = Sparse(60, 8);

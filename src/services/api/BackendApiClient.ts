@@ -888,6 +888,19 @@ export class BackendApiClient {
     );
   }
 
+  /**
+   * Clears the points marked for an activity's route; it is then matched again as usual.
+   * @param activityId - The activity
+   */
+  async routesClearWaypoints(activityId: string): Promise<void> {
+    unwrap(
+      await this.request<unknown>(`/routes/activities/${activityId}/waypoints`, {
+        method: 'DELETE',
+      }),
+      'Clearing the marked points failed',
+    );
+  }
+
   /** A route job's progress */
   async routesJob(id: string): Promise<RouteJob> {
     return unwrap(await this.request<RouteJob>(`/routes/jobs/${id}`), 'Route job failed');

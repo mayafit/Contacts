@@ -633,7 +633,12 @@ Acceptance criteria (FR-63, AD-38):
   and a forced "Fix this route". Marked points that no longer fit a changed track are
   left out.
 - [x] `route_waypoints` is exported with the Owner's routes data and deleted with an
-  Owner who is gone.
+  Owner who is gone. "Clear them" deletes a record's marked points and re-matches it.
+- [x] Review fixes: round trips scored in both directions; apply in one transaction
+  against the drive's current track; the pool reads lines for the 200 nearest only;
+  a re-match that gives up keeps the start and ends; rebuilds run before other
+  interactive jobs; marking ends with an unrebuildable reload and is exclusive with
+  the Area tool.
 
 ## Coverage
 

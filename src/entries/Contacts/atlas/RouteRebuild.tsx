@@ -80,7 +80,7 @@ const RouteRebuild: React.FC<RouteRebuildProps> = ({
 }) => {
   const s = detail.summary;
   const route = detail.route;
-  const [working, setWorking] = useState<'similar' | 'waypoints' | 'apply' | null>(null);
+  const [working, setWorking] = useState<'similar' | 'waypoints' | 'apply' | 'clear' | null>(null);
   const [note, setNote] = useState<RebuildSuggestion | string | null>(null);
   const alive = useRef(true);
   useEffect(
@@ -151,6 +151,26 @@ const RouteRebuild: React.FC<RouteRebuildProps> = ({
       await backendApiClient.routesApply(s.id, suggestion.jobId);
       onSuggestion(null);
       await onApplied();
+    } catch (e) {
+      if (alive.current) {
+        setNote(failureText(e));
+      }
+    } finally {
+      if (alive.current) {
+        setWorking(null);
+      }
+    }
+  };
+
+  const clearMarks = async () => {
+    setWorking('clear');
+    setNote(null);
+    try {
+      await backendApiClient.routesClearWaypoints(s.id);
+      await onApplied();
+      if (alive.current) {
+        setNote('Marked points cleared; the route is matched again shortly');
+      }
     } catch (e) {
       if (alive.current) {
         setNote(failureText(e));
@@ -269,7 +289,11 @@ const RouteRebuild: React.FC<RouteRebuildProps> = ({
       {working ? (
         <span role="status" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
           <CircularProgress size={10} aria-label="Rebuilding the route" />
-          {working === 'similar' ? 'Looking for similar drives…' : 'Rebuilding…'}
+          {working === 'similar'
+            ? 'Looking for similar drives…'
+            : working === 'clear'
+              ? 'Clearing…'
+              : 'Rebuilding…'}
         </span>
       ) : (
         <>
@@ -279,6 +303,12 @@ const RouteRebuild: React.FC<RouteRebuildProps> = ({
           <InlineLink onClick={startMarking}>
             {marked > 0 ? `change the ${marked} marked points` : 'mark the way'}
           </InlineLink>
+          {marked > 0 && (
+            <>
+              <span aria-hidden>·</span>
+              <InlineLink onClick={() => void clearMarks()}>clear them</InlineLink>
+            </>
+          )}
         </>
       )}
       {note && (

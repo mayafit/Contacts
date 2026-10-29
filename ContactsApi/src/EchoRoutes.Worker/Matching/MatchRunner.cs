@@ -441,6 +441,8 @@ public class MatchRunner
             var old = row.RuleVersion;
             row.Attempts++;
             row.RuleVersion = RouteQuality.RuleVersion;
+            // The similar-drive pool still needs its start and ends (AD-38 rule 3)
+            SetEnds(row, t);
             row.NextAttemptAt = null;
             row.Reason = Truncate($"{reason} (gave up after {row.Attempts} attempts; the {old} line is kept)");
             return RouteStatuses.Failed;
@@ -531,14 +533,7 @@ public class MatchRunner
     /// <summary>The record's values at match time: the read-time check of AD-34 rule 3</summary>
     private static void Identify(MatchedRouteRow row, RouteTrack t, string hash, string costing)
     {
-        // The similar-drive pool reads these (AD-38 rule 3)
-        row.StartedAt = t.Start;
-        if (t.Points.Count > 0)
-        {
-            (row.StartLat, row.StartLon) = (Math.Round(t.Points[0].Lat, 6), Math.Round(t.Points[0].Lon, 6));
-            (row.EndLat, row.EndLon) = (Math.Round(t.Points[^1].Lat, 6), Math.Round(t.Points[^1].Lon, 6));
-        }
-
+        SetEnds(row, t);
         row.SourceKey = t.SourceKey;
         row.InputHash = hash;
         row.SourceUpdatedAt = t.UpdatedAt;
@@ -547,6 +542,17 @@ public class MatchRunner
         row.Costing = costing;
         row.Engine = "valhalla";
         row.RuleVersion = RouteQuality.RuleVersion;
+    }
+
+    /// <summary>The record's start time and first and last point: what the similar-drive pool reads (AD-38 rule 3)</summary>
+    private static void SetEnds(MatchedRouteRow row, RouteTrack t)
+    {
+        row.StartedAt = t.Start;
+        if (t.Points.Count > 0)
+        {
+            (row.StartLat, row.StartLon) = (Math.Round(t.Points[0].Lat, 6), Math.Round(t.Points[0].Lon, 6));
+            (row.EndLat, row.EndLon) = (Math.Round(t.Points[^1].Lat, 6), Math.Round(t.Points[^1].Lon, 6));
+        }
     }
 
     /// <summary>

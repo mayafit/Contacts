@@ -73,6 +73,10 @@ public class RoutesServiceClient : ContactsApi.Core.Interfaces.IRouteChangeSigna
     public Task<RoutesServiceAnswer> ApplyAsync(string owner, Guid jobId, Guid activityId, CancellationToken ct) =>
         SendAsync(HttpMethod.Post, "internal/v1/apply", new { ownerId = owner, jobId, activityId }, ct);
 
+    /// <summary>Clears the points the Owner marked for a record; it is then matched again as the matcher's own</summary>
+    public Task<RoutesServiceAnswer> ClearMarksAsync(string owner, Guid activityId, CancellationToken ct) =>
+        SendAsync(HttpMethod.Post, "internal/v1/marks/clear", new { ownerId = owner, activityId }, ct);
+
     /// <summary>One of the Owner's jobs (another Owner's answers 404)</summary>
     public Task<RoutesServiceAnswer> JobAsync(string owner, Guid id, CancellationToken ct) =>
         SendAsync(HttpMethod.Get, $"internal/v1/jobs/{id}?ownerId={Uri.EscapeDataString(owner)}", null, ct);

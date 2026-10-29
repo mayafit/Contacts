@@ -121,6 +121,23 @@ const AtlasHome: React.FC = () => {
   }, [detailId]);
   const suggested =
     rebuildState && rebuildState.activityId === detailId ? rebuildState.result : null;
+  // Marking ends when the open activity can no longer be rebuilt (reloaded without a route)
+  const rebuildable =
+    !!detail?.route &&
+    detail.route.recordIds.length === 1 &&
+    (detail.route.description?.matchable ?? 'yes') === 'yes';
+  useEffect(() => {
+    if (!rebuildable) {
+      setMarking(null);
+    }
+  }, [rebuildable]);
+  /** Marking the way and drawing an area are one map mode at a time */
+  const startMarking = useCallback((points: [number, number][] | null) => {
+    if (points) {
+      setDrawing(false);
+    }
+    setMarking(points);
+  }, []);
   // One object per detail and view, so the map decodes the route's pieces once
   const selectedRoute = useMemo(
     () =>
@@ -587,6 +604,7 @@ const AtlasHome: React.FC = () => {
                 setArea(null);
                 setDrawing(false);
               } else {
+                setMarking(null);
                 setDrawing((d) => !d);
               }
             }}
@@ -868,7 +886,7 @@ const AtlasHome: React.FC = () => {
                   suggestion: rebuildState,
                   onSuggestion: setRebuildState,
                   marking,
-                  onMarking: setMarking,
+                  onMarking: startMarking,
                 }}
                 onRouteChanged={async () => {
                   // The list and the map draw the new choice too

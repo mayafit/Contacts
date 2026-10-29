@@ -46,6 +46,9 @@ public record RebuildRequest(string? OwnerId, Guid? ActivityId, string? Method, 
 /// <summary>Use a rebuild's suggestion</summary>
 public record ApplyRequest(string? OwnerId, Guid? JobId, Guid? ActivityId);
 
+/// <summary>Clear the points the Owner marked for a record</summary>
+public record ClearMarksRequest(string? OwnerId, Guid? ActivityId);
+
 /// <summary>The /internal/v1 endpoints and their token check</summary>
 public static class InternalApi
 {
@@ -141,6 +144,21 @@ public static class InternalApi
                 "not_found" => ApiEnvelope.Fail(StatusCodes.Status404NotFound, "NOT_FOUND", "Rebuild not found."),
                 _ => ApiEnvelope.Fail(StatusCodes.Status409Conflict, "CONFLICT", conflict)
             };
+        });
+        v1.MapPost("/marks/clear", async (ClearMarksRequest request, RebuildRunner rebuild, WakeSignal wake, CancellationToken ct) =>
+        {
+            if (!ValidOwner(request.OwnerId) || request.ActivityId is not { } activityId)
+            {
+                return ApiEnvelope.Fail(StatusCodes.Status400BadRequest, "INVALID_INPUT", "ownerId and activityId are required.");
+            }
+
+            var cleared = await rebuild.ClearMarksAsync(request.OwnerId!, activityId, ct);
+            if (cleared)
+            {
+                wake.Poke();
+            }
+
+            return ApiEnvelope.Ok(new { cleared });
         });
         v1.MapPost("/wake", (WakeRequest request, WakeSignal wake) =>
         {
