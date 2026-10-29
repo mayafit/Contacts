@@ -407,13 +407,14 @@ public class RoutesMatchDbTests
         await PendingBatchAsync(sp, owner);
         using (var db = Db(sp))
         {
-            // As routes.v1 left them: matched (newest), low_confidence, failed, and one the Owner rejected
+            // As older rules left them: matched (newest), low_confidence (routes.v2), failed,
+            // and one the Owner rejected; every older rule is re-matched the same way
             var rows = await db.MatchedRoutes.Where(m => m.OwnerId == owner).ToListAsync();
             string[] statuses = { RouteStatuses.Matched, RouteStatuses.LowConfidence, RouteStatuses.Failed, RouteStatuses.Matched };
             for (var i = 0; i < 4; i++)
             {
                 var row = rows.Single(r => r.ActivityId == drives[i].Id);
-                row.RuleVersion = "routes.v1";
+                row.RuleVersion = i == 1 ? "routes.v2" : "routes.v1";
                 row.Status = statuses[i];
                 row.Attempts = i == 2 ? 4 : 0;
                 if (i == 2)

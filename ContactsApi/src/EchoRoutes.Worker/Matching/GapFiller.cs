@@ -1,9 +1,10 @@
 /**
- * @fileoverview Gap filling (AD-35 rule 7, routes.v2, story 12.4a): every stretch the
+ * @fileoverview Gap filling (AD-35 rule 7, routes.v3, story 12.4a): every stretch the
  * matcher left unbridged is routed with one Valhalla /route call between its two
  * anchors (longest first, at most N per drive), and the route is kept only when its
  * time fits the time that passed, its length fits the straight line and it does not
- * turn back near either end. A rejected or failed fill leaves the straight gap.
+ * back-track near either end. A headed route rejected for its length or a back-track
+ * is asked once more without headings. A rejected or failed fill leaves the straight gap.
  * @module EchoRoutes.Worker.Matching
  */
 using System.Text.Json;
@@ -65,9 +66,12 @@ public record GapStretch(int From, int To, (double Lat, double Lon) Start, (doub
 public record RouteFill(List<(double Lat, double Lon)> Shape, double LengthM, double TimeS);
 
 /// <summary>What became of a stretch</summary>
-/// <param name="Result">filled, rejected_time, rejected_length, too_long, no_route, timeout, skipped (over the per-drive cap), deferred (the record's filling stopped early)</param>
+/// <param name="Result">filled, rejected_time, rejected_length, rejected_reversal, too_long, no_route, timeout, skipped (over the per-drive cap), deferred (the record's filling stopped early)</param>
 public record FillOutcome(GapStretch Stretch, string Result, RouteFill? Route)
 {
+    /// <summary>The headed route was rejected and the stretch was asked once more without headings</summary>
+    public bool Retried { get; init; }
+
     /// <summary>The route replaces the gap</summary>
     public bool Accepted => Result == GapFiller.Filled && Route != null;
 }
@@ -78,17 +82,27 @@ public static class GapFiller
     public const string Filled = "filled";
     public const string RejectedTime = "rejected_time";
     public const string RejectedLength = "rejected_length";
+    public const string RejectedReversal = "rejected_reversal";
     public const string TooLong = "too_long";
     public const string NoRoute = "no_route";
     public const string Timeout = "timeout";
     public const string Skipped = "skipped";
     public const string Deferred = "deferred";
 
-    /// <summary>A routed shape that turns back more than this near either end is a U-turn loop</summary>
+    /// <summary>Two directions further apart than this are opposite (a back-track)</summary>
     public const double ReversalDeg = 150;
 
-    /// <summary>How far from each end of a routed shape a reversal is looked for</summary>
+    /// <summary>How far from each end of a routed shape a back-track may start</summary>
     public const double ReversalWindowM = 300;
+
+    /// <summary>A back-track comes back within this of where the shape went out (a U-turn on the same road or across a median)</summary>
+    public const double BackTrackM = 50;
+
+    /// <summary>The least distance along the shape between the way out and the way back</summary>
+    public const double BackTrackLoopM = 150;
+
+    /// <summary>The spacing of the samples a back-track is looked for at</summary>
+    private const double SampleM = 10;
 
     /// <summary>The chord a direction along a routed shape is measured over (smooths roundabouts)</summary>
     private const double ChordM = 50;
@@ -186,9 +200,14 @@ public static class GapFiller
         }
 
         // The slack scales with the straight line, so a short stretch cannot hide a loop
-        if (r.LengthM > g.LengthFactor * s.StraightM + g.SlackM(s.StraightM) || Reverses(r.Shape))
+        if (r.LengthM > g.LengthFactor * s.StraightM + g.SlackM(s.StraightM))
         {
             return RejectedLength;
+        }
+
+        if (Reverses(r.Shape))
+        {
+            return RejectedReversal;
         }
 
         if (r.TimeS > g.MaxTimeS(s.ElapsedS))
@@ -206,11 +225,19 @@ public static class GapFiller
     }
 
     /// <summary>
-    /// Whether a routed shape turns back (more than 150 degrees) within 300 m of either end:
-    /// a loop round a block or a U-turn to reach an anchor from the wrong side. Directions
-    /// are 50 m chords, so a roundabout passed straight through is not a reversal.
+    /// Whether a routed shape back-tracks near either end: within 300 m of an end it
+    /// goes out, turns, and comes back the opposite way within 50 m of where it went
+    /// out, at least 150 m further along (a U-turn on the same road or across a median,
+    /// or a loop to reach an anchor from the wrong side). A change of bearing alone is
+    /// not one (routes.v2 rejected on it): a motorway loop ramp turns 180 to 270 degrees
+    /// but its way out and way back are far apart, a cloverleaf crosses its way in at a
+    /// right angle, and a roundabout passed straight through is shorter than 150 m.
+    /// Directions are 50 m chords.
     /// </summary>
-    public static bool Reverses(IReadOnlyList<(double Lat, double Lon)> shape)
+    public static bool Reverses(IReadOnlyList<(double Lat, double Lon)> shape) =>
+        BacksAtStart(shape) || BacksAtStart(shape.Reverse().ToList());
+
+    private static bool BacksAtStart(IReadOnlyList<(double Lat, double Lon)> shape)
     {
         if (shape.Count < 3)
         {
@@ -224,7 +251,7 @@ public static class GapFiller
         }
 
         var length = cum[^1];
-        if (length < 2 * ChordM)
+        if (length < BackTrackLoopM)
         {
             return false;
         }
@@ -243,16 +270,25 @@ public static class GapFiller
             return (shape[k - 1].Lat + t * (shape[k].Lat - shape[k - 1].Lat), shape[k - 1].Lon + t * (shape[k].Lon - shape[k - 1].Lon));
         }
 
-        double Direction(double m) => Bearing(At(m), At(m + ChordM));
-
-        var window = Math.Min(ReversalWindowM, length - ChordM);
-        var first = Direction(0);
-        var last = Direction(length - ChordM);
-        for (double d = 0; d <= window; d += ChordM / 2)
+        // Samples every 10 m up to twice the window (the way back of a turn within it)
+        var end = Math.Min(length - ChordM, 2 * ReversalWindowM);
+        var at = new List<(double Lat, double Lon)>();
+        var dir = new List<double>();
+        for (double m = 0; m <= end; m += SampleM)
         {
-            if (Turn(first, Direction(d)) > ReversalDeg || Turn(last, Direction(length - ChordM - d)) > ReversalDeg)
+            at.Add(At(m));
+            dir.Add(Bearing(At(m), At(m + ChordM)));
+        }
+
+        var loop = (int)Math.Ceiling(BackTrackLoopM / SampleM);
+        for (var i = 0; i < at.Count && i * SampleM <= ReversalWindowM; i++)
+        {
+            for (var j = i + loop; j < at.Count; j++)
             {
-                return true;
+                if (Turn(dir[i], dir[j]) > ReversalDeg && Geo.Haversine(at[i].Lat, at[i].Lon, at[j].Lat, at[j].Lon) <= BackTrackM)
+                {
+                    return true;
+                }
             }
         }
 
@@ -328,21 +364,31 @@ public static class GapFiller
             calls++;
             try
             {
-                using var doc = await engine.RouteAsync(BuildRequest(s, costing, g.HeadingTolerance), ct);
+                outcomes[i] = await RouteAsync(s, costing, g, g.HeadingTolerance, engine, ct);
                 success();
                 inARow = 0;
-                var route = Parse(doc.RootElement);
-                outcomes[i] = route == null ? new FillOutcome(s, NoRoute, null) : new FillOutcome(s, Judge(s, route, g), route);
+
+                // A heading can force a detour (an anchor placed on the other carriageway):
+                // one more call without headings, within the per-drive cap
+                var headed = g.HeadingTolerance > 0 && (s.StartHeading.HasValue || s.EndHeading.HasValue);
+                if (headed && outcomes[i]!.Result is RejectedLength or RejectedReversal && calls < cap)
+                {
+                    calls++;
+                    var retry = await RouteAsync(s, costing, g, 0, engine, ct);
+                    success();
+                    outcomes[i] = (retry.Accepted ? retry : outcomes[i]!) with { Retried = true };
+                }
             }
             catch (EngineRejectedException)
             {
                 success();
                 inARow = 0;
-                outcomes[i] = new FillOutcome(s, NoRoute, null);
+                // A retry the engine refused keeps the headed route's verdict
+                outcomes[i] = outcomes[i] is { } first ? first with { Retried = true } : new FillOutcome(s, NoRoute, null);
             }
             catch (EngineUnavailableException ex)
             {
-                outcomes[i] = new FillOutcome(s, Timeout, null);
+                outcomes[i] = outcomes[i] is { } first ? first with { Retried = true } : new FillOutcome(s, Timeout, null);
                 // A lone timeout is this stretch's (a hard route on a slow engine), not the engine's
                 if (ex.Timeout && !ex.Unreachable && ++inARow < g.TimeoutsInARow)
                 {
@@ -359,5 +405,14 @@ public static class GapFiller
         }
 
         return outcomes.Select(o => o!).ToList();
+    }
+
+    /// <summary>One /route call for a stretch (headings within <paramref name="headingTolerance"/>; 0: none) and its verdict</summary>
+    private static async Task<FillOutcome> RouteAsync(GapStretch s, string costing, GapFillSettings g, double headingTolerance,
+        IValhallaClient engine, CancellationToken ct)
+    {
+        using var doc = await engine.RouteAsync(BuildRequest(s, costing, headingTolerance), ct);
+        var route = Parse(doc.RootElement);
+        return route == null ? new FillOutcome(s, NoRoute, null) : new FillOutcome(s, Judge(s, route, g), route);
     }
 }
