@@ -26,6 +26,13 @@ valhalla:
     periodSeconds: 30
     timeoutSeconds: 20
     failureThreshold: 5
+  # Same reason: /status waits behind the trace in progress (up to its 15 s client
+  # timeout), so a short timeout marked the pod not-ready during every busy spell and
+  # took the service out of the backend's endpoints ("Fix this route" unavailable)
+  readinessProbe:
+    periodSeconds: 30
+    timeoutSeconds: 18
+    failureThreshold: 3
   # Valhalla runs with the valhalla.json shipped in the tiles image (spike 12.1
   # round 2: 32 MiB LRU tile cache, reserved memory released, httpd timeout 14 s,
   # trace max_distance 200 km). files/valhalla.json is a reference copy of it;
@@ -171,7 +178,11 @@ probes:
     path: /health/live
     initialDelaySeconds: 15
     periodSeconds: 30
+    timeoutSeconds: 5
   readiness:
     path: /health/ready
     initialDelaySeconds: 10
     periodSeconds: 15
+    # /health/ready asks Valhalla, which may be busy with a trace for up to 15 s
+    timeoutSeconds: 20
+    failureThreshold: 4
