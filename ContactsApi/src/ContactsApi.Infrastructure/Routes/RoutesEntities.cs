@@ -71,6 +71,10 @@ public class MatchedRouteRow
     /// <summary>JSON: [{fromM, toM, kind: observed / inferred / gap}]</summary>
     public string Pieces { get; set; } = "[]";
     public double? MatchedDistanceM { get; set; }
+    /// <summary>JSON: the roads the line follows, in travel order: [{name, ref, m, fromM}] (AD-37); null without a line</summary>
+    public string? Roads { get; set; }
+    /// <summary>The roads' names alone, for the road filter (AD-37); null without a line</summary>
+    public string[]? RoadNames { get; set; }
     /// <summary>JSON: the metrics on the matched line</summary>
     public string? MetricsAfter { get; set; }
     public string? Reason { get; set; }

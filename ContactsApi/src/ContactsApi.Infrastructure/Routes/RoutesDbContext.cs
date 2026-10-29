@@ -73,6 +73,8 @@ public class RoutesDbContext : DbContext
             e.Property(x => x.Status).HasMaxLength(16);
             e.Property(x => x.Pieces).HasColumnType("jsonb");
             e.Property(x => x.MetricsAfter).HasColumnType("jsonb");
+            e.Property(x => x.Roads).HasColumnType("jsonb");
+            e.Property(x => x.RoadNames).HasColumnType("text[]");
             e.Property(x => x.Reason).HasMaxLength(500);
         });
 

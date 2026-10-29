@@ -110,10 +110,11 @@ public class RouteGeometryReader : IRouteGeometryReader
                 var pieces = line == RouteLine.Detail
                     ? RouteChoice.Pieces(row).Select(p => new RouteGeometryPiece(p.FromM, p.ToM, p.Kind)).ToList()
                     : null;
+                var roads = line == RouteLine.Detail ? RouteRoads.Parse(m.Roads) : null;
                 // A row stored before its simplified lines existed (until the service fills them):
                 // simplified here, so a read never sends more than its budget
                 var polyline = m.Coarse ? Coarsen(m.Line!, line) : m.Line!;
-                chosen[m.ActivityId] = new ChosenRoute(m.ActivityId, polyline, m.MatchedDistanceM, m.Confidence, pieces);
+                chosen[m.ActivityId] = new ChosenRoute(m.ActivityId, polyline, m.MatchedDistanceM, m.Confidence, pieces, roads);
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -162,15 +163,15 @@ public class RouteGeometryReader : IRouteGeometryReader
     /// </summary>
     internal static string ChoiceSql(RouteLine line)
     {
-        var (lineSql, coarseSql, piecesSql) = line switch
+        var (lineSql, coarseSql, piecesSql, roadsSql) = line switch
         {
-            RouteLine.Detail => (@"m.""Polyline""", "false", @"m.""Pieces""::text"),
-            RouteLine.List => (@"COALESCE(m.""ListPolyline"", m.""Polyline"")", @"m.""ListPolyline"" IS NULL", "NULL::text"),
-            _ => (@"COALESCE(m.""DensityPolyline"", m.""ListPolyline"", m.""Polyline"")", @"m.""DensityPolyline"" IS NULL", "NULL::text")
+            RouteLine.Detail => (@"m.""Polyline""", "false", @"m.""Pieces""::text", @"m.""Roads""::text"),
+            RouteLine.List => (@"COALESCE(m.""ListPolyline"", m.""Polyline"")", @"m.""ListPolyline"" IS NULL", "NULL::text", "NULL::text"),
+            _ => (@"COALESCE(m.""DensityPolyline"", m.""ListPolyline"", m.""Polyline"")", @"m.""DensityPolyline"" IS NULL", "NULL::text", "NULL::text")
         };
         return $@"
             SELECT m.""ActivityId"", m.""SourceUpdatedAt"", m.""SourcePointCount"", m.""FusedType"", m.""Status"", m.""Confidence"",
-                   {lineSql} AS ""Line"", {coarseSql} AS ""Coarse"", {piecesSql} AS ""Pieces"", m.""MatchedDistanceM"",
+                   {lineSql} AS ""Line"", {coarseSql} AS ""Coarse"", {piecesSql} AS ""Pieces"", {roadsSql} AS ""Roads"", m.""MatchedDistanceM"",
                    d.""Kind"" AS ""Decision"",
                    (SELECT s.""Json""::text FROM routes.settings s WHERE s.""OwnerId"" = @owner) AS ""Settings""
               FROM routes.matched_routes m
@@ -199,7 +200,89 @@ public class RouteGeometryReader : IRouteGeometryReader
         public string? Line { get; set; }
         public bool Coarse { get; set; }
         public string? Pieces { get; set; }
+        public string? Roads { get; set; }
         public double? MatchedDistanceM { get; set; }
+        public string? Decision { get; set; }
+        public string? Settings { get; set; }
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<RouteRecord>> OnRoadAsync(string owner, string road, CancellationToken ct = default)
+    {
+        var name = RouteRoads.Normalize(road);
+        if (!Enabled || name == null)
+        {
+            return Array.Empty<RouteRecord>();
+        }
+
+        try
+        {
+            var rows = await _db.Database.SqlQueryRaw<RoadRow>(OnRoadSql(RouteRoads.IsRef(name)),
+                    new NpgsqlParameter("owner", owner), new NpgsqlParameter("road", RouteRoads.IsRef(name) ? name : $"%{EscapeLike(name)}%"))
+                .ToListAsync(ct);
+            if (rows.Count == 0)
+            {
+                return Array.Empty<RouteRecord>();
+            }
+
+            var settings = RouteSettingsDoc.Parse(rows[0].Settings);
+            var result = new List<RouteRecord>(rows.Count);
+            foreach (var m in rows)
+            {
+                // As the read-time choice, except "shown by default": the roads of a right match
+                // count whether or not the Owner draws matched lines (the caller checks the record)
+                var row = new MatchedRouteRow
+                {
+                    OwnerId = owner, ActivityId = m.ActivityId, SourceUpdatedAt = m.SourceUpdatedAt, SourcePointCount = m.SourcePointCount,
+                    FusedType = m.FusedType, Status = m.Status, Confidence = m.Confidence, Polyline = "-"
+                };
+                if (RouteChoice.Drawable(row, owner, m.SourceUpdatedAt, m.SourcePointCount, m.FusedType, m.Decision,
+                        settings with { ShownByDefault = true }))
+                {
+                    result.Add(new RouteRecord(m.ActivityId, m.SourceUpdatedAt, m.SourcePointCount, m.FusedType));
+                }
+            }
+
+            return result;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Unavailable(ex, "Matched routes unavailable; the road filter finds nothing");
+            return Array.Empty<RouteRecord>();
+        }
+    }
+
+    /// <summary>
+    /// The Owner's matches on a road: a route number by equality, a street name by
+    /// ILIKE over the row's names. Owner-scoped (the (OwnerId, ActivityId) index), so it
+    /// reads one Owner's rows only.
+    /// </summary>
+    internal static string OnRoadSql(bool isRef)
+    {
+        var match = isRef
+            ? @"m.""RoadNames"" @> ARRAY[@road]::text[]"
+            : @"EXISTS (SELECT 1 FROM unnest(m.""RoadNames"") r WHERE r ILIKE @road ESCAPE '')";
+        return $@"
+            SELECT m.""ActivityId"", m.""SourceUpdatedAt"", m.""SourcePointCount"", m.""FusedType"", m.""Status"", m.""Confidence"",
+                   d.""Kind"" AS ""Decision"",
+                   (SELECT s.""Json""::text FROM routes.settings s WHERE s.""OwnerId"" = @owner) AS ""Settings""
+              FROM routes.matched_routes m
+              LEFT JOIN routes.route_decisions d ON d.""OwnerId"" = @owner AND d.""SourceKey"" = m.""SourceKey""
+             WHERE m.""OwnerId"" = @owner AND m.""RoadNames"" IS NOT NULL AND m.""Status"" <> '{RouteStatuses.Failed}'
+               AND {match}";
+    }
+
+    private static string EscapeLike(string s) => s.Replace(@"\", @"\\").Replace("%", @"\%").Replace("_", @"\_");
+
+    /// <summary>One row of the road filter</summary>
+    internal sealed class RoadRow
+    {
+        public Guid ActivityId { get; set; }
+        public DateTime SourceUpdatedAt { get; set; }
+        public int SourcePointCount { get; set; }
+        public string FusedType { get; set; } = string.Empty;
+        public string Status { get; set; } = string.Empty;
+        public double? Confidence { get; set; }
         public string? Decision { get; set; }
         public string? Settings { get; set; }
     }

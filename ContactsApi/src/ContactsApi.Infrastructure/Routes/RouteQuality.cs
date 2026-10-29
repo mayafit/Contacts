@@ -59,12 +59,18 @@ public static class RouteQuality
     /// The rule version stored on every row; bumping it re-assesses and re-matches
     /// (AD-34 rule 7). routes.v2: gap filling by /route and confidence v2 (AD-35 rules 6 and 7).
     /// routes.v3: a fill is rejected for a true back-track only, not a loop ramp's turn,
-    /// and a rejected headed fill is retried once without headings (AD-35 rule 7)
+    /// and a rejected headed fill is retried once without headings (AD-35 rule 7).
+    /// routes.v4: the roads each line follows are stored, and every matchable record of a
+    /// matched type is matched, not only those that need improvement (AD-37)
     /// </summary>
-    public const string RuleVersion = "routes.v3";
+    public const string RuleVersion = "routes.v4";
 
     /// <summary>Phases whose types are matched now</summary>
     public static readonly IReadOnlySet<string> EnabledPhases = new HashSet<string> { "R1" };
+
+    /// <summary>The types matched in an enabled phase (a list, so a query can use it)</summary>
+    public static List<string> MatchedTypes => Profiles.Values
+        .Where(p => p.Phase != null && EnabledPhases.Contains(p.Phase)).Select(p => p.Type).ToList();
 
     /// <summary>A Visit counts for the endpoint check within this time of the track's end</summary>
     public static readonly TimeSpan EndpointWindow = TimeSpan.FromMinutes(30);

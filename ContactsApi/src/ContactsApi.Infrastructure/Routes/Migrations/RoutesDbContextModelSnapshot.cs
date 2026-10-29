@@ -99,6 +99,12 @@ namespace ContactsApi.Infrastructure.Routes.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
 
+                    b.PrimitiveCollection<string[]>("RoadNames")
+                        .HasColumnType("text[]");
+
+                    b.Property<string>("Roads")
+                        .HasColumnType("jsonb");
+
                     b.Property<string>("RuleVersion")
                         .IsRequired()
                         .HasMaxLength(16)

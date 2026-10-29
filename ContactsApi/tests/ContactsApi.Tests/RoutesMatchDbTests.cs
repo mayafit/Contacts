@@ -28,6 +28,8 @@ internal sealed class EchoEngine : IValhallaClient
     public readonly List<JsonObject> Routes = new();
     /// <summary>Fails a /route request as told (null: answers a straight road at 80 km/h)</summary>
     public Func<JsonObject, Exception?> FailRoute = _ => null;
+    /// <summary>The names every matched edge carries (none when null)</summary>
+    public string[]? Names;
 
     public Task<bool> PingAsync(CancellationToken ct) => Task.FromResult(true);
 
@@ -48,7 +50,11 @@ internal sealed class EchoEngine : IValhallaClient
         {
             ["shape"] = SyntheticTrace.Encode(shape, 6),
             ["edges"] = new JsonArray(Enumerable.Range(0, n - 1)
-                .Select(i => (JsonNode)new JsonObject { ["begin_shape_index"] = i, ["end_shape_index"] = i + 1 }).ToArray()),
+                .Select(i => (JsonNode)new JsonObject
+                {
+                    ["begin_shape_index"] = i, ["end_shape_index"] = i + 1,
+                    ["names"] = Names == null ? null : new JsonArray(Names.Select(x => (JsonNode)JsonValue.Create(x)!).ToArray())
+                }).ToArray()),
             ["matched_points"] = new JsonArray(shape.Select((p, i) => (JsonNode)new JsonObject
             {
                 ["type"] = "matched", ["edge_index"] = Math.Min(i, n - 2), ["distance_along_edge"] = i == n - 1 ? 1.0 : 0.0,
@@ -170,6 +176,47 @@ public class RoutesMatchDbTests
         engine.Requests.Clear();
         Assert.Equal(0, (await PendingBatchAsync(sp, owner)).Seen);
         Assert.Empty(engine.Requests);
+    }
+
+    [Fact]
+    public async Task A_well_recorded_drive_is_matched_for_its_roads_and_a_walk_waits_for_its_phase()
+    {
+        var backend = new FakeRoutesBackend();
+        var engine = new EchoEngine { Names = new[] { "431", "דרך נמיר" } };
+        await using var sp = Services(backend, engine);
+        if (sp == null)
+        {
+            return;
+        }
+
+        var owner = "roads-" + Guid.NewGuid();
+        var records = backend.Add(owner, 3);
+        var list = backend.Records[owner];
+        // Dense: a point every 5 s and ~55 m (no improvement needed, AD-35 rule 3)
+        var start = records[0].Start;
+        var dense = Enumerable.Range(0, 120).Select(k => new RoutePoint(start.AddSeconds(5 * k), 32.0 + k * 0.0005, 34.85)).ToList();
+        list[0] = list[0] with { Points = dense, PointCount = dense.Count, End = dense[^1].T };
+        list[2] = list[2] with { Type = "walk" };
+        await AssessAllAsync(sp, owner);
+        var assessed = await Db(sp).Quality.AsNoTracking().Where(q => q.OwnerId == owner).ToDictionaryAsync(q => q.ActivityId);
+        Assert.False(assessed[records[0].Id].NeedsImprovement);
+        Assert.Equal(Matchability.Yes, assessed[records[2].Id].Matchable);
+
+        // The dense drive and the sparse one wait; the walk (R2) does not
+        using (var scope = sp.CreateScope())
+        {
+            Assert.Equal(2, await scope.ServiceProvider.GetRequiredService<MatchRunner>().PendingCountAsync(owner, default));
+        }
+
+        var result = await PendingBatchAsync(sp, owner);
+        Assert.Equal(2, result.Tally.Matched);
+
+        var row = await Db(sp).MatchedRoutes.AsNoTracking().SingleAsync(m => m.OwnerId == owner && m.ActivityId == records[0].Id);
+        Assert.Equal(new[] { "431", "דרך נמיר" }, row.RoadNames);
+        var roads = RouteRoads.Parse(row.Roads);
+        Assert.Equal(new[] { true, false }, roads.Select(r => r.Ref));
+        Assert.InRange(roads[0].M, row.MatchedDistanceM!.Value * 0.95, row.MatchedDistanceM.Value * 1.01);
+        Assert.Equal(0, (await PendingBatchAsync(sp, owner)).Seen);
     }
 
     [Fact]

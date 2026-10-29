@@ -9,7 +9,7 @@
 Builds on Epic 10 (`epic-10-personal-atlas.md`: storage, import, map) and
 Epic 11 (`epic-11-fusion.md`: fusion, the fusion service, the drill-down).
 Requirements: PRD FR-55 to FR-60, NFR-20 and NFR-21
-(`echo/prd.md` §4.12). Architecture: AD-32 to AD-36 (`echo/architecture.md` §5A).
+(`echo/prd.md` §4.12). Architecture: AD-32 to AD-37 (`echo/architecture.md` §5A).
 
 ## The problem
 
@@ -84,7 +84,7 @@ the 90th percentile. There are 65,797 gaps longer than 1 km.
 | Table (schema `routes`) | What | Notes |
 | --- | --- | --- |
 | `route_quality` | Assessment of every source record with or without a track | Metrics, score, grade, flags, needs improvement, matchable reason (including `unknown` for transit with no source type), rule version, input hash, the record's `UpdatedAt` and point count as assessed |
-| `matched_routes` | The Matched Route of a source record | Polyline (precision 5), pieces `{fromM, toM, kind}` in metres along the line (observed, inferred, gap), confidence, road distance, engine, graph and rule version, input hash, and the record's `UpdatedAt`, point count and fused type at match time (the read-time check) |
+| `matched_routes` | The Matched Route of a source record | Polyline (precision 5), pieces `{fromM, toM, kind}` in metres along the line (observed, inferred, gap), the roads it follows (`Roads`, `RoadNames`, story 12.16), confidence, road distance, engine, graph and rule version, input hash, and the record's `UpdatedAt`, point count and fused type at match time (the read-time check) |
 | `route_decisions` | The Owner's `reject` and `accept` | Keyed by `source|externalId`, never by a derived id |
 | `settings` | Per Owner | Threshold (0.7), matched types, shown by default |
 | `jobs`, `owner_cursors` | The service's per-Owner queue and its per-Owner pull cursors | Durable across restarts |
@@ -112,7 +112,7 @@ would cost hours of Pi time after a restore (AD-34 rule 9).
 
 | Phase | Content |
 | --- | --- |
-| R1 (MVP) | Engine and tiles in CI; the service and the backend's internal API; assessment of every type; matching of drive and bus or taxi transit in Israel; backfill and after-import runs; the panel toggle, revert and "Fix this route"; the map's dashed inferred pieces (stories 12.1 to 12.8, with 12.2b) |
+| R1 (MVP) | Engine and tiles in CI; the service and the backend's internal API; assessment of every type; matching of drive and bus or taxi transit in Israel; backfill and after-import runs; the panel toggle, revert and "Fix this route"; the map's dashed inferred pieces (stories 12.1 to 12.8, with 12.2b); roads travelled and the road filter (story 12.16) |
 | R2 | Foot and bike profiles (ride, walk, run, hike); route quality in Insights with the batch action; the settings dialog; photos on the matched line; the MCP and Assistant tools; "Use this route" for low-confidence matches; re-matching on a new graph version (stories 12.9, 12.10, 12.12 to 12.15) |
 | R3 | Regions abroad: a coverage report, and added extracts (story 12.11) |
 
@@ -548,6 +548,36 @@ Acceptance criteria:
 - The old row is served until its replacement is written.
 - `reject` decisions are never overridden.
 
+### 12.16 Roads travelled and the road filter — R1
+
+As the Owner, I want to see which roads a matched route took, and find every route
+that passed through a road ("all routes through road 431").
+
+Acceptance criteria (FR-61, AD-37):
+- [x] Stage B reads `edge.names` from `trace_attributes` and the maneuvers' `street_names`
+  from gap-filling `/route` calls (`directions_type: maneuvers`). No extra engine call.
+- [x] Each road gets the metres of the `observed` and `inferred` segments on it; gaps
+  count for no road. A road needs 100 m, and at most 40 are kept per line, in travel
+  order with `fromM`. Route numbers (1 to 4 digits, an optional letter) are marked `ref`.
+- [x] `matched_routes.Roads` (jsonb) and `RoadNames` (text[]) are written with the line
+  and cleared with it (migration `RoutesRoads`), and the routes export includes them.
+- [x] Rule `routes.v4`: every matchable drive and bus or taxi trip is matched, not only
+  those that need improvement (1,392 more drives for the first Owner). Every row is
+  re-matched once in the normal queue.
+- [x] `AtlasQuery.Road` filters search, density, the timeline and Insights through
+  `IRouteGeometryReader.OnRoadAsync`. A route number matches exactly and a name in
+  part. Only confident or accepted, unrejected and current matches count, and visits
+  are left out. With route quality off, the filter finds nothing.
+- [x] The panel shows "Via 4 › 431 › street" under the route line while the matched
+  line is drawn. A click sets the filter, shown as a "Road 431" chip; "road 431" or
+  "כביש 431" typed into the search box sets it too.
+- [x] The Assistant tools and the MCP `atlas_search` and `atlas_insights` take `road`.
+- [x] Tests:
+  - pure: names, metres, gaps and fills, the limits, the parsing;
+  - Postgres: the filter, its exclusions, the detail and coverage;
+  - the local Valhalla 3.9.1 with the Israel tiles: Ramla to Modi'in lists 423, then 431, and a filled stretch counts for 431;
+  - Jest: the filter helpers and the panel line.
+
 ## Coverage
 
 | Requirement | Stories |
@@ -558,6 +588,7 @@ Acceptance criteria:
 | FR-58 Original or matched; the Owner decides | 12.6, 12.7 (R1); 12.14 (R2) |
 | FR-59 Route quality in Insights | 12.10 |
 | FR-60 Routes abroad | 12.11 |
+| FR-61 Roads travelled | 12.16 |
 | NFR-20 Route matching stays home | 12.1, 12.2 |
 | NFR-21 Route quality fits the Pi | 12.1, 12.5, 12.7 |
 

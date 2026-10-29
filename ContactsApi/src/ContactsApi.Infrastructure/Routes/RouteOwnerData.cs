@@ -237,6 +237,13 @@ public class RouteOwnerData
             pieces.RootElement.WriteTo(w);
         }
 
+        // The roads the line follows, in travel order (AD-37)
+        w.WritePropertyName("roads");
+        using (var roads = JsonDocument.Parse(string.IsNullOrWhiteSpace(m.Roads) ? "[]" : m.Roads))
+        {
+            roads.RootElement.WriteTo(w);
+        }
+
         w.WriteEndObject();
         w.WriteEndObject();
     }

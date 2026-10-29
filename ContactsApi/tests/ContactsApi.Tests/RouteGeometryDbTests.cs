@@ -440,6 +440,89 @@ public class RouteGeometryDbTests
         Assert.Equal("inferred", first.GetProperty("properties").GetProperty("pieces")[1].GetProperty("kind").GetString());
     }
 
+    /// <summary>Stores a match's roads as the service does (AD-37)</summary>
+    private static Action<MatchedRouteRow> OnRoads(params string[] names) => r =>
+    {
+        var roads = RouteRoads.Keep(names.Select((n, i) => (n, 500.0, i * 500.0)));
+        r.Roads = RouteRoads.Serialize(roads);
+        r.RoadNames = roads.Select(x => x.Name).ToArray();
+    };
+
+    [Fact]
+    public async Task The_road_filter_finds_the_activities_whose_shown_match_follows_the_road()
+    {
+        await using var c = await DbAsync();
+        if (c == null)
+        {
+            return;
+        }
+
+        var owner = "geom-roads-" + Guid.NewGuid();
+        var svc = Service(c);
+        var records = await SeedAsync(c, svc, owner, 6);
+        await MatchAsync(c, records[0], owner, OnRoads("4", "431", "דרך נמיר"));
+        await MatchAsync(c, records[1], owner, OnRoads("4313", "אבן גבירול"));
+        // Below the threshold: not shown, so its roads do not count
+        await MatchAsync(c, records[2], owner, r => { OnRoads("431")(r); r.Status = RouteStatuses.LowConfidence; r.Confidence = 0.5; });
+        // "Keep the original": the Owner said the match is wrong
+        await MatchAsync(c, records[3], owner, OnRoads("431"));
+        c.Routes.Decisions.Add(new RouteDecision { OwnerId = owner, SourceKey = RouteKeys.SourceKey(records[3].Source, records[3].ExternalId, records[3].Id) });
+        // Stale: the record changed after the match
+        await MatchAsync(c, records[4], owner, r => { OnRoads("431")(r); r.SourceUpdatedAt = r.SourceUpdatedAt.AddSeconds(-5); });
+        // Another Owner's match on the same road
+        await MatchAsync(c, records[5], "someone-else", OnRoads("431"));
+        await c.Routes.SaveChangesAsync();
+
+        async Task<List<Guid>> Find(string road) =>
+            (await svc.SearchAsync(owner, new AtlasQuery { Road = road })).Activities.Select(a => a.Id).ToList();
+
+        // A route number exactly (431 is not 4313), with or without "road" / "כביש"
+        Assert.Equal(new[] { records[0].Id }, await Find("431"));
+        Assert.Equal(new[] { records[0].Id }, await Find("Road 431"));
+        Assert.Equal(new[] { records[0].Id }, await Find("כביש 431"));
+        Assert.Equal(new[] { records[1].Id }, await Find("4313"));
+        // A street name in part
+        Assert.Equal(new[] { records[1].Id }, await Find("גבירול"));
+        Assert.Equal(new[] { records[0].Id }, await Find("נמיר"));
+        Assert.Empty(await Find("רוטשילד"));
+        // A LIKE wildcard is text, not a wildcard
+        Assert.Empty(await Find("%"));
+
+        // Visits are left out, the other filters still combine, and the timeline and density agree
+        var found = await svc.SearchAsync(owner, new AtlasQuery { Road = "431" });
+        Assert.Equal(0, found.TotalVisits);
+        Assert.Empty((await svc.SearchAsync(owner, new AtlasQuery { Road = "431", Types = new List<string> { "ride" } })).Activities);
+        var histogram = await svc.HistogramAsync(owner, T0.AddDays(-1), T0.AddDays(1), "day", filter: new AtlasQuery { Road = "431" });
+        Assert.Equal(1, histogram.Where(h => h.Kind != "health").Sum(h => h.Count));
+        Assert.Single((await svc.DensityAsync(owner, new AtlasQuery { Road = "431" })).Tracks);
+
+        // Route quality off: the road filter finds nothing
+        Assert.Empty((await Service(c, enabled: false).SearchAsync(owner, new AtlasQuery { Road = "431" })).Activities);
+    }
+
+    [Fact]
+    public async Task Detail_lists_the_roads_of_the_drawn_match_in_travel_order()
+    {
+        await using var c = await DbAsync();
+        if (c == null)
+        {
+            return;
+        }
+
+        var owner = "geom-roads-detail-" + Guid.NewGuid();
+        var records = await SeedAsync(c, Service(c), owner, 2);
+        await MatchAsync(c, records[0], owner, OnRoads("4", "431", "דרך נמיר"));
+        await MatchAsync(c, records[1], owner, r => { OnRoads("431")(r); r.Status = RouteStatuses.LowConfidence; r.Confidence = 0.5; });
+
+        var detail = await Service(c).GetActivityAsync(owner, records[0].Id);
+        Assert.Equal(new[] { "4", "431", "דרך נמיר" }, detail.Route!.Roads!.Select(r => r.Name));
+        Assert.Equal(new[] { true, true, false }, detail.Route.Roads!.Select(r => r.Ref));
+
+        // Not drawn: no roads shown
+        var low = await Service(c).GetActivityAsync(owner, records[1].Id);
+        Assert.Null(low.Route!.Roads);
+    }
+
     [Fact]
     public async Task A_missing_routes_schema_draws_the_recorded_lines()
     {

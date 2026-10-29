@@ -119,7 +119,7 @@ public partial class AtlasService
 
     private async Task<List<VisitRow>> InsightVisitsAsync(string owner, AtlasQuery q, CancellationToken ct)
     {
-        if (!q.Visits || q.ConflictsOnly)
+        if (!q.Visits || q.ActivitiesOnly)
         {
             return new List<VisitRow>();
         }
@@ -179,6 +179,7 @@ public partial class AtlasService
         var zone = FindZone(tz);
         DateTime Local(DateTime utc) => TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(utc, DateTimeKind.Utc), zone);
 
+        await ResolveRoadAsync(owner, q, ct);
         var acts = await InsightRows(owner, q).ToListAsync(ct);
         var visits = await InsightVisitsAsync(owner, q, ct);
         var totals = Totals(acts, visits);
@@ -340,7 +341,8 @@ public partial class AtlasService
     private static AtlasQuery CopyQuery(AtlasQuery q, DateTime? from, DateTime? to) => new()
     {
         From = from, To = to, MinLat = q.MinLat, MinLon = q.MinLon, MaxLat = q.MaxLat, MaxLon = q.MaxLon,
-        Types = q.Types, Text = q.Text, Activities = q.Activities, Visits = q.Visits, ConflictsOnly = q.ConflictsOnly
+        Types = q.Types, Text = q.Text, Activities = q.Activities, Visits = q.Visits, ConflictsOnly = q.ConflictsOnly,
+        Road = q.Road, RoadActivityIds = q.RoadActivityIds
     };
 
     /// <param name="from">The query's start: places first visited after it are new (none without a start)</param>

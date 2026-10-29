@@ -112,6 +112,25 @@ public class RoutesGapFillEngineTests
         return (result, watch.Elapsed.TotalMilliseconds, stretches.Count, fills);
     }
 
+    [EngineFact]
+    public async Task A_filled_stretch_is_counted_on_the_road_it_was_routed_on()
+    {
+        var url = TestEngine.Url!;
+        // Ramla to Modi'in on 431 (AD-37); one stretch of ~6 km has no recorded point
+        var (road, timeS) = await RoadAsync(url, (31.9300, 34.8200), (31.9010, 34.9600));
+        var points = Sparse(road, timeS);
+        var cut = points.Take(4).Concat(points.Skip(6)).ToList();
+
+        var without = await MatchAsync(url, cut, false);
+        var with = await MatchAsync(url, cut, true);
+
+        Assert.Contains(with.Fills, f => f.Accepted);
+        double On431(MatchResult r) => r.Roads!.Single(x => x.Name == "431").M;
+        // The filled stretch was the gap: it now counts for 431
+        Assert.True(On431(with.Result) > On431(without.Result) + 3_000, $"{On431(without.Result)} → {On431(with.Result)} m on 431");
+        Assert.True(On431(with.Result) > 10_000);
+    }
+
     [EngineTheory]
     [InlineData("Route 4", 31.6688, 34.5743, 31.8044, 34.6553)] // Ashkelon to Ashdod
     [InlineData("Route 6", 31.6100, 34.7642, 32.0956, 34.9566)] // Kiryat Gat to Rosh HaAyin

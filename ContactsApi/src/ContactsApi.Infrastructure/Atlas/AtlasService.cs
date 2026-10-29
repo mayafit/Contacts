@@ -358,6 +358,7 @@ public partial class AtlasService
     /// <summary>Activities and visits matching time, area, type and text together</summary>
     public async Task<SearchResult> SearchAsync(string owner, AtlasQuery q, CancellationToken ct = default)
     {
+        await ResolveRoadAsync(owner, q, ct);
         var limit = Math.Clamp(q.Limit, 1, 2000);
         var activities = new List<ActivitySummary>();
         var visits = new List<VisitSummary>();
@@ -384,7 +385,7 @@ public partial class AtlasService
                 .Select(_routes is { Enabled: true } ? ToSummaryRouted : ToSummary).ToListAsync(ct);
         }
 
-        if (q.Visits && !q.ConflictsOnly)
+        if (q.Visits && !q.ActivitiesOnly)
         {
             var vq = await QueryVisitsAsync(owner, q, ct);
             if (q.From.HasValue)
@@ -415,6 +416,7 @@ public partial class AtlasService
     public async Task<DensityData> DensityAsync(string owner, AtlasQuery q, CancellationToken ct = default)
     {
         const int maxTracks = 6000, maxVisits = 30000;
+        await ResolveRoadAsync(owner, q, ct);
         var tracks = new List<DensityTrack>();
         var visits = new List<double[]>();
         var truncated = false;
@@ -471,7 +473,7 @@ public partial class AtlasService
             }
         }
 
-        if (q.Visits && !q.ConflictsOnly)
+        if (q.Visits && !q.ActivitiesOnly)
         {
             var vq = await QueryVisitsAsync(owner, q, ct);
             if (q.From.HasValue)
@@ -520,6 +522,13 @@ public partial class AtlasService
         {
             var types = q.Types.Select(NormalizeType).ToList();
             aq = aq.Where(a => types.Contains(a.Fusion != null && a.Fusion.Type != null ? a.Fusion.Type : a.Type));
+        }
+
+        if (q.HasRoad)
+        {
+            // Resolved by ResolveRoadAsync; unresolved finds nothing rather than everything
+            var onRoad = (q.RoadActivityIds ?? Array.Empty<Guid>()).ToList();
+            aq = aq.Where(a => onRoad.Contains(a.Id));
         }
 
         var text = q.Text?.Trim();
@@ -855,6 +864,7 @@ public partial class AtlasService
         from = Utc(from);
         to = Utc(to);
         filter ??= new AtlasQuery();
+        await ResolveRoadAsync(owner, filter, ct);
 
         // Activities and visits: few enough to bucket here, with every search filter
         var rows = new List<HistogramRow>();
@@ -868,7 +878,7 @@ public partial class AtlasService
                 .Select(g => new HistogramRow(g.Key.Bucket, g.Key.Type, g.Count())));
         }
 
-        if (filter.Visits && !filter.ConflictsOnly)
+        if (filter.Visits && !filter.ActivitiesOnly)
         {
             var starts = await (await QueryVisitsAsync(owner, filter, ct))
                 .Where(v => v.StartTime >= from && v.StartTime <= to)

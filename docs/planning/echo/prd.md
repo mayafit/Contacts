@@ -23,7 +23,7 @@ Echo is not greenfield. Two Areas already run in production at https://contacts.
 
 The rest of this document works as follows:
 - The Glossary (§3) fixes the vocabulary.
-- Features (§4) nest globally numbered requirements, FR-01 to FR-60. FR-51 to FR-54 were added after the Owner's answers of 2026-10-28, so they sit in the section they belong to, not in id order. FR-55 to FR-60 (route quality, §4.12) follow them.
+- Features (§4) nest globally numbered requirements, FR-01 to FR-61. FR-51 to FR-54 were added after the Owner's answers of 2026-10-28, so they sit in the section they belong to, not in id order. FR-55 to FR-60 (route quality, §4.12) follow them, and FR-61 (roads travelled, §4.12) was added on 2026-10-29.
 - Cross-cutting quality requirements are NFR-01 to NFR-21 (§6).
 - Inferences are tagged `[ASSUMPTION]` and indexed in §13.
 - Technical "how" (mechanisms, storage, pipelines, remediation steps, and implementation details of Built behaviour such as error codes, scope names and thresholds) is in [prd-addendum.md](prd-addendum.md) for the architect.
@@ -611,7 +611,7 @@ Details:
 - Assessment never needs a third party.
 
 #### FR-56: Road-matched routes — Proposed
-For an Activity marked "needs improvement", Echo computes a **Matched Route** that follows the real road network, and shows it instead of the straight lines when the match is confident enough.
+For an Activity marked "needs improvement", Echo computes a **Matched Route** that follows the real road network, and shows it instead of the straight lines when the match is confident enough. From 2026-10-29, every matchable Activity of a matched type is matched, including a well-recorded one that does not need improvement, so that its roads are known (FR-61). A well-recorded drive's Matched Route is shown by the same confidence rule, and the Owner can still choose the recorded line.
 - **Types.** Phase R1: drive, and transit on roads (buses). Phase R2: ride, walk, run and hike, each on a bike or foot network. Flight, ski, swim and "other" are **never** matched. A transit trip that turns out to be rail is left as recorded (decision Q-12).
 - **Provenance.** Every piece of a Matched Route is *observed*, *inferred* or a *gap* (§3). On the map, inferred pieces are drawn more faintly (dashed), and gaps stay as recorded.
 - **Confidence.** Each Matched Route has a confidence from 0 to 1. It is shown by default, with no acceptance needed, when its confidence is at or above the Owner's threshold, which starts at **0.7** (decision Q-14). Below it, the original stays in place; from Phase R2 the Owner can view the Matched Route and choose to use it (FR-58).
@@ -648,6 +648,20 @@ The data-quality section of Insights (FR-25) shows, for the current query:
 - the worst sources.
 
 It also offers the batch action "Improve N routes". A rule-based proposal ("62 drives in this period are drawn as straight lines: improve them") links to it. The Owner can set the confidence threshold, the matched types, and whether Matched Routes are shown by default.
+
+#### FR-61: Roads travelled — Proposed (Phase R1)
+When a route is matched to roads, Echo records which roads it followed: route numbers (for example 431) and street names as the map data spells them (Hebrew in Israel), in travel order, with the distance on each. The Owner asked for this on 2026-10-29: "so I could look for things like all routes that passed through road 431".
+- **Shown.** In the Activity panel, under the route line: "Via 4 › 431 › איילון צפון". Route numbers look like small road signs. It is shown only while the Matched Route is drawn. Each road can be clicked.
+- **Searchable.** A **road filter** finds every Activity whose route followed a road. The Owner sets it by:
+  - clicking a road in the panel;
+  - typing "road 431" or "כביש 431" in the search box;
+  - asking the Assistant, or through MCP (`road`).
+
+  It shows as a chip ("Road 431") beside the other filters and combines with them (time, area, types). The timeline, the density map and Insights count what it finds; visits are left out. A route number matches exactly (431 is not 4313); a street name matches in part ("גבירול" finds "אבן גבירול").
+- **What counts.** Only the observed and inferred pieces of the line: the straight leg of a gap is on no road. A road followed for less than 100 m is left out (a junction crossed, or a slip of the matching). Only matches the Owner sees as right count: confident or accepted, never rejected ("Keep the original"), and never stale.
+- **Coverage.** Every matchable drive and bus or taxi trip is matched for its roads (FR-56). Activities that are not matched (walks and rides until Phase R2, flights, records outside the map data) have no roads, so the filter does not find them.
+- **Derived.** Roads belong to the Matched Route: exported, erased and recomputed with it.
+- English names are not offered in R1: the map data has none for most streets.
 
 #### FR-60: Routes abroad — Proposed (Phase R3)
 Activities outside the map data that Echo holds are flagged "outside map coverage" and left as recorded. At MVP, Echo holds Israel only (decision Q-13).
@@ -750,7 +764,7 @@ Privacy is a product pillar, not a compliance appendix. The requirements in §4.
 | **1: Connect** | Contacts ↔ Atlas | FR-31 to FR-42, FR-47, FR-48, FR-49, FR-52; NFR-09, NFR-12 to NFR-14 for Connect data; NFR-10 test (b); NFR-11 token budget; NFR-15 for the Unified Timeline, Privacy Center and Person views; NFR-16 token scopes; NFR-18 worker fairness | UJ-3 and UJ-4 work on the first Owner's real data; SM-1 to SM-3 are measured; NFR-10 (b), the NFR-11 budget and the NFR-18 fairness test pass; any Owner can export and erase their own data |
 | **2: People in Photos** | Opt-in faces | FR-43 to FR-45; NFR-14 and NFR-15 for the face views | UJ-5 works; revocation is proven to delete all face data; unnamed clusters are proven discarded after review; no face data is reachable across Owners |
 | **3+: More of me** | Breadth | FR-54 LinkedIn first (Q-7), then FR-04, FR-11, FR-16, FR-21, FR-26, FR-30 and the other §4.11 sources | Chosen per phase; LinkedIn connections link to Contacts |
-| **R1: Routes MVP** (an Atlas track parallel to Phase 1) | Car trips on the roads | FR-55 (all types assessed); FR-56 and FR-57 for drive and bus or taxi transit, Israel map data only, without the MCP and Assistant tools or re-matching on a new map data version; FR-58 without accepting a Matched Route below the threshold; NFR-20, NFR-21 | It needs the `EchoService` scheme and CI image builds of Phase 0 (architecture AD-3, AD-22); if Phase 0 has not delivered them when R1 starts, R1 builds them itself (decided, architecture §12). Exit: the first Owner's drives in Israel are drawn on roads; the spike on the Pi confirms the AD-36 budget; NFR-20 and NFR-21 pass; the two-Owner isolation gate (NFR-07) and the round-robin fairness test (NFR-18) cover the route service |
+| **R1: Routes MVP** (an Atlas track parallel to Phase 1) | Car trips on the roads | FR-55 (all types assessed); FR-61 (roads travelled and the road filter); FR-56 and FR-57 for drive and bus or taxi transit, Israel map data only, without the MCP and Assistant tools or re-matching on a new map data version; FR-58 without accepting a Matched Route below the threshold; NFR-20, NFR-21 | It needs the `EchoService` scheme and CI image builds of Phase 0 (architecture AD-3, AD-22); if Phase 0 has not delivered them when R1 starts, R1 builds them itself (decided, architecture §12). Exit: the first Owner's drives in Israel are drawn on roads; the spike on the Pi confirms the AD-36 budget; NFR-20 and NFR-21 pass; the two-Owner isolation gate (NFR-07) and the round-robin fairness test (NFR-18) cover the route service |
 | **R2: Routes on foot and bike** | Every matchable type; insights; the rest of R1's features | FR-56 for ride, walk, run and hike; FR-57's MCP and Assistant tools and re-matching on a new map data version; FR-58's "Use this route" below the threshold; photos placed on the Matched Route; FR-59 | Matched foot and bike routes are rejected by the Owner in ≤ 10% of the cases they review (the SM-3 measure applied to routes) |
 | **R3: Routes abroad** | Coverage | FR-60 | The regions added on demand (Q-13) are matched; the rest are flagged "outside map coverage" |
 | **Gate: beyond the invited circle** | Opening up | NFR-19 Google verification and CASA | Not scheduled. Required before anyone outside the invited circle is admitted, or before the user count nears 100 |

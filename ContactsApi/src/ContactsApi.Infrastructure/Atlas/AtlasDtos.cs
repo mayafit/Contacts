@@ -61,6 +61,24 @@ public class AtlasQuery
     public int Limit { get; set; } = 300;
     /// <summary>Only fused activities whose sources disagree</summary>
     public bool ConflictsOnly { get; set; }
+
+    /// <summary>
+    /// Only activities whose matched route follows this road (AD-37): a route number
+    /// ("431", "road 431") or part of a street name. Visits are left out, as with ConflictsOnly.
+    /// </summary>
+    public string? Road { get; set; }
+
+    /// <summary>The road filter resolved to activity ids (set by the service; never read from a request)</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public IReadOnlyCollection<Guid>? RoadActivityIds { get; set; }
+
+    /// <summary>The query filters by road</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool HasRoad => !string.IsNullOrWhiteSpace(Road);
+
+    /// <summary>Only activities: the conflicts or road filter is on (they say nothing about visits)</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool ActivitiesOnly => ConflictsOnly || HasRoad;
 }
 
 /// <summary>An activity without its points</summary>
@@ -147,8 +165,9 @@ public record ActivityDetail(
 /// <param name="Description">The primary record's quality, stored match and decision; null before the service assessed it</param>
 /// <param name="ObservedShare">Share of the matched line along recorded points (0-1); null when not drawn</param>
 /// <param name="InferredShare">Share chosen by routing between sparse points (0-1); null when not drawn</param>
+/// <param name="Roads">The roads the drawn matched line follows, in travel order (AD-37); null when not drawn</param>
 public record ActivityRouteInfo(List<Guid> RecordIds, ContactsApi.Core.Interfaces.RouteDescription? Description,
-    double? ObservedShare, double? InferredShare);
+    double? ObservedShare, double? InferredShare, List<ContactsApi.Core.Interfaces.RouteRoad>? Roads = null);
 
 /// <summary>How a source record matches the fused activity's primary record</summary>
 /// <param name="StartDeltaS">Its start minus the primary's (seconds)</param>
