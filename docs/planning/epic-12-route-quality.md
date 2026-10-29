@@ -282,6 +282,32 @@ Acceptance criteria:
 - Engine timeouts and errors back off per record (1 min, 10 min, 1 h). After 3
   attempts the record is `failed` with its reason.
 
+### 12.4a Gap filling and confidence v2 — R1
+
+As the Owner, I want a drive that is almost on roads drawn on roads, and judged
+by whether the drawn line is believable, not by how sparse the recording was.
+
+Acceptance criteria:
+- Every unbridged stretch between two anchors (pre-split cut gap, engine break,
+  leg touching an unmatched point) gets one Valhalla `/route` call; the route is
+  kept when it fits the elapsed time and the straight line (AD-35 rule 7) and is
+  stored as `inferred`; otherwise the straight `gap` stays. A drive with no
+  matched point is routed point to point at a lower weight. Every number is
+  `Routes__GapFill*` configuration, and `Routes__GapFill=false` turns it off.
+- The confidence is `min(coverage, anchorQuality, plausibility, continuity)`
+  (AD-35 rule 6, `routes.v2`); a bridged break is not penalised; Timeline points
+  are off-road only beyond 100 m. `MetricsAfter` stores the factors and the
+  fills.
+- A synthetic replica of the live Route 4 drive (17 points, one 5.1 km pre-split
+  gap, one engine break) scores at least 0.8 when filled; with a jump no road
+  explains, or a route too slow for the elapsed time, it stays below 0.7.
+- A `/route` timeout leaves the gap and does not fail the record.
+- Bumping `RuleVersion` re-matches older rows in the normal queue,
+  `low_confidence` and `failed` first; the old line is served until replaced;
+  `reject` decisions win; status shows `rematchRemaining`.
+- When "Fix this route" still lands below the threshold, the panel shows the
+  confidence and the main reason.
+
 ### 12.5 Runs after import, the backfill, and round-robin scheduling — R1
 
 As the Owner, I want new trips improved automatically after every import, and my
