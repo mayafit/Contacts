@@ -309,7 +309,7 @@ public class RoutesFeedDbTests
             }
         });
         var feed = new AtlasRoutesFeed(db);
-        var ids = await db.Activities.AsNoTracking().Where(a => a.OwnerId == owner).OrderBy(a => a.StartTime).Select(a => a.Id).ToListAsync();
+        var ids = await db.Activities.AsNoTracking().Where(a => a.OwnerId == owner).OrderBy(a => a.ExternalId).Select(a => a.Id).ToListAsync(); // long, short
 
         var both = await feed.TracksAsync(owner, ids);
         var alone = Assert.Single(await feed.TracksAsync(owner, new[] { ids[0] }));
