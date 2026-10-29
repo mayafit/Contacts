@@ -65,7 +65,11 @@ public record RouteChangesPage(List<RouteChange> Items, string? Next, bool More)
 public record RouteIdsPage(List<Guid> Ids, string? Next, bool More);
 
 /// <summary>A track point: time and position</summary>
-public record RoutePoint(DateTime T, double Lat, double Lon);
+/// <param name="Synthetic">
+/// Not recorded: borrowed from a similar drive or marked by the Owner (AD-38). Legs to it
+/// are inferred, and the confidence counts recorded points only. Never sent by the backend.
+/// </param>
+public record RoutePoint(DateTime T, double Lat, double Lon, bool Synthetic = false);
 
 /// <summary>Where a Visit was, and when</summary>
 public record RouteVisit(DateTime Start, DateTime End, double Lat, double Lon);

@@ -104,6 +104,7 @@ public class RoutesMatchDbTests
         services.AddSingleton<EngineBreaker>();
         services.AddScoped<AssessRunner>();
         services.AddScoped<MatchRunner>();
+        services.AddScoped<RebuildRunner>();
         services.AddSingleton<WakeSignal>();
         services.AddSingleton(pause ?? new RecordingPause());
         var provider = services.BuildServiceProvider();
@@ -217,6 +218,179 @@ public class RoutesMatchDbTests
         Assert.Equal(new[] { true, false }, roads.Select(r => r.Ref));
         Assert.InRange(roads[0].M, row.MatchedDistanceM!.Value * 0.95, row.MatchedDistanceM.Value * 1.01);
         Assert.Equal(0, (await PendingBatchAsync(sp, owner)).Seen);
+    }
+
+    /// <summary>Drives matched as the service matches them (EchoEngine snaps each point onto itself)</summary>
+    private static async Task<List<RouteTrack>> MatchedDrivesAsync(IServiceProvider sp, FakeRoutesBackend backend, string owner, int n)
+    {
+        var drives = backend.Add(owner, n);
+        await AssessAllAsync(sp, owner);
+        await PendingBatchAsync(sp, owner);
+        return drives;
+    }
+
+    private static RebuildRunner Rebuild(IServiceProvider sp) => sp.CreateScope().ServiceProvider.GetRequiredService<RebuildRunner>();
+
+    [Fact]
+    public async Task A_rebuild_borrows_from_the_owner_s_own_confident_drives_between_the_same_places()
+    {
+        var backend = new FakeRoutesBackend();
+        var engine = new EchoEngine();
+        await using var sp = Services(backend, engine);
+        if (sp == null)
+        {
+            return;
+        }
+
+        var owner = "rebuild-" + Guid.NewGuid();
+        // Five drives along the same way (13 points 1.1 km apart); one more the other way round
+        var drives = await MatchedDrivesAsync(sp, backend, owner, 5);
+        var list = backend.Records[owner];
+        var back = list[0] with
+        {
+            Id = Guid.NewGuid(), ExternalId = "back",
+            Points = list[0].Points.AsEnumerable().Reverse().Select((p, k) => p with { T = list[0].Start.AddDays(1).AddSeconds(60 * k) }).ToList()
+        };
+        list.Add(back);
+        // Another Owner's drive between the same places never lends points
+        var other = "rebuild-other-" + Guid.NewGuid();
+        await MatchedDrivesAsync(sp, backend, other, 1);
+        var db = Db(sp);
+        // Not lent: a used rebuild, a rejected match, a weak match
+        await db.MatchedRoutes.Where(m => m.OwnerId == owner && m.ActivityId == drives[2].Id)
+            .ExecuteUpdateAsync(x => x.SetProperty(m => m.Method, RebuildMethods.Similar));
+        db.Decisions.Add(new RouteDecision { OwnerId = owner, SourceKey = drives[3].SourceKey, Kind = RouteDecisionKinds.Reject });
+        await db.SaveChangesAsync();
+        await db.MatchedRoutes.Where(m => m.OwnerId == owner && m.ActivityId == drives[4].Id)
+            .ExecuteUpdateAsync(x => x.SetProperty(m => m.Confidence, 0.6).SetProperty(m => m.Status, RouteStatuses.LowConfidence));
+        var stored = await db.MatchedRoutes.AsNoTracking().SingleAsync(m => m.OwnerId == owner && m.ActivityId == drives[0].Id);
+        Assert.Equal((drives[0].Start, drives[0].Points[0].Lat, drives[0].Points[^1].Lat),
+            (stored.StartedAt!.Value, stored.StartLat!.Value, stored.EndLat!.Value));
+
+        var pool = await Rebuild(sp).PoolAsync(owner, drives[0], default);
+        Assert.Equal(new[] { drives[1].Id }, pool.Select(c => c.ActivityId));
+
+        engine.Requests.Clear();
+        var r = await Rebuild(sp).RunAsync(owner, drives[0].Id, RebuildMethods.Similar, null, default);
+        Assert.Equal(RebuildOutcomes.Suggested, r.Outcome);
+        Assert.Equal((drives[1].Id, false, 1, 1.0), (r.Basis!.ActivityId, r.Basis.Reversed, r.Basis.Agreeing, r.Basis.Fit));
+        // 12 legs of 1.11 km: 5 borrowed points each, every 200 m
+        Assert.Equal(60, r.Added);
+        Assert.Equal(13 + 60, engine.Requests[0]["shape"]!.AsArray().Count);
+        Assert.Contains(r.Pieces!, p => p.Kind == PieceKinds.Inferred);
+        Assert.DoesNotContain(r.Pieces!, p => p.Kind == PieceKinds.Observed && p.ToM - p.FromM > 1200);
+        Assert.Equal(RouteQuality.InputHash(drives[0].Points), r.InputHash);
+
+        // The way back borrows the same drives, reversed
+        var rb = await Rebuild(sp).RunAsync(owner, back.Id, RebuildMethods.Similar, null, default);
+        Assert.True(rb.Basis!.Reversed);
+        Assert.Equal(2, rb.Basis.Agreeing);
+
+        // Nothing between those places: no suggestion, and why
+        list.Add(list[0] with { Id = Guid.NewGuid(), ExternalId = "far", Points = list[0].Points.Select(p => p with { Lon = p.Lon + 0.2 }).ToList() });
+        var none = await Rebuild(sp).RunAsync(owner, list[^1].Id, RebuildMethods.Similar, null, default);
+        Assert.Equal(RebuildOutcomes.NoSimilar, none.Outcome);
+        Assert.Contains("No confidently matched drive", none.Message);
+    }
+
+    [Fact]
+    public async Task A_used_rebuild_is_stored_kept_across_rule_versions_and_rematched_when_the_drive_changes()
+    {
+        var backend = new FakeRoutesBackend();
+        var engine = new EchoEngine();
+        await using var sp = Services(backend, engine);
+        if (sp == null)
+        {
+            return;
+        }
+
+        var owner = "apply-" + Guid.NewGuid();
+        var drives = await MatchedDrivesAsync(sp, backend, owner, 2);
+        var r = await Rebuild(sp).RunAsync(owner, drives[0].Id, RebuildMethods.Similar, null, default);
+        var db = Db(sp);
+        var job = new RouteJob
+        {
+            OwnerId = owner, Kind = RouteJobKinds.Rebuild, Priority = RouteJobPriorities.Interactive, State = RouteJobStates.Done,
+            Result = System.Text.Json.JsonSerializer.Serialize(r, RebuildRunner.Json)
+        };
+        db.Jobs.Add(job);
+        await db.SaveChangesAsync();
+
+        // Another record's id, or another Owner: not found
+        Assert.Equal("not_found", (await Rebuild(sp).ApplyAsync(owner, job.Id, drives[1].Id, default)).Conflict);
+        Assert.Equal("not_found", (await Rebuild(sp).ApplyAsync("someone-else", job.Id, drives[0].Id, default)).Conflict);
+
+        var (used, conflict) = await Rebuild(sp).ApplyAsync(owner, job.Id, drives[0].Id, default);
+        Assert.Null(conflict);
+        var row = await Db(sp).MatchedRoutes.AsNoTracking().SingleAsync(m => m.OwnerId == owner && m.ActivityId == drives[0].Id);
+        Assert.Equal((RebuildMethods.Similar, r.Polyline, r.Confidence), (row.Method, row.Polyline, row.Confidence));
+        Assert.Contains(drives[1].Id.ToString(), row.Basis);
+        Assert.NotNull(row.ListPolyline);
+
+        // A new rule version does not re-match it
+        await Db(sp).MatchedRoutes.Where(m => m.OwnerId == owner && m.ActivityId == drives[0].Id)
+            .ExecuteUpdateAsync(x => x.SetProperty(m => m.RuleVersion, "routes.v1"));
+        using (var scope = sp.CreateScope())
+        {
+            var pending = await scope.ServiceProvider.GetRequiredService<MatchRunner>().Pending(owner).Select(q => q.ActivityId).ToListAsync();
+            Assert.DoesNotContain(drives[0].Id, pending);
+        }
+
+        // The drive's points changed: re-matched as the matcher's own, and the suggestion can no longer be used
+        var list = backend.Records[owner];
+        list[0] = list[0] with { Points = list[0].Points.Take(10).ToList(), PointCount = 10 };
+        backend.Touch(owner, drives[0].Id);
+        await AssessAllAsync(sp, owner);
+        Assert.Equal("The drive changed after the rebuild; rebuild it again.",
+            (await Rebuild(sp).ApplyAsync(owner, job.Id, drives[0].Id, default)).Conflict);
+        await PendingBatchAsync(sp, owner);
+        row = await Db(sp).MatchedRoutes.AsNoTracking().SingleAsync(m => m.OwnerId == owner && m.ActivityId == drives[0].Id);
+        Assert.Equal((RebuildMethods.Auto, (string?)null), (row.Method, row.Basis));
+    }
+
+    [Fact]
+    public async Task Marked_points_are_kept_and_every_later_match_goes_through_them()
+    {
+        var backend = new FakeRoutesBackend();
+        var engine = new EchoEngine();
+        await using var sp = Services(backend, engine);
+        if (sp == null)
+        {
+            return;
+        }
+
+        var owner = "marks-" + Guid.NewGuid();
+        var drives = await MatchedDrivesAsync(sp, backend, owner, 1);
+        // A point 300 m east of the third leg
+        var marks = new List<(double Lat, double Lon)> { (32.025, 34.853) };
+        var bad = await Rebuild(sp).RunAsync(owner, drives[0].Id, RebuildMethods.Waypoints, new() { (33.5, 34.85) }, default);
+        Assert.Equal((RebuildOutcomes.Invalid, true), (bad.Outcome, bad.Message!.Contains("5 km")));
+
+        var r = await Rebuild(sp).RunAsync(owner, drives[0].Id, RebuildMethods.Waypoints, marks, default);
+        Assert.Equal((RebuildOutcomes.Suggested, 1), (r.Outcome, r.Added));
+        var db = Db(sp);
+        var job = new RouteJob
+        {
+            OwnerId = owner, Kind = RouteJobKinds.Rebuild, Priority = RouteJobPriorities.Interactive, State = RouteJobStates.Done,
+            Result = System.Text.Json.JsonSerializer.Serialize(r, RebuildRunner.Json)
+        };
+        db.Jobs.Add(job);
+        await db.SaveChangesAsync();
+        Assert.Null((await Rebuild(sp).ApplyAsync(owner, job.Id, drives[0].Id, default)).Conflict);
+        var stored = await Db(sp).Waypoints.AsNoTracking().SingleAsync(w => w.OwnerId == owner);
+        Assert.Equal(drives[0].SourceKey, stored.SourceKey);
+        Assert.Equal((32.025, 34.853), RouteMarks.Parse(stored.Points).Single());
+
+        // A forced re-match ("Fix this route") still goes through them
+        engine.Requests.Clear();
+        using (var scope = sp.CreateScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<MatchRunner>().ImproveAsync(owner, backend.Records[owner].ToList(), true, () => false, default);
+        }
+
+        Assert.Contains(engine.Requests.SelectMany(q => q["shape"]!.AsArray()), p => Math.Abs((double)p!["lon"]! - 34.853) < 1e-9);
+        var row = await Db(sp).MatchedRoutes.AsNoTracking().SingleAsync(m => m.OwnerId == owner && m.ActivityId == drives[0].Id);
+        Assert.Equal(RebuildMethods.Waypoints, row.Method);
     }
 
     [Fact]

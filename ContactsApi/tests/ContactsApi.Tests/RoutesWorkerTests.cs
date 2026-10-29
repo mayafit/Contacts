@@ -393,7 +393,8 @@ public class RoutesWorkerDbTests
             Assert.True(key.Properties[0].Name is "OwnerId" or "Id", $"{entity.GetTableName()} key");
         }
 
-        Assert.Equal(6, db.Model.GetEntityTypes().Count());
+        // quality, matched routes, decisions, waypoints (AD-38), settings, jobs, cursors
+        Assert.Equal(7, db.Model.GetEntityTypes().Count());
     }
 }
 

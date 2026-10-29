@@ -114,6 +114,28 @@ public static class RouteRoads
     }
 }
 
+/// <summary>The points the Owner marked for a route (route_waypoints.Points, AD-38): [[lat, lon]…]</summary>
+public static class RouteMarks
+{
+    /// <summary>The stored points; empty when unreadable</summary>
+    public static List<(double Lat, double Lon)> Parse(string? json)
+    {
+        try
+        {
+            return (JsonSerializer.Deserialize<double[][]>(json ?? "[]") ?? Array.Empty<double[]>())
+                .Where(p => p.Length >= 2).Select(p => (p[0], p[1])).ToList();
+        }
+        catch (JsonException)
+        {
+            return new List<(double Lat, double Lon)>();
+        }
+    }
+
+    /// <summary>The points as stored (6 decimals)</summary>
+    public static string Serialize(IEnumerable<(double Lat, double Lon)> points) =>
+        JsonSerializer.Serialize(points.Select(p => new[] { Math.Round(p.Lat, 6), Math.Round(p.Lon, 6) }));
+}
+
 /// <summary>Decision kinds (route_decisions.Kind)</summary>
 public static class RouteDecisionKinds
 {

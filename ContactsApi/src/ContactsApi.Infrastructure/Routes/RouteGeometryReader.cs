@@ -307,7 +307,7 @@ public class RouteGeometryReader : IRouteGeometryReader
                     where m.OwnerId == owner && m.ActivityId == record.Id
                     select new
                     {
-                        m.Status, m.Confidence, m.MatchedDistanceM, m.Reason, m.SourceKey,
+                        m.Status, m.Confidence, m.MatchedDistanceM, m.Reason, m.SourceKey, m.Method,
                         Current = m.SourceUpdatedAt == record.UpdatedAt && m.SourcePointCount == record.PointCount && m.FusedType == record.FusedType
                     })
                 .FirstOrDefaultAsync(ct);
@@ -315,14 +315,18 @@ public class RouteGeometryReader : IRouteGeometryReader
             var decision = key == null
                 ? null
                 : await _db.Decisions.AsNoTracking().Where(d => d.OwnerId == owner && d.SourceKey == key).Select(d => d.Kind).FirstOrDefaultAsync(ct);
+            var marks = key == null
+                ? null
+                : await _db.Waypoints.AsNoTracking().Where(w => w.OwnerId == owner && w.SourceKey == key).Select(w => w.Points).FirstOrDefaultAsync(ct);
+            var waypoints = marks == null ? null : RouteMarks.Parse(marks).Select(p => new[] { p.Lat, p.Lon }).ToList();
             if (quality == null && match == null)
             {
-                return new RouteDescription(null, null, Array.Empty<string>(), null, false, null, null, null, false, decision, null);
+                return new RouteDescription(null, null, Array.Empty<string>(), null, false, null, null, null, false, decision, null, null, waypoints);
             }
 
             var flags = (quality?.Flags ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             return new RouteDescription(quality?.Grade, quality?.Score, flags, quality?.Matchable, quality?.NeedsImprovement ?? false,
-                match?.Status, match?.Confidence, match?.MatchedDistanceM, match?.Current ?? false, decision, match?.Reason);
+                match?.Status, match?.Confidence, match?.MatchedDistanceM, match?.Current ?? false, decision, match?.Reason, match?.Method, waypoints);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

@@ -123,8 +123,14 @@ public sealed class RouteSkeleton
     /// <summary>The recorded track's length up to each point</summary>
     internal double[] TrackCum = Array.Empty<double>();
 
+    /// <summary>Recorded points sent to the engine (synthetic ones are left out, AD-38)</summary>
     public int Sent { get; internal set; }
+
+    /// <summary>Recorded points the engine placed on a road</summary>
     public int Anchors { get; internal set; }
+
+    /// <summary>Every point placed on a road, synthetic ones too (what routing and the stretches go by)</summary>
+    public int AllAnchors { get; internal set; }
     public int Calls { get; internal set; }
     public int CutGaps { get; internal set; }
     public int Breaks { get; internal set; }
@@ -203,7 +209,11 @@ public static class RouteAssembler
                 }
 
                 sk.Calls++;
-                sk.Sent += call.Count;
+                for (var i = call.Start; i < call.End; i++)
+                {
+                    sk.Sent += points[i].Synthetic ? 0 : 1;
+                }
+
                 var answer = answers.GetValueOrDefault(call);
                 var placed = answer != null ? Place(answer, call.Count) : null;
                 if (placed == null || placed.Count == 0)
@@ -215,7 +225,8 @@ public static class RouteAssembler
                 }
                 else
                 {
-                    sk.Anchors += placed.Count;
+                    sk.AllAnchors += placed.Count;
+                    sk.Anchors += placed.Count(p => !points[call.Start + p.Index].Synthetic);
                     AddCall(sk, points, call, answer!, placed, joint, straightJump);
                 }
 
@@ -248,7 +259,7 @@ public static class RouteAssembler
             return result;
         }
 
-        var routedOnly = sk.Anchors == 0;
+        var routedOnly = sk.AllAnchors == 0;
         if (routedOnly && sk.Nodes.Count - 1 > g.MaxRoutedOnlyLegs)
         {
             return result;
@@ -381,7 +392,7 @@ public static class RouteAssembler
         var trackM = sk.TrackCum.Length > 0 ? sk.TrackCum[^1] : 0;
 
         // The factors (AD-35 rule 6, routes.v2)
-        var routedOnly = sk.Anchors == 0 && accepted.Count > 0;
+        var routedOnly = sk.AllAnchors == 0 && accepted.Count > 0;
         var lengthM = line.LengthM;
         var offRoad = sk.AnchorFromTrace.Count(d => d > toleranceM);
         var matchedShare = sk.Sent > 0 ? (double)sk.Anchors / sk.Sent : 0;
@@ -451,7 +462,7 @@ public static class RouteAssembler
             RoutedOnly = routedOnly
         };
 
-        if (sk.Anchors == 0 && !routedOnly)
+        if (sk.AllAnchors == 0 && !routedOnly)
         {
             return new MatchResult(RouteStatuses.Failed, 0, null, new List<RoutePiece>(), 0, metrics,
                 sk.Calls == 0 ? "no_call: no part of the track had 2 points between long gaps" : "no_match: the engine matched no point");
@@ -599,6 +610,12 @@ public static class RouteAssembler
                 var q = points[call.Start + b.Index];
                 kinds[k] = Geo.Haversine(p.Lat, p.Lon, q.Lat, q.Lon) > straightJump ? PieceKinds.Inferred : PieceKinds.Observed;
             }
+
+            // A leg to or from a borrowed or marked point was not observed (AD-38)
+            if (kinds[k] == PieceKinds.Observed && (points[call.Start + a.Index].Synthetic || points[call.Start + b.Index].Synthetic))
+            {
+                kinds[k] = PieceKinds.Inferred;
+            }
         }
 
         // The shape before the first anchor and after the last belongs to the pieces beside it
@@ -639,7 +656,10 @@ public static class RouteAssembler
 
             var point = call.Start + anchors[k].Index;
             sk.Nodes.Add(new SkeletonNode(sk.V.Count - 1, point, points[point].T, true, breaks[k]));
-            sk.AnchorFromTrace.Add(anchors[k].Label.FromTrace ?? 0);
+            if (!points[point].Synthetic)
+            {
+                sk.AnchorFromTrace.Add(anchors[k].Label.FromTrace ?? 0);
+            }
         }
 
         while (si + 1 < shape.Count)

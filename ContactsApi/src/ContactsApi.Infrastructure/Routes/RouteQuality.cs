@@ -61,9 +61,11 @@ public static class RouteQuality
     /// routes.v3: a fill is rejected for a true back-track only, not a loop ramp's turn,
     /// and a rejected headed fill is retried once without headings (AD-35 rule 7).
     /// routes.v4: the roads each line follows are stored, and every matchable record of a
-    /// matched type is matched, not only those that need improvement (AD-37)
+    /// matched type is matched, not only those that need improvement (AD-37).
+    /// routes.v5: each row stores its record's start time and first and last point, for
+    /// the similar-drive pool of a rebuild (AD-38)
     /// </summary>
-    public const string RuleVersion = "routes.v4";
+    public const string RuleVersion = "routes.v5";
 
     /// <summary>Phases whose types are matched now</summary>
     public static readonly IReadOnlySet<string> EnabledPhases = new HashSet<string> { "R1" };

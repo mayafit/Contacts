@@ -53,8 +53,11 @@ public record ChosenRoute(Guid RecordId, string Polyline, double? MatchedDistanc
 /// <param name="Status">The stored match's status (matched, low_confidence, failed); null without one</param>
 /// <param name="Current">The stored match is for the record as it is now (rule 3's check)</param>
 /// <param name="Decision">reject or accept; null without one</param>
+/// <param name="Method">How the stored match was made (AD-38): auto, similar or waypoints; null without one</param>
+/// <param name="Waypoints">The points the Owner marked for the record, [[lat, lon]…]; null without them</param>
 public record RouteDescription(string? Grade, int? Score, IReadOnlyList<string> Flags, string? Matchable, bool NeedsImprovement,
-    string? Status, double? Confidence, double? MatchedDistanceM, bool Current, string? Decision, string? Reason);
+    string? Status, double? Confidence, double? MatchedDistanceM, bool Current, string? Decision, string? Reason,
+    string? Method = null, IReadOnlyList<double[]>? Waypoints = null);
 
 /// <summary>
 /// Tells the route-quality service that an Owner's tracks or types changed outside an
