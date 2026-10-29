@@ -25,7 +25,8 @@ import {
 } from '@mui/material';
 import { DeleteOutline, FolderOpen, UploadFile } from '@mui/icons-material';
 import { backendApiClient } from '../../../services/api/BackendApiClient';
-import type { ImportRun, ParsedData } from './types';
+import type { ImportRun, ParsedData, RouteStatus } from './types';
+import { routeStatusText } from './routeGeometry';
 import { parseFile, readZip, type ImportFile } from './importers';
 import { SamsungCollector, samsungKind } from './importers/samsung';
 import { tokens } from '../theme/contactsTheme';
@@ -163,6 +164,8 @@ const ImportDialog: React.FC<ImportDialogProps> = ({
   const [sent, setSent] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [imports, setImports] = useState<ImportRun[]>([]);
+  // What the route service is doing (one short line; nothing when it is switched off)
+  const [routeStatus, setRouteStatus] = useState<RouteStatus | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
 
@@ -178,8 +181,14 @@ const ImportDialog: React.FC<ImportDialogProps> = ({
       setSent(0);
       setError(null);
       void loadImports();
+      backendApiClient
+        .routesStatus()
+        .then(setRouteStatus)
+        .catch(() => setRouteStatus(null));
     }
   }, [open]);
+  const routeLine = routeStatusText(routeStatus);
+  const breaker = routeStatus?.engine?.breaker;
 
   const run = async (files: File[]) => {
     setBusy(true);
@@ -434,6 +443,27 @@ const ImportDialog: React.FC<ImportDialogProps> = ({
                   </Box>
                 ))}
               </>
+            )}
+            {routeLine && (
+              <Typography
+                variant="caption"
+                component="div"
+                sx={{ mt: 1.5, color: tokens.textMuted }}
+                title={[
+                  routeStatus?.lastRunAt
+                    ? `Last run ${new Date(routeStatus.lastRunAt).toLocaleString('en-GB')}`
+                    : '',
+                  routeStatus?.lastError ? `Last error: ${routeStatus.lastError}` : '',
+                  breaker?.open && breaker.openUntil
+                    ? `Paused until ${new Date(breaker.openUntil).toLocaleTimeString('en-GB')}`
+                    : '',
+                  routeStatus?.graphVersion ? `Map ${routeStatus.graphVersion}` : '',
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+              >
+                {routeLine}
+              </Typography>
             )}
           </>
         )}

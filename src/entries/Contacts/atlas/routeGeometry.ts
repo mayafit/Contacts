@@ -258,7 +258,7 @@ const eta = (s: number): string =>
  * @returns The line, or null when there is nothing to show
  */
 export const routeStatusText = (status: RouteStatus | null): string | null => {
-  if (!status) {
+  if (!status || status.enabled === false) {
     return null;
   }
   if (status.available === false) {

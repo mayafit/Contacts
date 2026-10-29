@@ -157,13 +157,19 @@ public class RoutesController : ControllerBase
             return Unauthorized(ApiResponse<object>.ErrorResponse("SESSION_EXPIRED", "Your Google session expired. Please sign in again."));
         }
 
+        if (!_routes.Configured)
+        {
+            // Switched off: nothing to show (the app hides route status)
+            return Ok(ApiResponse<object>.SuccessResponse(new { available = false, enabled = false, message = "route quality is not enabled" }));
+        }
+
         try
         {
             return Pass(await _routes.StatusAsync(owner, HttpContext.RequestAborted));
         }
         catch (RoutesUnavailableException)
         {
-            return Ok(ApiResponse<object>.SuccessResponse(new { available = false, message = "route-quality service unavailable" }));
+            return Ok(ApiResponse<object>.SuccessResponse(new { available = false, enabled = true, message = "route-quality service unavailable" }));
         }
     }
 

@@ -114,3 +114,17 @@ with `routes.enabled: true`. The backend then needs `Routes__BackendToken` (and
 
 The accuracy check (`scripts/routes/accuracy-check.py`) runs against the live
 database and engine through port-forwards and prints aggregates only.
+
+## Operations summary (R1)
+
+| What | Where |
+| --- | --- |
+| Switch on | `routes.enabled: true` (this pod) **and** `backend.routes.enabled: true` (the backend sets `Routes__ServiceUrl`; that also turns on the backend's matched-route reads, `RouteGeometryOptions.Enabled`) |
+| Vault keys (`secret/data/contacts`) | `Routes__ServiceToken`, `Routes__BackendToken` (backend and routes), `Routes__ConnectionString` (routes only); see step 2 |
+| DB roles | `echo_routes` owns schema `routes`; the backend role (`contactsapi`) needs `USAGE` on `routes`, `SELECT` on its tables, and `INSERT, UPDATE, DELETE` on `route_decisions` and `settings` (step 1). Without the grants the map silently draws the recorded lines and decisions answer 503 `ROUTES_UNAVAILABLE` |
+| Tiles image | `tiles.tag` (`contacts-routing-tiles:il-<yyyymmdd>`); the placeholder `il-latest` must be replaced by the tag story 12.1 publishes (step 3) |
+| Spike results | The Pi spike's numbers (build time, memory, match time, accuracy) belong in `docs/planning/epic-12-route-quality.md` story 12.1; `scripts/routes/accuracy-check.py` reproduces the accuracy figures |
+| What the Owner sees | `GET /api/routes/status` (one line in the import dialog), `GET /api/routes/export` (JSON with GeoJSON matched routes) |
+
+Switching either flag off returns every map, list and panel to the recorded lines;
+nothing in `atlas` was changed by matching, so there is nothing to undo.

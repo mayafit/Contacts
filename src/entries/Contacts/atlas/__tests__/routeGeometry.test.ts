@@ -138,7 +138,10 @@ describe('routeCaption', () => {
   });
 
   it('mentions an uncertain match', () => {
-    const c = routeCaption(recorded, route({ status: 'low_confidence', confidence: 0.45, flags: [] }))!;
+    const c = routeCaption(
+      recorded,
+      route({ status: 'low_confidence', confidence: 0.45, flags: [] }),
+    )!;
     expect(c.hint).toBe('Match uncertain (45%)');
   });
 });
@@ -153,6 +156,7 @@ describe('jobText and routeStatusText', () => {
 
   it('keeps the status to one line', () => {
     expect(routeStatusText(null)).toBeNull();
+    expect(routeStatusText({ available: false, enabled: false })).toBeNull();
     expect(routeStatusText({ available: false })).toBe('Route matching unavailable');
     expect(
       routeStatusText({
@@ -171,7 +175,11 @@ describe('jobText and routeStatusText', () => {
       }),
     ).toBe('Route matching: paused after engine errors · 5 waiting, under 2 min');
     expect(
-      routeStatusText({ queued: { interactive: 0, batch: 0 }, waitingForMatch: 0, backfilled: true }),
+      routeStatusText({
+        queued: { interactive: 0, batch: 0 },
+        waitingForMatch: 0,
+        backfilled: true,
+      }),
     ).toBe('Route matching: up to date');
   });
 });

@@ -164,6 +164,8 @@ export interface RouteJob {
 export interface RouteStatus {
   /** false when the service cannot be reached (or is not enabled) */
   available?: boolean;
+  /** false when route quality is switched off (nothing to show) */
+  enabled?: boolean;
   message?: string;
   queued?: { interactive: number; batch: number };
   running?: number;
