@@ -31,6 +31,25 @@ public static class EchoServiceDefaults
 
     /// <summary>Where the route-quality service's token is accepted, and nowhere else</summary>
     public const string RoutesPrefix = "/internal/routes";
+
+    /// <summary>
+    /// Registers the scheme and the routes policy. The scheme is never the default: as
+    /// the only scheme it would otherwise become one, and the authentication middleware
+    /// would run it on every request (an MCP client's Bearer PAT would log a failure on
+    /// each call). Only the /internal guard and the routes policy name it.
+    /// </summary>
+    public static IServiceCollection AddEchoServiceAuth(this IServiceCollection services, string? routesToken)
+    {
+        // ASP.NET Core (7+) makes a sole scheme the default unless this switch is set
+        AppContext.SetSwitch("Microsoft.AspNetCore.Authentication.SuppressAutoDefaultScheme", true);
+        services.AddAuthentication()
+            .AddScheme<EchoServiceOptions, EchoServiceHandler>(Scheme, o => o.RoutesToken = routesToken);
+        services.AddAuthorization(o => o.AddPolicy(RoutesPolicy, p => p
+            .AddAuthenticationSchemes(Scheme)
+            .RequireAuthenticatedUser()
+            .RequireClaim(ServiceClaim, RoutesService)));
+        return services;
+    }
 }
 
 /// <summary>The service tokens (from Vault: Routes__ServiceToken)</summary>

@@ -451,16 +451,30 @@ public class RouteGeometryDbTests
 
         await using var c = await DbAsync();
         // A context whose tables do not exist (the service never ran)
+        var brokenCount = new CommandCounter();
         await using var broken = new RoutesDbContext(new DbContextOptionsBuilder<RoutesDbContext>()
-            .UseNpgsql(new Npgsql.NpgsqlConnectionStringBuilder(cs) { Database = "postgres" }.ConnectionString).Options);
+            .UseNpgsql(new Npgsql.NpgsqlConnectionStringBuilder(cs) { Database = "postgres" }.ConnectionString).AddInterceptors(brokenCount).Options);
         var owner = "geom-missing-" + Guid.NewGuid();
         var records = await SeedAsync(c!, Service(c!), owner, 1);
-        var svc = new AtlasService(c!.Atlas, NullLogger<AtlasService>.Instance, null,
-            new RouteGeometryReader(broken, new RouteGeometryOptions { Enabled = true }, NullLogger<RouteGeometryReader>.Instance));
+        var options = new RouteGeometryOptions { Enabled = true };
+        var reader = new RouteGeometryReader(broken, options, NullLogger<RouteGeometryReader>.Instance);
+        var svc = new AtlasService(c!.Atlas, NullLogger<AtlasService>.Instance, null, reader);
         var found = await svc.SearchAsync(owner, new AtlasQuery { Visits = false });
         Assert.Equal(RouteGeometryKinds.Recorded, found.Activities.Single().Geometry);
         Assert.Equal(records[0].Id, found.Activities.Single().Id);
+
+        // Found once, then reads stay off for a while: no routes query per read, no log per read
+        Assert.False(reader.Enabled);
+        Assert.Equal(1, brokenCount.Count);
+        var again = await svc.SearchAsync(owner, new AtlasQuery { Visits = false });
+        Assert.Equal(RouteGeometryKinds.Recorded, again.Activities.Single().Geometry);
         var detail = await svc.GetActivityAsync(owner, records[0].Id);
-        Assert.Null(detail.Route!.Description);
+        Assert.Null(detail.Route);
+        Assert.Equal(1, brokenCount.Count);
+        Assert.True(options.Suspended(DateTime.UtcNow.AddMinutes(4)));
+        Assert.False(options.Suspended(DateTime.UtcNow.AddMinutes(6)));
+
+        // A lost connection is not a missing setup: nothing is suspended for it
+        Assert.False(RouteGeometryReader.IsSetupMissing(new Npgsql.NpgsqlException("connection refused")));
     }
 }

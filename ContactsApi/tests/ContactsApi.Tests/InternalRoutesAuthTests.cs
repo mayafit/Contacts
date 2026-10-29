@@ -69,6 +69,23 @@ public class InternalRoutesAuthTests
     }
 
     [Fact]
+    public async Task The_EchoService_scheme_is_not_the_default_so_other_requests_never_run_it()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddEchoServiceAuth(RoutesToken);
+        await using var sp = services.BuildServiceProvider();
+        var schemes = sp.GetRequiredService<IAuthenticationSchemeProvider>();
+
+        Assert.NotNull(await schemes.GetSchemeAsync(EchoServiceDefaults.Scheme));
+        Assert.Null(await schemes.GetDefaultAuthenticateSchemeAsync());
+        Assert.Null(await schemes.GetDefaultChallengeSchemeAsync());
+        // The routes policy still names it
+        var policy = await sp.GetRequiredService<IAuthorizationPolicyProvider>().GetPolicyAsync(EchoServiceDefaults.RoutesPolicy);
+        Assert.Equal(new[] { EchoServiceDefaults.Scheme }, policy!.AuthenticationSchemes);
+    }
+
+    [Fact]
     public async Task Wrong_missing_or_unconfigured_tokens_are_refused()
     {
         Assert.False((await AuthenticateAsync("/internal/routes/owners", "Bearer " + BackendToken)).Succeeded);

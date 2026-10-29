@@ -200,14 +200,8 @@ builder.Services.AddCors(options =>
 });
 
 // EchoService: internal services' tokens (Routes__ServiceToken from Vault), each
-// accepted only on its own /internal path (AD-3 rule 3, AD-33 rule 2)
-builder.Services.AddAuthentication()
-    .AddScheme<EchoServiceOptions, EchoServiceHandler>(EchoServiceDefaults.Scheme,
-        o => o.RoutesToken = builder.Configuration["Routes:ServiceToken"]);
-builder.Services.AddAuthorization(o => o.AddPolicy(EchoServiceDefaults.RoutesPolicy, p => p
-    .AddAuthenticationSchemes(EchoServiceDefaults.Scheme)
-    .RequireAuthenticatedUser()
-    .RequireClaim(EchoServiceDefaults.ServiceClaim, EchoServiceDefaults.RoutesService)));
+// accepted only on its own /internal path (AD-3 rule 3, AD-33 rule 2); never the default scheme
+builder.Services.AddEchoServiceAuth(builder.Configuration["Routes:ServiceToken"]);
 
 // Add API documentation
 builder.Services.AddEndpointsApiExplorer();

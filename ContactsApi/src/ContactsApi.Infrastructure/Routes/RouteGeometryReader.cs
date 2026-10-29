@@ -12,29 +12,60 @@ using Npgsql;
 
 namespace ContactsApi.Infrastructure.Routes;
 
-/// <summary>Whether the backend reads matched routes (the backend's routes.enabled)</summary>
+/// <summary>
+/// Whether the backend reads matched routes (the backend's routes.enabled), and whether
+/// reads are suspended for now (a singleton, shared by every request's reader)
+/// </summary>
 public class RouteGeometryOptions
 {
+    private readonly object _lock = new();
+    private DateTime _suspendedUntil = DateTime.MinValue;
+
     /// <summary>On when the route-quality service is configured</summary>
     public bool Enabled { get; set; }
+
+    /// <summary>How long reads stay off after the routes schema or its grants were found missing</summary>
+    public TimeSpan SuspendFor { get; set; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>Reads are suspended at <paramref name="now"/></summary>
+    public bool Suspended(DateTime now)
+    {
+        lock (_lock)
+        {
+            return now < _suspendedUntil;
+        }
+    }
+
+    /// <summary>Suspends reads for <see cref="SuspendFor"/>; returns false when they already were (log once)</summary>
+    public bool Suspend(DateTime now)
+    {
+        lock (_lock)
+        {
+            var already = now < _suspendedUntil;
+            _suspendedUntil = now + SuspendFor;
+            return !already;
+        }
+    }
 }
 
 /// <summary>The Routes module's reader of matched geometry for Atlas</summary>
 public class RouteGeometryReader : IRouteGeometryReader
 {
     private readonly RoutesDbContext _db;
+    private readonly RouteGeometryOptions _options;
     private readonly ILogger<RouteGeometryReader> _logger;
 
     /// <summary>Creates the reader</summary>
     public RouteGeometryReader(RoutesDbContext db, RouteGeometryOptions options, ILogger<RouteGeometryReader> logger)
     {
         _db = db;
+        _options = options;
         _logger = logger;
-        Enabled = options.Enabled;
     }
 
     /// <inheritdoc />
-    public bool Enabled { get; }
+    /// <remarks>Off for a few minutes after the routes schema or its grants were found missing</remarks>
+    public bool Enabled => _options.Enabled && !_options.Suspended(DateTime.UtcNow);
 
     /// <inheritdoc />
     public async Task<IReadOnlyDictionary<Guid, ChosenRoute>> ChooseAsync(string owner, IReadOnlyCollection<RouteRecord> records,
@@ -89,12 +120,38 @@ public class RouteGeometryReader : IRouteGeometryReader
         {
             // A missing schema (the service never ran), a revoked grant or a lost
             // connection: draw what was recorded, as without route quality
-            _logger.LogWarning(ex, "Matched routes unavailable; drawing the recorded lines");
+            Unavailable(ex, "Matched routes unavailable; drawing the recorded lines");
             chosen.Clear();
         }
 
         return chosen;
     }
+
+    /// <summary>
+    /// A read failed. A missing schema, table or column, or a missing grant, will not
+    /// heal by itself: reads are suspended for a few minutes (every map, list and panel
+    /// draws the recorded lines meanwhile) and it is logged once. Anything else (a lost
+    /// connection) is logged for that read only.
+    /// </summary>
+    private void Unavailable(Exception ex, string message)
+    {
+        if (!IsSetupMissing(ex))
+        {
+            _logger.LogWarning(ex, message);
+            return;
+        }
+
+        if (_options.Suspend(DateTime.UtcNow))
+        {
+            _logger.LogWarning(ex, "The routes schema or the backend's grants on it are missing ({SqlState}); matched routes are off for {Minutes} min. "
+                + "See helm/contacts/charts/routes/README.md, step 1", (ex as PostgresException ?? ex.InnerException as PostgresException)?.SqlState,
+                _options.SuspendFor.TotalMinutes);
+        }
+    }
+
+    /// <summary>undefined_table, invalid_schema_name, undefined_column, insufficient_privilege</summary>
+    internal static bool IsSetupMissing(Exception ex) =>
+        (ex as PostgresException ?? ex.InnerException as PostgresException)?.SqlState is "42P01" or "3F000" or "42703" or "42501";
 
     /// <summary>
     /// The read-time choice as one query: the rows by (OwnerId, ActivityId), the decision
@@ -185,7 +242,7 @@ public class RouteGeometryReader : IRouteGeometryReader
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.LogWarning(ex, "Route quality unavailable for the panel");
+            Unavailable(ex, "Route quality unavailable for the panel");
             return null;
         }
     }
