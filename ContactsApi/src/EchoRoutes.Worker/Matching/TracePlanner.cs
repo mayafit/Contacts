@@ -28,7 +28,26 @@ public record MatchSettings(
     /// <summary>From the service's options</summary>
     public static MatchSettings From(RoutesOptions o) => new(
         o.SplitGapM, TimeSpan.FromMinutes(o.SplitGapMinutes), Math.Max(2, o.MaxPointsPerCall), o.MaxKmPerCall * 1000,
-        o.BreakageDistanceM, o.SearchRadiusM, o.GpsAccuracyTimelineM, o.GpsAccuracyDenseM, Math.Max(2, o.MaxStoredVertices));
+        o.BreakageDistanceM, o.SearchRadiusM, o.GpsAccuracyTimelineM, o.GpsAccuracyDenseM, Math.Max(2, o.MaxStoredVertices))
+    {
+        GapFill = GapFillSettings.From(o),
+        OffRoadTimelineM = o.OffRoadTimelineM
+    };
+
+    /// <summary>Gap filling by /route (AD-35 rule 7)</summary>
+    public GapFillSettings GapFill { get; init; } = GapFillSettings.From(new RoutesOptions());
+
+    /// <summary>A Google Timeline anchor is off-road only beyond this</summary>
+    public double OffRoadTimelineM { get; init; } = 100;
+
+    /// <summary>
+    /// An anchor farther than this from its road is off-road (AD-35 rule 6): the costing's
+    /// 50 m (30 m on foot or bike), and for coarse Timeline points the larger Timeline tolerance
+    /// </summary>
+    public double AnchorToleranceFor(string source, string? costing) =>
+        string.Equals(source, "google-timeline", StringComparison.OrdinalIgnoreCase)
+            ? Math.Max(RouteAssembler.OffRoadM(costing), OffRoadTimelineM)
+            : RouteAssembler.OffRoadM(costing);
 
     /// <summary>The per-source GPS error (AD-35 rule 4): Timeline is coarse, device recordings are dense</summary>
     public double GpsAccuracyFor(string source) =>

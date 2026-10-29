@@ -117,6 +117,9 @@ internal sealed class FakeValhalla : IValhallaClient
 
     public Task<System.Text.Json.JsonDocument> TraceAttributesAsync(JsonObject request, CancellationToken ct) =>
         Task.FromResult(System.Text.Json.JsonDocument.Parse("{}"));
+
+    public Task<System.Text.Json.JsonDocument> RouteAsync(JsonObject request, CancellationToken ct) =>
+        Task.FromResult(System.Text.Json.JsonDocument.Parse("{}"));
 }
 
 /// <summary>Records the pauses instead of waiting</summary>

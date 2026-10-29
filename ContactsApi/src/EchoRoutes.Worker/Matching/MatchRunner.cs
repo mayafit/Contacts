@@ -99,22 +99,46 @@ public class MatchRunner
 
     private DateTime Now => _clock.GetUtcNow().UtcDateTime;
 
-    /// <summary>The Owner's records waiting for a match (newest change first, so fresh imports go first)</summary>
-    public IQueryable<RouteQualityRow> Pending(string owner)
+    /// <summary>A waiting record and its place in the queue</summary>
+    public sealed class PendingRow
+    {
+        public RouteQualityRow Q { get; init; } = null!;
+
+        /// <summary>0: new, changed or a due retry; 1: an older rule's low_confidence or failed match; 2: an older rule's matched one</summary>
+        public int Rank { get; init; }
+    }
+
+    /// <summary>
+    /// The Owner's records waiting for a match. A row of an older rule version waits
+    /// for a re-match (AD-34 rule 7), unless its re-match is backing off; a reject
+    /// decision always wins.
+    /// </summary>
+    public IQueryable<PendingRow> PendingRows(string owner)
     {
         var now = Now;
         const string rule = RouteQuality.RuleVersion;
         return from q in _db.Quality.AsNoTracking()
             where q.OwnerId == owner && q.NeedsImprovement && q.Matchable == Matchability.Yes
             from m in _db.MatchedRoutes.Where(m => m.OwnerId == owner && m.ActivityId == q.ActivityId).DefaultIfEmpty()
-            where m == null || m.InputHash != q.InputHash || m.FusedType != q.Type || m.RuleVersion != rule
-                  || (m.NextAttemptAt != null && m.NextAttemptAt <= now)
+            where m == null || m.InputHash != q.InputHash || m.FusedType != q.Type
+                  || ((m.RuleVersion != rule || m.NextAttemptAt != null) && (m.NextAttemptAt == null || m.NextAttemptAt <= now))
             where !_db.Decisions.Any(d => d.OwnerId == owner && d.SourceKey == q.SourceKey && d.Kind == RouteDecisionKinds.Reject)
-            select q;
+            select new PendingRow
+            {
+                Q = q,
+                Rank = m == null || m.InputHash != q.InputHash || m.FusedType != q.Type || m.RuleVersion == rule ? 0
+                    : m.Status == RouteStatuses.Matched ? 2 : 1
+            };
     }
+
+    /// <summary>The Owner's records waiting for a match</summary>
+    public IQueryable<RouteQualityRow> Pending(string owner) => PendingRows(owner).Select(p => p.Q);
 
     /// <summary>How many of the Owner's records wait for a match</summary>
     public Task<int> PendingCountAsync(string owner, CancellationToken ct) => Pending(owner).CountAsync(ct);
+
+    /// <summary>How many of the Owner's waiting records are re-matches for a new rule version</summary>
+    public Task<int> RematchCountAsync(string owner, CancellationToken ct) => PendingRows(owner).CountAsync(p => p.Rank > 0, ct);
 
     /// <summary>
     /// One bounded batch of the Owner's waiting records. <paramref name="yield"/> is
@@ -122,8 +146,10 @@ public class MatchRunner
     /// </summary>
     public async Task<MatchBatchResult> RunPendingBatchAsync(string owner, int limit, Func<bool> yield, CancellationToken ct)
     {
-        var ids = await Pending(owner).OrderByDescending(q => q.SourceUpdatedAt).ThenBy(q => q.ActivityId)
-            .Select(q => q.ActivityId).Take(Math.Max(1, limit)).ToListAsync(ct);
+        // New and changed records first (fresh imports), then re-matches for a new rule:
+        // low_confidence and failed before matched (AD-34 rule 7)
+        var ids = await PendingRows(owner).OrderBy(p => p.Rank).ThenByDescending(p => p.Q.SourceUpdatedAt).ThenBy(p => p.Q.ActivityId)
+            .Select(p => p.Q.ActivityId).Take(Math.Max(1, limit)).ToListAsync(ct);
         if (ids.Count == 0)
         {
             return new MatchBatchResult(0, 0, new MatchTally(), false);
@@ -205,7 +231,10 @@ public class MatchRunner
 
             var hash = RouteQuality.InputHash(t.Points);
             var row = existing.GetValueOrDefault(t.Id);
-            var current = row != null && row.InputHash == hash && row.FusedType == t.Type && row.RuleVersion == RouteQuality.RuleVersion;
+            var sameInput = row != null && row.InputHash == hash && row.FusedType == t.Type;
+            var current = sameInput && row!.RuleVersion == RouteQuality.RuleVersion;
+            // A re-match for a new rule: the old line is served until its replacement is written
+            var stale = sameInput && !current && Serves(row!);
             var retryDue = row?.NextAttemptAt != null && row.NextAttemptAt <= Now;
             if (!force && (!a.NeedsImprovement || (current && !retryDue)))
             {
@@ -228,7 +257,7 @@ public class MatchRunner
 
             try
             {
-                tally.Add(await MatchOneAsync(row, current, t, hash, costing, engineVersion, ct));
+                tally.Add(await MatchOneAsync(row, current, stale, t, hash, costing, engineVersion, ct));
                 await _db.SaveChangesAsync(ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException and not BackendBusyException)
@@ -244,8 +273,8 @@ public class MatchRunner
     }
 
     /// <summary>Matches one record and fills its row; returns the status, or "retrying"</summary>
-    private async Task<string> MatchOneAsync(MatchedRouteRow row, bool current, RouteTrack t, string hash, string costing, string? engineVersion,
-        CancellationToken ct)
+    private async Task<string> MatchOneAsync(MatchedRouteRow row, bool current, bool stale, RouteTrack t, string hash, string costing,
+        string? engineVersion, CancellationToken ct)
     {
         var watch = Stopwatch.StartNew();
         var plan = TracePlanner.Plan(t.Points, _settings);
@@ -271,12 +300,31 @@ public class MatchRunner
                 // The whole engine down (no connection, or the breaker opened or its probe
                 // failed) is no attempt of this record; a timeout or an error is
                 var down = _breaker.Failure(ex.Message) | ex.Unreachable;
-                return down ? EngineDown(row, current, t, hash, costing, ex.Message) : Failure(row, current, t, hash, costing, ex.Message);
+                return down ? EngineDown(row, current, stale, t, hash, costing, ex.Message) : Failure(row, current, stale, t, hash, costing, ex.Message);
             }
         }
 
         var profile = RouteQuality.ProfileFor(t.Type);
-        var result = RouteAssembler.Assemble(t.Points, plan, answers, profile, costing, _settings.MaxStoredVertices);
+        var skeleton = RouteAssembler.Build(t.Points, plan, answers, profile);
+        List<FillOutcome>? fills = null;
+        var stretches = RouteAssembler.Stretches(skeleton, _settings.GapFill);
+        if (stretches.Count > 0)
+        {
+            try
+            {
+                // One /route call per stretch (AD-35 rule 7). A timeout leaves that gap and is
+                // counted by the breaker; only an engine that is down makes the record wait
+                fills = await GapFiller.FillAsync(stretches, costing, _settings.GapFill, profile.MaxSpeedKmh, _engine,
+                    ex => _breaker.Failure(ex.Message) | ex.Unreachable, _breaker.Success, ct);
+            }
+            catch (EngineUnavailableException ex)
+            {
+                return EngineDown(row, current, stale, t, hash, costing, ex.Message);
+            }
+        }
+
+        var result = RouteAssembler.Assemble(t.Points, skeleton, fills, profile, costing, _settings.MaxStoredVertices,
+            _settings.AnchorToleranceFor(t.Source, costing), _settings.GapFill.RoutedOnlyWeight);
         Identify(row, t, hash, costing);
         row.EngineVersion = engineVersion;
         row.GraphVersion = _graph.Current?.Version;
@@ -302,10 +350,24 @@ public class MatchRunner
     /// backoff step) without using an attempt, so an outage never fails records for good.
     /// A current good match is kept as it is.
     /// </summary>
-    private string EngineDown(MatchedRouteRow row, bool current, RouteTrack t, string hash, string costing, string reason)
+    private string EngineDown(MatchedRouteRow row, bool current, bool stale, RouteTrack t, string hash, string costing, string reason)
     {
-        if (current && row.Polyline != null && row.Status != RouteStatuses.Failed)
+        var wait = Now + (_backoff.Length > 0 ? _backoff[0] : TimeSpan.FromMinutes(1));
+        if (_breaker.OpenUntil is { } until && until > wait)
         {
+            wait = until;
+        }
+
+        if (current && Serves(row))
+        {
+            return "retrying";
+        }
+
+        if (stale)
+        {
+            // The old rule's line stays; the re-match waits for the engine (not an attempt)
+            row.NextAttemptAt = wait;
+            row.Reason = Truncate($"{reason} (re-match for {RouteQuality.RuleVersion} waits for the engine)");
             return "retrying";
         }
 
@@ -323,8 +385,7 @@ public class MatchRunner
         row.Pieces = "[]";
         row.MatchedDistanceM = null;
         row.ComputedAt = Now;
-        var wait = Now + (_backoff.Length > 0 ? _backoff[0] : TimeSpan.FromMinutes(1));
-        row.NextAttemptAt = _breaker.OpenUntil is { } open && open > wait ? open : wait;
+        row.NextAttemptAt = wait;
         row.Reason = Truncate($"{reason} (the engine is unavailable; not counted as an attempt)");
         return "retrying";
     }
@@ -333,14 +394,24 @@ public class MatchRunner
     /// An engine failure of this record: back off (1 min, 10 min, 1 h by default), then
     /// failed. A current good match is kept as it is (a forced re-match that failed).
     /// </summary>
-    private string Failure(MatchedRouteRow row, bool current, RouteTrack t, string hash, string costing, string reason)
+    private string Failure(MatchedRouteRow row, bool current, bool stale, RouteTrack t, string hash, string costing, string reason)
     {
-        if (current && row.Polyline != null && row.Status != RouteStatuses.Failed)
+        if (current && Serves(row))
         {
             return "retrying";
         }
 
-        if (!current)
+        if (stale && row.Attempts < _backoff.Length)
+        {
+            // A re-match for a new rule failed: the old line stays served, and the re-match
+            // backs off like any attempt; after the last step the record fails as usual
+            row.Attempts++;
+            row.NextAttemptAt = Now + _backoff[row.Attempts - 1];
+            row.Reason = Truncate($"{reason} (re-match attempt {row.Attempts}; retried after {_backoff[row.Attempts - 1].TotalMinutes:0} min)");
+            return "retrying";
+        }
+
+        if (!current && !stale)
         {
             row.Attempts = 0;
         }
@@ -393,7 +464,7 @@ public class MatchRunner
 
             hash ??= RouteQuality.InputHash(t.Points);
             var current = row.InputHash == hash && row.FusedType == t.Type && row.RuleVersion == RouteQuality.RuleVersion;
-            var outcome = Failure(row, current, t, hash, Clip(costing, 16) ?? string.Empty, reason);
+            var outcome = Failure(row, current, false, t, hash, Clip(costing, 16) ?? string.Empty, reason);
             row.SourceKey = Clip(row.SourceKey, 256)!;
             row.FusedType = Clip(row.FusedType, 32)!;
             await _db.SaveChangesAsync(ct);
@@ -411,6 +482,9 @@ public class MatchRunner
             return RouteStatuses.Failed;
         }
     }
+
+    /// <summary>The row has a line that is drawn or offered (not a failure)</summary>
+    private static bool Serves(MatchedRouteRow row) => row.Polyline != null && row.Status != RouteStatuses.Failed;
 
     private static string? Clip(string? s, int max) => s == null ? null : s.Length > max ? s[..max] : s;
 

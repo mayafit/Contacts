@@ -60,6 +60,11 @@ public interface IValhallaClient
     /// <exception cref="EngineUnavailableException">Timeout, connection failure or 5xx</exception>
     /// <exception cref="EngineRejectedException">The engine cannot match this trace</exception>
     Task<JsonDocument> TraceAttributesAsync(JsonObject request, CancellationToken ct);
+
+    /// <summary>One /route call (gap filling, AD-35 rule 7), within the same timeout and concurrency</summary>
+    /// <exception cref="EngineUnavailableException">Timeout, connection failure or 5xx</exception>
+    /// <exception cref="EngineRejectedException">The engine found no route</exception>
+    Task<JsonDocument> RouteAsync(JsonObject request, CancellationToken ct);
 }
 
 /// <summary>Valhalla over HTTP</summary>
@@ -119,14 +124,19 @@ public class ValhallaClient : IValhallaClient
     }
 
     /// <inheritdoc />
-    public async Task<JsonDocument> TraceAttributesAsync(JsonObject request, CancellationToken ct)
+    public Task<JsonDocument> TraceAttributesAsync(JsonObject request, CancellationToken ct) => PostAsync("trace_attributes", request, ct);
+
+    /// <inheritdoc />
+    public Task<JsonDocument> RouteAsync(JsonObject request, CancellationToken ct) => PostAsync("route", request, ct);
+
+    private async Task<JsonDocument> PostAsync(string path, JsonObject request, CancellationToken ct)
     {
         await _inFlight.WaitAsync(ct);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(_timeout);
         try
         {
-            using var response = await _http.CreateClient(HttpClientName).PostAsJsonAsync("trace_attributes", request, cts.Token);
+            using var response = await _http.CreateClient(HttpClientName).PostAsJsonAsync(path, request, cts.Token);
             if ((int)response.StatusCode >= 500 || response.StatusCode == HttpStatusCode.TooManyRequests)
             {
                 throw new EngineUnavailableException($"the engine answered {(int)response.StatusCode}", false);
