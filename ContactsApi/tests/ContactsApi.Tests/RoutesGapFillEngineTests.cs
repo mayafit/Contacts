@@ -124,10 +124,11 @@ public class RoutesGapFillEngineTests
         // A pre-split gap as in the live Route 4 drive: drop the points of one ~6 km stretch
         var cut = points.Take(4).Concat(points.Skip(6)).ToList();
 
-        await MatchAsync(url, cut, true); // warm the tile cache
+        // Warm the tile cache (not measured)
+        var without = await MatchAsync(url, cut, false);
+        var with = await MatchAsync(url, cut, true);
         var off = new List<double>();
         var on = new List<double>();
-        (MatchResult Result, double Ms, int Routes) without = default, with = default;
         for (var i = 0; i < 5; i++)
         {
             without = await MatchAsync(url, cut, false);
