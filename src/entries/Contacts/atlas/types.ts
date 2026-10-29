@@ -137,6 +137,46 @@ export interface RouteDescription {
   current: boolean;
   decision: 'reject' | 'accept' | null;
   reason: string | null;
+  /** How the stored match was made (AD-38); missing from older servers */
+  method?: 'auto' | 'similar' | 'waypoints' | null;
+  /** The points the Owner marked for this route, [lat, lon] in order; null without them */
+  waypoints?: [number, number][] | null;
+}
+
+/** The similar drive a rebuild borrowed from (AD-38) */
+export interface RebuildBasis {
+  activityId: string;
+  start: string;
+  reversed: boolean;
+  /** Share of this drive's own points along the similar one (0-1) */
+  fit: number;
+  /** Drives between the same places that were scored */
+  candidates: number;
+  /** Of those, the ones this drive's points follow */
+  agreeing: number;
+  examples: { activityId: string; start: string; reversed: boolean }[];
+}
+
+/** A rebuild's result: a suggestion to use or discard (AD-38) */
+export interface RebuildSuggestion {
+  method: 'similar' | 'waypoints';
+  outcome: 'suggested' | 'no_similar' | 'no_match' | 'invalid' | 'not_matchable' | 'gone';
+  /** Why there is no suggestion */
+  message?: string | null;
+  activityId: string;
+  status?: 'matched' | 'low_confidence' | 'failed' | null;
+  confidence?: number | null;
+  /** The stored match's confidence before (null without one) */
+  previousConfidence?: number | null;
+  reason?: string | null;
+  polyline?: string | null;
+  pieces?: RoutePiece[] | null;
+  roads?: RouteRoad[] | null;
+  lengthM?: number | null;
+  basis?: RebuildBasis | null;
+  waypoints?: [number, number][] | null;
+  /** Synthetic points added */
+  added?: number;
 }
 
 /** A road a matched route follows (AD-37) */
@@ -172,6 +212,8 @@ export interface RouteJob {
   total: number;
   done: number;
   lastError?: string | null;
+  /** A rebuild's suggestion (AD-38) */
+  result?: RebuildSuggestion | null;
 }
 
 /** What the route service is doing for the Owner (GET /api/routes/status) */

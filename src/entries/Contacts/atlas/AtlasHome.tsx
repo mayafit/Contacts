@@ -42,6 +42,7 @@ import ResultsList from './ResultsList';
 import InsightsPanel, { type InsightsFilter } from './InsightsPanel';
 import { areaAround } from './insights';
 import ActivityPanel from './ActivityPanel';
+import { MAX_MARKS, type RebuildState } from './RouteRebuild';
 import PlacePanel from './PlacePanel';
 import ImportDialog, { type ImportTab } from './ImportDialog';
 import PhotoViewer from './PhotoViewer';
@@ -109,21 +110,50 @@ const AtlasHome: React.FC = () => {
   // The open activity drawn on roads (its matched route) or as recorded
   const [routeView, setRouteView] = useState<'roads' | 'recorded'>('roads');
   const detailId = detail?.summary.id;
-  useEffect(() => setRouteView('roads'), [detailId]);
+  // A rebuild's suggestion, drawn instead of the route until used or discarded, and the
+  // points being marked for one (AD-38)
+  const [rebuildState, setRebuildState] = useState<RebuildState | null>(null);
+  const [marking, setMarking] = useState<[number, number][] | null>(null);
+  useEffect(() => {
+    setRouteView('roads');
+    setRebuildState(null);
+    setMarking(null);
+  }, [detailId]);
+  const suggested =
+    rebuildState && rebuildState.activityId === detailId ? rebuildState.result : null;
+  // Marking ends when the open activity can no longer be rebuilt (reloaded without a route)
+  const rebuildable =
+    !!detail?.route &&
+    detail.route.recordIds.length === 1 &&
+    (detail.route.description?.matchable ?? 'yes') === 'yes';
+  useEffect(() => {
+    if (!rebuildable) {
+      setMarking(null);
+    }
+  }, [rebuildable]);
+  /** Marking the way and drawing an area are one map mode at a time */
+  const startMarking = useCallback((points: [number, number][] | null) => {
+    if (points) {
+      setDrawing(false);
+    }
+    setMarking(points);
+  }, []);
   // One object per detail and view, so the map decodes the route's pieces once
   const selectedRoute = useMemo(
     () =>
-      detail &&
-      detail.summary.geometry === 'matched' &&
-      detail.summary.polyline &&
-      routeView === 'roads'
-        ? {
-            id: detail.summary.id,
-            polyline: detail.summary.polyline,
-            pieces: detail.summary.pieces,
-          }
-        : null,
-    [detail, routeView],
+      detail && suggested?.polyline
+        ? { id: detail.summary.id, polyline: suggested.polyline, pieces: suggested.pieces }
+        : detail &&
+            detail.summary.geometry === 'matched' &&
+            detail.summary.polyline &&
+            routeView === 'roads'
+          ? {
+              id: detail.summary.id,
+              polyline: detail.summary.polyline,
+              pieces: detail.summary.pieces,
+            }
+          : null,
+    [detail, routeView, suggested],
   );
   const [visit, setVisit] = useState<VisitSummary | null>(null);
   const [cursor, setCursor] = useState<[number, number] | null>(null);
@@ -574,6 +604,7 @@ const AtlasHome: React.FC = () => {
                 setArea(null);
                 setDrawing(false);
               } else {
+                setMarking(null);
                 setDrawing((d) => !d);
               }
             }}
@@ -697,9 +728,10 @@ const AtlasHome: React.FC = () => {
                   setArea(b);
                   setDrawing(false);
                 }}
-                onSelectActivity={selectActivity}
+                // While marking the way, a click marks a point; it opens nothing
+                onSelectActivity={(id) => !marking && selectActivity(id)}
                 onSelectVisit={(v) => {
-                  if (mergeFrom) {
+                  if (mergeFrom || marking) {
                     return;
                   }
                   setDetail(null);
@@ -712,6 +744,11 @@ const AtlasHome: React.FC = () => {
                 reloadKey={reloadKey}
                 photos={panelPhotos}
                 onOpenPhoto={(photos, index) => setViewer({ photos, index })}
+                marking={marking}
+                onMark={(lat, lon) =>
+                  setMarking((m) => (m && m.length < MAX_MARKS ? [...m, [lat, lon]] : m))
+                }
+                onUnmark={(i) => setMarking((m) => (m ? m.filter((_, k) => k !== i) : m))}
               />
               {empty && (
                 <Paper
@@ -845,6 +882,12 @@ const AtlasHome: React.FC = () => {
                 routeView={routeView}
                 onRouteView={setRouteView}
                 onRoad={showRoad}
+                rebuild={{
+                  suggestion: rebuildState,
+                  onSuggestion: setRebuildState,
+                  marking,
+                  onMarking: startMarking,
+                }}
                 onRouteChanged={async () => {
                   // The list and the map draw the new choice too
                   setReloadKey((k) => k + 1);

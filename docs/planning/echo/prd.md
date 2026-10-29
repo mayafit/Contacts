@@ -23,7 +23,7 @@ Echo is not greenfield. Two Areas already run in production at https://contacts.
 
 The rest of this document works as follows:
 - The Glossary (§3) fixes the vocabulary.
-- Features (§4) nest globally numbered requirements, FR-01 to FR-61. FR-51 to FR-54 were added after the Owner's answers of 2026-10-28, so they sit in the section they belong to, not in id order. FR-55 to FR-60 (route quality, §4.12) follow them, and FR-61 (roads travelled, §4.12) was added on 2026-10-29.
+- Features (§4) nest globally numbered requirements, FR-01 to FR-63. FR-51 to FR-54 were added after the Owner's answers of 2026-10-28, so they sit in the section they belong to, not in id order. FR-55 to FR-60 (route quality, §4.12) follow them. FR-61 (roads travelled), FR-62 (rebuild from similar drives) and FR-63 (mark the way) were added to §4.12 on 2026-10-29.
 - Cross-cutting quality requirements are NFR-01 to NFR-21 (§6).
 - Inferences are tagged `[ASSUMPTION]` and indexed in §13.
 - Technical "how" (mechanisms, storage, pipelines, remediation steps, and implementation details of Built behaviour such as error codes, scope names and thresholds) is in [prd-addendum.md](prd-addendum.md) for the architect.
@@ -663,6 +663,28 @@ When a route is matched to roads, Echo records which roads it followed: route nu
 - **Derived.** Roads belong to the Matched Route: exported, erased and recomputed with it.
 - English names are not offered in R1: the map data has none for most streets.
 
+#### FR-62: Rebuild a route from similar drives — Proposed (Phase R1)
+Some drives cannot be placed on the roads from their own points: they are too sparse, or the engine breaks on them. In the first Owner's data on 2026-10-29 this was 2,713 of 14,369 matchable drives (2,081 low confidence, 632 failed). But the Owner drives the same trips again and again: **88%** of those drives (2,394) have at least one confidently matched drive whose start and end are both within about 500 m of theirs; 2,290 have three or more, and 2,315 have one that started within two hours of the same time of day. A drive home from work is the **reverse** of the drives to work (37 drives match only reversed).
+
+**On demand,** for one drive the Owner chooses ("Rebuild from similar drives" in the Activity panel), Echo:
+1. **Finds similar drives.** These are the Owner's own confidently matched drives of the same type whose start and end are both near this drive's start and end, or near its end and start (reversed). A drive counts as similar only when this drive's own recorded points lie along it. Similar times of day, and drives that agree with each other, rank higher.
+2. **Borrows points.** Between two of this drive's real points that both lie along the most similar drive, Echo adds synthetic points taken from that drive's road line. Each synthetic point is timed between the two real points, in proportion to the distance along the line, so the drive never moves faster than its type allows. Where this drive left the similar drive's way, nothing is borrowed.
+3. **Matches again.** The real and borrowed points are placed on the roads as usual (FR-56).
+4. **Suggests.** The result is drawn on the map as a **suggestion**, with what it is based on: "From 14 similar drives (6 agree), the closest on 3 Sep at 08:12, reversed", and its confidence. The Owner chooses **Use this route** or **Discard**. Nothing changes until they choose.
+
+Details:
+- **Results.** Measured on 60 of the first Owner's weak drives, picked at random: a rebuild placed **38** on the roads with confidence, against 6 by the normal matching. 9 had no similar drive that follows them; those are for marking the way.
+- **Provenance.** Borrowed stretches are *inferred* pieces (dashed), never *observed*. The confidence counts only the drive's real points. It also counts the share of them that lie along the similar drive, so a weak resemblance gives a weak suggestion.
+- **Lasting.** A route the Owner used is kept as it is when Echo's matching rule changes. It is rebuilt automatically only when the drive's own points change, and "Revert to recorded" still applies.
+- **No similar drives.** When no similar drive is found, or the resemblance is too weak, the panel says so and offers marking the way (FR-63).
+- Only the Owner's own drives are ever borrowed from (§2.2, NFR-07). Nothing leaves Echo's infrastructure (NFR-20).
+
+#### FR-63: Mark the way — Proposed (Phase R1)
+When even similar drives are not enough, the Owner can tell Echo where they drove. They choose **Mark the way** in the Activity panel, click points on the map in the order they drove through them, and choose **Rebuild**.
+- **Placement.** Each marked point is placed in time between the drive's real points, by where it lies along the drive and in the order the Owner marked it. Echo then matches the drive through the real and marked points (FR-56), and the result is offered as a suggestion, as in FR-62. Up to 50 points can be marked; a point can be removed by clicking it.
+- **Owner's input.** The marked points are a **decision**, like "Keep the original" (P-5). They are stored when the Owner uses the route, and every later match of that drive goes through them, including after a rule change or a re-import. The Owner can clear them ("clear them" in the panel), and the drive is then matched as usual again. They are exported and erased with the Owner's route data, and backed up.
+- **Provenance.** Stretches through marked points are *inferred* pieces. A route the Owner used is shown whatever its confidence, as long as it is at least 0.3.
+
 #### FR-60: Routes abroad — Proposed (Phase R3)
 Activities outside the map data that Echo holds are flagged "outside map coverage" and left as recorded. At MVP, Echo holds Israel only (decision Q-13).
 - Each Owner sees which regions hold the most of their own such Activities.
@@ -764,7 +786,7 @@ Privacy is a product pillar, not a compliance appendix. The requirements in §4.
 | **1: Connect** | Contacts ↔ Atlas | FR-31 to FR-42, FR-47, FR-48, FR-49, FR-52; NFR-09, NFR-12 to NFR-14 for Connect data; NFR-10 test (b); NFR-11 token budget; NFR-15 for the Unified Timeline, Privacy Center and Person views; NFR-16 token scopes; NFR-18 worker fairness | UJ-3 and UJ-4 work on the first Owner's real data; SM-1 to SM-3 are measured; NFR-10 (b), the NFR-11 budget and the NFR-18 fairness test pass; any Owner can export and erase their own data |
 | **2: People in Photos** | Opt-in faces | FR-43 to FR-45; NFR-14 and NFR-15 for the face views | UJ-5 works; revocation is proven to delete all face data; unnamed clusters are proven discarded after review; no face data is reachable across Owners |
 | **3+: More of me** | Breadth | FR-54 LinkedIn first (Q-7), then FR-04, FR-11, FR-16, FR-21, FR-26, FR-30 and the other §4.11 sources | Chosen per phase; LinkedIn connections link to Contacts |
-| **R1: Routes MVP** (an Atlas track parallel to Phase 1) | Car trips on the roads | FR-55 (all types assessed); FR-61 (roads travelled and the road filter); FR-56 and FR-57 for drive and bus or taxi transit, Israel map data only, without the MCP and Assistant tools or re-matching on a new map data version; FR-58 without accepting a Matched Route below the threshold; NFR-20, NFR-21 | It needs the `EchoService` scheme and CI image builds of Phase 0 (architecture AD-3, AD-22); if Phase 0 has not delivered them when R1 starts, R1 builds them itself (decided, architecture §12). Exit: the first Owner's drives in Israel are drawn on roads; the spike on the Pi confirms the AD-36 budget; NFR-20 and NFR-21 pass; the two-Owner isolation gate (NFR-07) and the round-robin fairness test (NFR-18) cover the route service |
+| **R1: Routes MVP** (an Atlas track parallel to Phase 1) | Car trips on the roads | FR-55 (all types assessed); FR-61 (roads travelled and the road filter); FR-62 and FR-63 (rebuild from similar drives, mark the way); FR-56 and FR-57 for drive and bus or taxi transit, Israel map data only, without the MCP and Assistant tools or re-matching on a new map data version; FR-58 without accepting a Matched Route below the threshold; NFR-20, NFR-21 | It needs the `EchoService` scheme and CI image builds of Phase 0 (architecture AD-3, AD-22); if Phase 0 has not delivered them when R1 starts, R1 builds them itself (decided, architecture §12). Exit: the first Owner's drives in Israel are drawn on roads; the spike on the Pi confirms the AD-36 budget; NFR-20 and NFR-21 pass; the two-Owner isolation gate (NFR-07) and the round-robin fairness test (NFR-18) cover the route service |
 | **R2: Routes on foot and bike** | Every matchable type; insights; the rest of R1's features | FR-56 for ride, walk, run and hike; FR-57's MCP and Assistant tools and re-matching on a new map data version; FR-58's "Use this route" below the threshold; photos placed on the Matched Route; FR-59 | Matched foot and bike routes are rejected by the Owner in ≤ 10% of the cases they review (the SM-3 measure applied to routes) |
 | **R3: Routes abroad** | Coverage | FR-60 | The regions added on demand (Q-13) are matched; the rest are flagged "outside map coverage" |
 | **Gate: beyond the invited circle** | Opening up | NFR-19 Google verification and CASA | Not scheduled. Required before anyone outside the invited circle is admitted, or before the user count nears 100 |

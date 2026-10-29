@@ -64,6 +64,7 @@ import {
 import { tokens } from '../theme/contactsTheme';
 import RouteLine, { type RouteView } from './RouteLine';
 import RouteRoads from './RouteRoads';
+import RouteRebuild, { type RouteRebuildProps } from './RouteRebuild';
 
 /** Props for ActivityPanel */
 export interface ActivityPanelProps {
@@ -91,6 +92,8 @@ export interface ActivityPanelProps {
   onRouteChanged?: () => Promise<ActivityDetail | null>;
   /** Finds every activity whose route follows a road */
   onRoad?: (road: string) => void;
+  /** Rebuilding the route on demand (AD-38): the suggestion and the marking, held by the page */
+  rebuild?: Omit<RouteRebuildProps, 'detail' | 'onApplied'>;
 }
 
 /** Icon and text of a linked place's role */
@@ -205,6 +208,7 @@ const ActivityPanel: React.FC<ActivityPanelProps> = ({
   onRouteView,
   onRouteChanged,
   onRoad,
+  rebuild,
 }) => {
   const s = detail.summary;
   const [editing, setEditing] = useState(false);
@@ -317,6 +321,9 @@ const ActivityPanel: React.FC<ActivityPanelProps> = ({
           onView={onRouteView}
           onChanged={onRouteChanged}
         />
+      )}
+      {rebuild && onRouteChanged && (
+        <RouteRebuild detail={detail} onApplied={onRouteChanged} {...rebuild} />
       )}
       {onRoad && s.geometry === 'matched' && routeView === 'roads' && detail.route?.roads && (
         <RouteRoads roads={detail.route.roads} onRoad={onRoad} />
