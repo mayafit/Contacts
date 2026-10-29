@@ -562,4 +562,120 @@ public class RoutesMatchDbTests
         Assert.Equal((RouteStatuses.Matched, (DateTime?)null), (row.Status, row.NextAttemptAt));
         Assert.Matches(@"""filled"":\s*2\b", row.MetricsAfter);
     }
+
+    /// <summary>One drive matched, then left as routes.v1 left it (matched, with a line)</summary>
+    private static async Task<(ServiceProvider Sp, EchoEngine Engine, EngineClientTests.Clock Clock, string Owner, RouteTrack Drive)?> OldRuleLineAsync(string name)
+    {
+        var backend = new FakeRoutesBackend();
+        var engine = new EchoEngine();
+        var clock = new EngineClientTests.Clock();
+        var sp = Services(backend, engine, clock, o => o.BreakerFailures = 100);
+        if (sp == null)
+        {
+            return null;
+        }
+
+        var owner = name + "-" + Guid.NewGuid();
+        var drive = backend.Add(owner, 1)[0];
+        await AssessAllAsync(sp, owner);
+        await PendingBatchAsync(sp, owner);
+        using var db = Db(sp);
+        var row = await db.MatchedRoutes.SingleAsync(m => m.OwnerId == owner);
+        row.RuleVersion = "routes.v1";
+        row.Status = RouteStatuses.LowConfidence;
+        row.Pieces = """[{"fromM":0,"toM":10,"kind":"observed"}]""";
+        await db.SaveChangesAsync();
+        return (sp, engine, clock, owner, drive);
+    }
+
+    [Fact]
+    public async Task An_old_rule_s_line_survives_a_re_match_whose_backoff_is_spent_and_is_not_hot_looped()
+    {
+        if (await OldRuleLineAsync("v1-spent") is not { } setup)
+        {
+            return;
+        }
+
+        var (sp, engine, clock, owner, _) = setup;
+        await using var owned = sp;
+        string polyline;
+        using (var db = Db(sp))
+        {
+            polyline = (await db.MatchedRoutes.AsNoTracking().SingleAsync(m => m.OwnerId == owner)).Polyline!;
+        }
+
+        engine.Fail = _ => new EngineUnavailableException("the engine did not answer within 15 s", true);
+        foreach (var wait in new[] { 1, 10, 60 })
+        {
+            Assert.Equal(1, (await PendingBatchAsync(sp, owner)).Tally.Retrying);
+            clock.Now = clock.Now.AddMinutes(wait);
+        }
+
+        // The fourth failure spends the backoff: the old line, pieces and status stay
+        Assert.Equal(1, (await PendingBatchAsync(sp, owner)).Tally.Failed);
+        using (var db = Db(sp))
+        {
+            var row = await db.MatchedRoutes.AsNoTracking().SingleAsync(m => m.OwnerId == owner);
+            Assert.Equal((polyline, RouteStatuses.LowConfidence, RouteQuality.RuleVersion), (row.Polyline, row.Status, row.RuleVersion));
+            Assert.Equal((4, (DateTime?)null), (row.Attempts, row.NextAttemptAt));
+            Assert.Contains("observed", row.Pieces);
+            Assert.NotNull(row.ListPolyline);
+            Assert.Contains("gave up after 4 attempts; the routes.v1 line is kept", row.Reason);
+        }
+
+        clock.Now = clock.Now.AddDays(1);
+        Assert.Equal(0, (await PendingBatchAsync(sp, owner)).Seen);
+    }
+
+    [Fact]
+    public async Task An_exception_outside_the_engine_never_wipes_a_stored_line()
+    {
+        if (await OldRuleLineAsync("v1-bug") is not { } setup)
+        {
+            return;
+        }
+
+        var (sp, engine, clock, owner, drive) = setup;
+        await using var owned = sp;
+        string polyline;
+        using (var db = Db(sp))
+        {
+            polyline = (await db.MatchedRoutes.AsNoTracking().SingleAsync(m => m.OwnerId == owner)).Polyline!;
+        }
+
+        // A bug while re-matching the old rule's line: it backs off and keeps its line
+        engine.Fail = _ => new InvalidOperationException("a bug");
+        Assert.Equal(1, (await PendingBatchAsync(sp, owner)).Tally.Retrying);
+        using (var db = Db(sp))
+        {
+            var row = await db.MatchedRoutes.AsNoTracking().SingleAsync(m => m.OwnerId == owner);
+            Assert.Equal((polyline, RouteStatuses.LowConfidence, "routes.v1", 1), (row.Polyline, row.Status, row.RuleVersion, row.Attempts));
+            Assert.Equal((DateTime?)clock.Now.UtcDateTime.AddMinutes(1), row.NextAttemptAt);
+            Assert.Contains("a bug", row.Reason);
+        }
+
+        // A current line hit by a bug on a forced re-match: kept as it is
+        engine.Fail = _ => null;
+        clock.Now = clock.Now.AddMinutes(1);
+        Assert.Equal(1, (await PendingBatchAsync(sp, owner)).Tally.Matched);
+        string current;
+        using (var db = Db(sp))
+        {
+            current = (await db.MatchedRoutes.AsNoTracking().SingleAsync(m => m.OwnerId == owner)).Polyline!;
+        }
+
+        engine.Fail = _ => new InvalidOperationException("another bug");
+        using (var scope = sp.CreateScope())
+        {
+            var r = await scope.ServiceProvider.GetRequiredService<MatchRunner>().ImproveAsync(owner, new List<RouteTrack> { drive }, true,
+                () => false, default);
+            Assert.Equal(1, r.Tally.Retrying);
+        }
+
+        using (var db = Db(sp))
+        {
+            var row = await db.MatchedRoutes.AsNoTracking().SingleAsync(m => m.OwnerId == owner);
+            Assert.Equal((current, RouteStatuses.Matched, RouteQuality.RuleVersion), (row.Polyline, row.Status, row.RuleVersion));
+        }
+    }
 }

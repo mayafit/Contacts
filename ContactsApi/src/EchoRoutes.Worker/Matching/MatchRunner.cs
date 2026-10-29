@@ -410,23 +410,46 @@ public class MatchRunner
 
     /// <summary>
     /// An engine failure of this record: back off (1 min, 10 min, 1 h by default), then
-    /// failed. A current good match is kept as it is (a forced re-match that failed).
+    /// failed. A line already stored for the same input is never wiped by a failure: a
+    /// current one is kept as it is (a forced re-match that failed; a due fill retry backs
+    /// off), and an older rule's one stays served while its re-match backs off, and for
+    /// good once the backoff is spent.
     /// </summary>
     private string Failure(MatchedRouteRow row, bool current, bool stale, RouteTrack t, string hash, string costing, string reason)
     {
         if (current && Serves(row))
         {
+            if (row.NextAttemptAt is { } due && due <= Now)
+            {
+                // A due re-match (a fill retry) failed: never hot-looped
+                row.Attempts++;
+                row.NextAttemptAt = row.Attempts <= _backoff.Length ? Now + _backoff[row.Attempts - 1] : null;
+            }
+
             return "retrying";
         }
 
         if (stale && row.Attempts < _backoff.Length)
         {
             // A re-match for a new rule failed: the old line stays served, and the re-match
-            // backs off like any attempt; after the last step the record fails as usual
+            // backs off like any attempt
             row.Attempts++;
             row.NextAttemptAt = Now + _backoff[row.Attempts - 1];
             row.Reason = Truncate($"{reason} (re-match attempt {row.Attempts}; retried after {_backoff[row.Attempts - 1].TotalMinutes:0} min)");
             return "retrying";
+        }
+
+        if (stale)
+        {
+            // The backoff is spent: the old rule's line, pieces and status stay, and the row
+            // takes the current rule version so it is not re-matched again (until its input
+            // changes or a newer rule comes)
+            var old = row.RuleVersion;
+            row.Attempts++;
+            row.RuleVersion = RouteQuality.RuleVersion;
+            row.NextAttemptAt = null;
+            row.Reason = Truncate($"{reason} (gave up after {row.Attempts} attempts; the {old} line is kept)");
+            return RouteStatuses.Failed;
         }
 
         if (!current && !stale)
@@ -481,8 +504,11 @@ public class MatchRunner
             }
 
             hash ??= RouteQuality.InputHash(t.Points);
-            var current = row.InputHash == hash && row.FusedType == t.Type && row.RuleVersion == RouteQuality.RuleVersion;
-            var outcome = Failure(row, current, false, t, hash, Clip(costing, 16) ?? string.Empty, reason);
+            var sameInput = row.InputHash == hash && row.FusedType == t.Type;
+            var current = sameInput && row.RuleVersion == RouteQuality.RuleVersion;
+            // An older rule's line for the same input stays served (never nulled by a failure)
+            var stale = sameInput && !current && Serves(row);
+            var outcome = Failure(row, current, stale, t, hash, Clip(costing, 16) ?? string.Empty, reason);
             row.SourceKey = Clip(row.SourceKey, 256)!;
             row.FusedType = Clip(row.FusedType, 32)!;
             await _db.SaveChangesAsync(ct);
