@@ -97,6 +97,22 @@ config:
   # max_distance 200 km in the image's config)
   Routes__MaxPointsPerCall: "2000"
   Routes__MaxKmPerCall: "200"
+  # ---- Gap filling (story 12.4a, AD-35 rule 7): each unbridged stretch gets one
+  # /route call; the route is kept when time <= elapsed x 1.6 + 120 s (and >=
+  # elapsed x 0.25 unless elapsed <= 180 s) and length <= 2.5 x straight + 500 m
+  Routes__GapFill: "true"
+  Routes__GapFillMaxKm: "60"
+  Routes__GapFillTimeFactor: "1.6"
+  Routes__GapFillTimeSlackSeconds: "120"
+  Routes__GapFillMinTimeFactor: "0.25"
+  Routes__GapFillShortElapsedSeconds: "180"
+  Routes__GapFillLengthFactor: "2.5"
+  Routes__GapFillLengthSlackM: "500"
+  # A drive with no matched point, routed point to point (at most N legs)
+  Routes__GapFillRoutedOnlyWeight: "0.6"
+  Routes__GapFillMaxRoutedOnlyLegs: "40"
+  # A Timeline anchor is off-road only beyond this (confidence v2, AD-35 rule 6)
+  Routes__OffRoadTimelineM: "100"
   # Per-record backoff after engine failures, then failed
   Routes__BackoffMinutes: "1,10,60"
   # N engine failures in a row pause all matching for M minutes
