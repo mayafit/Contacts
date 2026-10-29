@@ -73,7 +73,35 @@ public record RouteTrack(
 /// <summary>Natural keys of source records</summary>
 public static class RouteKeys
 {
-    /// <summary>source|externalId, or activity|id for a record without an external id (AD-34 rule 1)</summary>
-    public static string SourceKey(string source, string? externalId, Guid id) =>
-        externalId != null ? $"{source}|{externalId}" : $"activity|{id}";
+    /// <summary>Longest stored key (the SourceKey columns are varchar(256)); a longer key is shortened</summary>
+    public const int MaxLength = 200;
+
+    /// <summary>Hex characters of the SHA-256 kept in a shortened key (128 bits)</summary>
+    private const int HashChars = 32;
+
+    /// <summary>
+    /// source|externalId, or activity|id for a record without an external id (AD-34 rule 1).
+    /// A key longer than <see cref="MaxLength"/> (the GPX importer's ids carry the file
+    /// name) becomes its readable head plus "#~" and a SHA-256 prefix of the whole key:
+    /// stable, so a decision still finds its record, and never too long to store.
+    /// </summary>
+    public static string SourceKey(string source, string? externalId, Guid id)
+    {
+        var key = externalId != null ? $"{source}|{externalId}" : $"activity|{id}";
+        return key.Length <= MaxLength ? key : Shorten(key);
+    }
+
+    private static string Shorten(string key)
+    {
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(key)))
+            .ToLowerInvariant()[..HashChars];
+        var head = MaxLength - HashChars - 2;
+        if (char.IsHighSurrogate(key[head - 1]))
+        {
+            // Never cut a surrogate pair in half (an invalid string for Postgres)
+            head--;
+        }
+
+        return $"{key[..head]}#~{hash}";
+    }
 }

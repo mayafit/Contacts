@@ -11,6 +11,7 @@ using EchoRoutes.Worker.Assess;
 using EchoRoutes.Worker.Backend;
 using EchoRoutes.Worker.Valhalla;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace EchoRoutes.Worker.Matching;
@@ -77,11 +78,13 @@ public class MatchRunner
     private readonly RoutesOptions _options;
     private readonly MatchSettings _settings;
     private readonly TimeSpan[] _backoff;
+    private readonly ILogger<MatchRunner> _logger;
 
     /// <summary>Creates the runner</summary>
     public MatchRunner(RoutesDbContext db, IRoutesBackend backend, IValhallaClient engine, EngineBreaker breaker, GraphInfoSource graph,
-        AssessRunner assess, TimeProvider clock, IOptions<RoutesOptions> options)
+        AssessRunner assess, TimeProvider clock, IOptions<RoutesOptions> options, ILogger<MatchRunner>? logger = null)
     {
+        _logger = logger ?? NullLogger<MatchRunner>.Instance;
         _db = db;
         _backend = backend;
         _engine = engine;
@@ -179,7 +182,14 @@ public class MatchRunner
             }
 
             processed++;
-            var a = assessed[t.Id];
+            if (!assessed.TryGetValue(t.Id, out var a))
+            {
+                // Stage A could not assess it (logged there): it backs off like a failed match
+                tally.Add(await RecordFailureAsync(owner, t, existing, "the record could not be assessed: "
+                    + (_assess.Failures.FirstOrDefault(f => f.Id == t.Id).Reason ?? "unknown error"), ct));
+                continue;
+            }
+
             var costing = ValhallaTrace.CostingFor(t.Type, t.SourceType);
             if (rejected.Contains(t.SourceKey))
             {
@@ -216,8 +226,18 @@ public class MatchRunner
                 existing[t.Id] = row;
             }
 
-            tally.Add(await MatchOneAsync(row, current, t, hash, costing, engineVersion, ct));
-            await _db.SaveChangesAsync(ct);
+            try
+            {
+                tally.Add(await MatchOneAsync(row, current, t, hash, costing, engineVersion, ct));
+                await _db.SaveChangesAsync(ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException and not BackendBusyException)
+            {
+                // Not the engine: a bug or a row that cannot be stored. The record backs off
+                // with the reason, and the batch goes on (it must never head every batch)
+                _logger.LogWarning(ex, "Routes: matching record {ActivityId} of {Owner} failed", t.Id, owner);
+                tally.Add(await RecordFailureAsync(owner, t, existing, (ex.InnerException ?? ex).Message, ct, hash, costing));
+            }
         }
 
         return new MatchBatchResult(tracks.Count, processed, tally, false);
@@ -308,6 +328,53 @@ public class MatchRunner
         row.Reason = Truncate($"{reason} (gave up after {row.Attempts} attempts)");
         return RouteStatuses.Failed;
     }
+
+    /// <summary>
+    /// Stores a failed row for a record whose match broke outside the engine: the same
+    /// backoff as an engine failure, then failed. The row is written on its own (the
+    /// tracked one is dropped), with every text clipped to its column, so the failure
+    /// itself is always stored.
+    /// </summary>
+    private async Task<string> RecordFailureAsync(string owner, RouteTrack t, Dictionary<Guid, MatchedRouteRow> existing, string reason,
+        CancellationToken ct, string? hash = null, string? costing = null)
+    {
+        if (existing.Remove(t.Id, out var tracked))
+        {
+            _db.Entry(tracked).State = EntityState.Detached;
+        }
+
+        MatchedRouteRow? row = null;
+        try
+        {
+            row = await _db.MatchedRoutes.FirstOrDefaultAsync(m => m.OwnerId == owner && m.ActivityId == t.Id, ct);
+            if (row == null)
+            {
+                row = new MatchedRouteRow { OwnerId = owner, ActivityId = t.Id };
+                _db.MatchedRoutes.Add(row);
+            }
+
+            hash ??= RouteQuality.InputHash(t.Points);
+            var current = row.InputHash == hash && row.FusedType == t.Type && row.RuleVersion == RouteQuality.RuleVersion;
+            var outcome = Failure(row, current, t, hash, Clip(costing, 16) ?? string.Empty, reason);
+            row.SourceKey = Clip(row.SourceKey, 256)!;
+            row.FusedType = Clip(row.FusedType, 32)!;
+            await _db.SaveChangesAsync(ct);
+            existing[t.Id] = row;
+            return outcome;
+        }
+        catch (DbUpdateException ex)
+        {
+            _logger.LogError(ex, "Routes: the failure of record {ActivityId} of {Owner} could not be stored", t.Id, owner);
+            if (row != null)
+            {
+                _db.Entry(row).State = EntityState.Detached;
+            }
+
+            return RouteStatuses.Failed;
+        }
+    }
+
+    private static string? Clip(string? s, int max) => s == null ? null : s.Length > max ? s[..max] : s;
 
     /// <summary>The record's values at match time: the read-time check of AD-34 rule 3</summary>
     private static void Identify(MatchedRouteRow row, RouteTrack t, string hash, string costing)
