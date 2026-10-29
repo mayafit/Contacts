@@ -42,10 +42,13 @@ public class AtlasDbContext : DbContext
             e.HasIndex(x => new { x.OwnerId, x.Source, x.ExternalId }).IsUnique().HasFilter("\"ExternalId\" IS NOT NULL");
             e.HasIndex(x => x.ImportId);
             e.Property(x => x.Type).HasMaxLength(32);
+            e.Property(x => x.SourceType).HasMaxLength(64);
             e.Property(x => x.Source).HasMaxLength(64);
             e.Property(x => x.OwnerId).HasMaxLength(64);
+            // The route-quality change feed pages by (UpdatedAt, Id)
+            e.HasIndex(x => new { x.OwnerId, x.UpdatedAt, x.Id });
             e.HasMany(x => x.Points).WithOne().HasForeignKey(p => p.ActivityId).OnDelete(DeleteBehavior.Cascade);
-            e.HasIndex(x => x.ClusterId);
+            e.HasIndex(x => new { x.OwnerId, x.ClusterId });
             e.HasOne(x => x.Fusion).WithOne().HasForeignKey<ActivityFusion>(f => f.ActivityId).OnDelete(DeleteBehavior.Cascade);
         });
 
@@ -53,7 +56,7 @@ public class AtlasDbContext : DbContext
         {
             e.ToTable("activity_fusion");
             e.HasKey(x => x.ActivityId);
-            e.HasIndex(x => x.OwnerId);
+            e.HasIndex(x => new { x.OwnerId, x.UpdatedAt });
             e.Property(x => x.OwnerId).HasMaxLength(64);
             e.Property(x => x.Type).HasMaxLength(32);
         });

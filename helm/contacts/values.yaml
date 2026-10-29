@@ -81,6 +81,11 @@ backend:
     type: ClusterIP
     port: 5000
 
+  # Turn on together with routes.enabled below (the backend's link to the service)
+  routes:
+    enabled: false
+    port: 8080
+
   resources:
     requests:
       cpu: 100m
@@ -126,6 +131,24 @@ backend:
       periodSeconds: 10
       timeoutSeconds: 3
       failureThreshold: 3
+
+# =============================================================================
+# Route quality (Epic 12): EchoRoutes.Worker with Valhalla in one pod. Off until
+# the tiles image, the echo_routes role and the Vault keys exist
+# (charts/routes/README.md)
+# =============================================================================
+routes:
+  enabled: false
+  # image.tag: the worker image's short sha (charts/routes/README.md, "The worker image")
+  vault:
+    enabled: false
+    # The routes pod's own path (only its three keys); its role reads nothing else
+    kvPath: "secret/data/contacts-routes"
+    role: "contacts-routes"
+  # A policy on the backend pod; list the live peers before switching it on (README)
+  backendIngressPolicy:
+    enabled: false
+    extraBackendIngressFrom: []
 
 # =============================================================================
 # Bitnami PostgreSQL

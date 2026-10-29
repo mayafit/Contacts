@@ -69,16 +69,18 @@ public class AtlasFusionWorker : BackgroundService
     private readonly FusionStatusBoard _board;
     private readonly AtlasReadiness _readiness;
     private readonly ILogger<AtlasFusionWorker> _logger;
+    private readonly RoutesServiceClient? _routes;
 
     /// <summary>Creates the service</summary>
     public AtlasFusionWorker(IServiceScopeFactory scopes, FusionSignal signal, FusionStatusBoard board, AtlasReadiness readiness,
-        ILogger<AtlasFusionWorker> logger)
+        ILogger<AtlasFusionWorker> logger, RoutesServiceClient? routes = null)
     {
         _scopes = scopes;
         _signal = signal;
         _board = board;
         _readiness = readiness;
         _logger = logger;
+        _routes = routes;
     }
 
     /// <inheritdoc />
@@ -201,6 +203,13 @@ public class AtlasFusionWorker : BackgroundService
             finally
             {
                 _board.Finished(owner, result, error);
+            }
+
+            if (error == null)
+            {
+                // The Owner's fusion is settled: the route service pulls the changes now
+                // instead of at its next poll (AD-33 rule 6). Best effort, never waits.
+                _routes?.Wake(owner);
             }
         }
     }

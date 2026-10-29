@@ -1,0 +1,18 @@
+{{- if .Values.enabled }}
+# The service's /internal/v1 (the backend calls it); never exposed outside the cluster
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "routes.fullname" . }}
+  labels:
+    {{- include "routes.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "routes.selectorLabels" . | nindent 4 }}
+{{- end }}

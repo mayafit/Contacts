@@ -1,0 +1,151 @@
+# Route quality (Epic 12, AD-32 to AD-36). Off until the tiles image and the
+# echo_routes role exist (see README.md).
+enabled: false
+
+image:
+  repository: ghcr.io/mayafit/contacts-routes
+  # An explicit tag: the short sha of the commit the image was built from (README,
+  # "The worker image"). With a fixed tag IfNotPresent is right, and a rollout is a
+  # values change. Empty or "latest" is refused at render time.
+  tag: "7caa18b"
+  pullPolicy: IfNotPresent
+  pullSecret: ""
+
+# Valhalla 3.9.1, pinned by spike 12.1 (the digest lists linux/arm64)
+valhalla:
+  image: ghcr.io/valhalla/valhalla:3.9.1@sha256:4fd114eb1d26b8fc2f43bcb3df234c1b63a0bf13c277405e5943d5361dc575de
+  # Fixed by the config in the tiles image (httpd.service.listen tcp://127.0.0.1:8002)
+  port: 8002
+  # Server threads (valhalla_service <config> <N>). Spike 12.1: 1 plateaus at about
+  # 366 MiB anonymous memory; 2 kept growing and is rejected for now
+  threads: 1
+  # GET /status on the loopback. Generous: a long trace may hold the single server
+  # thread for up to its 14 s timeout, so only a sustained silence (5 x 30 s) restarts it
+  livenessProbe:
+    initialDelaySeconds: 60
+    periodSeconds: 30
+    timeoutSeconds: 20
+    failureThreshold: 5
+  # Valhalla runs with the valhalla.json shipped in the tiles image (spike 12.1
+  # round 2: 32 MiB LRU tile cache, reserved memory released, httpd timeout 14 s,
+  # trace max_distance 200 km). files/valhalla.json is a reference copy of it;
+  # the chart does not template a config over it.
+  config: /data/valhalla.json
+
+# The monthly CI tiles build (AD-32 rule 3): FROM busybox, holding
+# valhalla_tiles.tar, the region .poly outlines and graph.json
+tiles:
+  repository: ghcr.io/mayafit/contacts-routing-tiles
+  # Spike 12.1 round 2: israel-and-palestine 2026-10-27 tiles (82 tiles, a 199 MB
+  # tar) with the tuned valhalla.json; linux/arm64
+  tag: il-20261029-r2@sha256:791011ad3816eaeb816aebbcbbfdf1e0b070f5ab5103248acd9f572a2f776b56
+  pullPolicy: IfNotPresent
+  # Where the tiles image keeps its files
+  sourceDir: /tiles
+  # The tar's size + 25%, rounded up to 256Mi, at least 1Gi (AD-32 rule 4)
+  sizeLimit: 1Gi
+
+service:
+  type: ClusterIP
+  port: 8080
+
+# Spike 12.1: rasp02 has about 1.9 GiB free; rasp01 is memory-overcommitted (AD-36 rule 2)
+nodeSelector:
+  kubernetes.io/hostname: rasp02
+
+priorityClass:
+  # Shared with the face worker when it arrives (AD-20); cluster-scoped
+  create: true
+  name: contacts-background
+  value: -10
+
+# AD-36 rule 1
+resources:
+  routes:
+    requests: { cpu: 50m, memory: 96Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+  # Spike 12.1: about 477 MiB charged at steady state, peak 582 MiB; about 0.83 cores busy
+  valhalla:
+    requests: { cpu: 500m, memory: 512Mi, ephemeral-storage: 256Mi }
+    limits: { cpu: 1000m, memory: 768Mi, ephemeral-storage: 1Gi }
+  init:
+    requests: { cpu: 50m, memory: 32Mi }
+    limits: { cpu: 200m, memory: 64Mi }
+
+# Non-secret settings (secrets come from Vault, see vault below)
+config:
+  ASPNETCORE_ENVIRONMENT: Production
+  ASPNETCORE_URLS: "http://+:8080"
+  DOTNET_RUNNING_IN_CONTAINER: "true"
+  Routes__GraphJsonPath: /tiles/graph.json
+  Routes__RegionsPath: /tiles
+  # ---- Stage B engine settings (story 12.4). Every engine-facing number is
+  # here so the Pi spike's findings are a values change, not a release.
+  # Engine requests in flight (AD-36 rule 3: one)
+  Routes__EngineConcurrency: "1"
+  # Hard per-call timeout; a timeout backs the record off and counts for the breaker.
+  # Valhalla itself gives up at 14 s (httpd.service.timeout_seconds in the image's config)
+  Routes__EngineTimeoutSeconds: "15"
+  Routes__BreakageDistanceM: "5000"
+  Routes__SearchRadiusM: "100"
+  Routes__GpsAccuracyTimelineM: "75"
+  Routes__GpsAccuracyDenseM: "15"
+  # Gaps cut before the call (they become gap pieces)
+  Routes__SplitGapM: "5000"
+  Routes__SplitGapMinutes: "15"
+  # Per call (must not exceed the engine's service_limits.trace: max_shape 2000,
+  # max_distance 200 km in the image's config)
+  Routes__MaxPointsPerCall: "2000"
+  Routes__MaxKmPerCall: "200"
+  # Per-record backoff after engine failures, then failed
+  Routes__BackoffMinutes: "1,10,60"
+  # N engine failures in a row pause all matching for M minutes
+  Routes__BreakerFailures: "5"
+  Routes__BreakerPauseMinutes: "10"
+  # ---- Scheduling (story 12.5, AD-36): stage A 500 / 400 ms, stage B 25 / 1 s
+  Routes__AssessBatch: "500"
+  Routes__PauseMs: "400"
+  Routes__MatchBatch: "25"
+  Routes__MatchPauseMs: "1000"
+  Routes__PollSeconds: "120"
+  Routes__SweepDays: "7"
+
+# The pod's own Vault path, holding only Routes__ServiceToken, Routes__BackendToken
+# and Routes__ConnectionString; its role reads that path and nothing else, so the
+# backend's secrets (secret/data/contacts) never reach this pod (README, step 2)
+vault:
+  enabled: false
+  kvPath: "secret/data/contacts-routes"
+  role: "contacts-routes"
+  # The Vault agent sidecar must reach Vault through the egress policy
+  namespace: vault
+  port: 8200
+
+# The routes pod's own policy (egress to the backend, Postgres, DNS and Vault only;
+# ingress from the backend only)
+networkPolicy:
+  enabled: true
+  backendPort: 5000
+  postgres:
+    port: 5432
+    podLabels:
+      app.kubernetes.io/name: postgresql
+
+# A policy on the BACKEND pod admitting only the frontend's nginx, the routes pod and
+# the peers listed below. Off by default: once on, every peer not listed is cut off
+# (an ingress controller, an in-cluster Cloudflare tunnel, metrics scrapes), so list
+# the live peers first (README, "Network policies")
+backendIngressPolicy:
+  enabled: false
+  # Each entry is a NetworkPolicy "from" peer
+  extraBackendIngressFrom: []
+
+probes:
+  liveness:
+    path: /health/live
+    initialDelaySeconds: 15
+    periodSeconds: 30
+  readiness:
+    path: /health/ready
+    initialDelaySeconds: 10
+    periodSeconds: 15

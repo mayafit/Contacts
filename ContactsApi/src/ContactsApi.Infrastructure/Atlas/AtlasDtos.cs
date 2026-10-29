@@ -69,7 +69,47 @@ public record ActivitySummary(
     Guid Id, string Type, string? Name, DateTime StartTime, DateTime EndTime, double? DistanceM, double? DurationS,
     double? ElevationGainM, int? AvgHeartRate, int? MaxHeartRate, string Source, string? Polyline,
     double? MinLat, double? MinLon, double? MaxLat, double? MaxLon, int PointCount,
-    List<string> Sources, int MemberCount, int ConflictCount, int PhotoCount = 0);
+    List<string> Sources, int MemberCount, int ConflictCount, int PhotoCount = 0)
+{
+    /// <summary>
+    /// "matched" when Polyline is a matched route chosen at read time (AD-34 rule 3),
+    /// else "recorded" (the fused, recorded line)
+    /// </summary>
+    public string Geometry { get; init; } = RouteGeometryKinds.Recorded;
+
+    /// <summary>The matched line's pieces in metres along it (the detail view only)</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public List<ContactsApi.Core.Interfaces.RouteGeometryPiece>? Pieces { get; init; }
+
+    /// <summary>The matched line's length (the detail view only): "on roads" beside the source's distance</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public double? OnRoadsM { get; init; }
+
+    // Read with the summary for the read-time choice; never sent
+
+    /// <summary>The primary record's UpdatedAt</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public DateTime RecordUpdatedAt { get; init; }
+
+    /// <summary>Recordings of an outing (1: one recording)</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public int SegmentCount { get; init; } = 1;
+
+    /// <summary>The fusion evidence, read only for an outing of several recordings</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? OutingEvidence { get; init; }
+
+    /// <summary>Fusion took the distance from the straight-line track length (FieldSources.distance = "track")</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool DistanceFromTrack { get; init; }
+}
+
+/// <summary>ActivitySummary.Geometry values</summary>
+public static class RouteGeometryKinds
+{
+    public const string Matched = "matched";
+    public const string Recorded = "recorded";
+}
 
 /// <summary>A visit with its place</summary>
 /// <param name="PhotoCount">Photos taken during it (set in search results)</param>
@@ -95,7 +135,20 @@ public record ActivityDetail(
     string? HeartRateSource, List<SeriesPoint> HeartRate,
     List<ActivityMember> Members, List<FusionConflict> Conflicts,
     Dictionary<string, string> FieldSources, List<LinkedPlace> Places,
-    List<MatchEvidence> Evidence, double? MatchConfidence, ActivityAnalysis? Analysis = null);
+    List<MatchEvidence> Evidence, double? MatchConfidence, ActivityAnalysis? Analysis = null)
+{
+    /// <summary>Route quality for the panel; null when route quality is off or unavailable</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public ActivityRouteInfo? Route { get; init; }
+}
+
+/// <summary>What the Activity panel shows about the route (stories 12.6, 12.7)</summary>
+/// <param name="RecordIds">The records whose track is drawn (the primary, or each recording of an outing): what "Fix this route" queues</param>
+/// <param name="Description">The primary record's quality, stored match and decision; null before the service assessed it</param>
+/// <param name="ObservedShare">Share of the matched line along recorded points (0-1); null when not drawn</param>
+/// <param name="InferredShare">Share chosen by routing between sparse points (0-1); null when not drawn</param>
+public record ActivityRouteInfo(List<Guid> RecordIds, ContactsApi.Core.Interfaces.RouteDescription? Description,
+    double? ObservedShare, double? InferredShare);
 
 /// <summary>How a source record matches the fused activity's primary record</summary>
 /// <param name="StartDeltaS">Its start minus the primary's (seconds)</param>

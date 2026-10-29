@@ -25,14 +25,21 @@ public partial class AtlasService
 {private readonly AtlasDbContext _db;
     private readonly ILogger<AtlasService> _logger;
     private readonly IFusionSignal? _signal;
+    private readonly ContactsApi.Core.Interfaces.IRouteGeometryReader? _routes;
+    private readonly ContactsApi.Core.Interfaces.IRouteChangeSignal? _routeChanges;
 
     /// <summary>Creates the service</summary>
     /// <param name="signal">The fusion service; without it (tests, tools) changes are fused right away</param>
-    public AtlasService(AtlasDbContext db, ILogger<AtlasService> logger, IFusionSignal? signal = null)
+    /// <param name="routes">Matched geometry (AD-34); without it every line is drawn as recorded</param>
+    /// <param name="routeChanges">Wakes the route-quality service after an edit of a type, a merge or a split</param>
+    public AtlasService(AtlasDbContext db, ILogger<AtlasService> logger, IFusionSignal? signal = null,
+        ContactsApi.Core.Interfaces.IRouteGeometryReader? routes = null, ContactsApi.Core.Interfaces.IRouteChangeSignal? routeChanges = null)
     {
         _db = db;
         _logger = logger;
         _signal = signal;
+        _routes = routes;
+        _routeChanges = routeChanges;
     }
 
     // ---------------------------------------------------------------- ingest
@@ -253,6 +260,8 @@ public partial class AtlasService
                 activity.Name ??= Trim(a.Name, 300);
             }
 
+            // The source's own type, as received (tells a bus from a train); a re-import fills it in
+            activity.SourceType = Trim(a.Type, 64) ?? activity.SourceType;
             activity.Notes ??= Trim(a.Notes, 4000);
             activity.StartTime = a.StartTime.HasValue ? Utc(a.StartTime.Value) : default;
             activity.EndTime = a.EndTime.HasValue ? Utc(a.EndTime.Value) : default;
@@ -370,7 +379,9 @@ public partial class AtlasService
             }
 
             totalActivities = await aq.CountAsync(ct);
-            activities = await aq.OrderByDescending(a => a.StartTime).Take(limit).Select(ToSummary).ToListAsync(ct);
+            // The fusion evidence and field sources are read only when matched lines may be drawn
+            activities = await aq.OrderByDescending(a => a.StartTime).Take(limit)
+                .Select(_routes is { Enabled: true } ? ToSummaryRouted : ToSummary).ToListAsync(ct);
         }
 
         if (q.Visits && !q.ConflictsOnly)
@@ -395,6 +406,7 @@ public partial class AtlasService
                 .ToListAsync(ct);
         }
 
+        activities = await WithRoutesAsync(owner, activities, ct);
         (activities, visits) = await WithPhotoCountsAsync(owner, activities, visits, ct);
         return new SearchResult(activities, visits, totalActivities, totalVisits);
     }
@@ -421,23 +433,40 @@ public partial class AtlasService
                 aq = aq.Where(a => a.StartTime <= to);
             }
 
-            var rows = await aq.Where(a => a.Polyline != null || (a.Fusion != null && a.Fusion.Polyline != null))
+            var withPolyline = aq.Where(a => a.Polyline != null || (a.Fusion != null && a.Fusion.Polyline != null))
                 .OrderByDescending(a => a.StartTime)
-                .Take(maxTracks + 1)
-                .Select(a => new
-                {
-                    Type = a.Fusion != null && a.Fusion.Type != null ? a.Fusion.Type : a.Type,
-                    Polyline = a.Fusion != null && a.Fusion.Polyline != null ? a.Fusion.Polyline : a.Polyline
-                })
+                .Take(maxTracks + 1);
+            // The fusion evidence (an outing's recordings) is read only when matched lines may be drawn
+            var rows = await (_routes is { Enabled: true }
+                    ? withPolyline.Select(a => new GeometryCandidate(a.Id,
+                        a.Fusion != null && a.Fusion.Type != null ? a.Fusion.Type : a.Type,
+                        a.Fusion != null && a.Fusion.Polyline != null ? a.Fusion.Polyline : a.Polyline,
+                        a.UpdatedAt, a.PointCount,
+                        a.Fusion != null && a.Fusion.SegmentCount > 1 ? a.Fusion.Evidence : null))
+                    : withPolyline.Select(a => new GeometryCandidate(a.Id,
+                        a.Fusion != null && a.Fusion.Type != null ? a.Fusion.Type : a.Type,
+                        a.Fusion != null && a.Fusion.Polyline != null ? a.Fusion.Polyline : a.Polyline,
+                        default, 0, null)))
                 .ToListAsync(ct);
             truncated |= rows.Count > maxTracks;
-            foreach (var r in rows.Take(maxTracks))
+            rows = rows.Take(maxTracks).ToList();
+            // The chosen line (AD-34 rule 6): one query for every track, the stored density line only
+            var chosen = await ChooseGeometryAsync(owner, rows, ContactsApi.Core.Interfaces.RouteLine.Density, ct);
+            foreach (var r in rows)
             {
-                var points = DecodePolyline(r.Polyline!);
+                var c = chosen.GetValueOrDefault(r.Id);
+                if (c is { Final: true })
+                {
+                    // Stored simplified for the density map: drawn as it is
+                    tracks.Add(new DensityTrack(r.Type, c.Polyline));
+                    continue;
+                }
+
+                var points = DecodePolyline(c?.Polyline ?? r.Polyline!);
                 if (points.Count >= 2)
                 {
                     // ~30 m first: a density line needs no finer detail (and it is per request)
-                    tracks.Add(new DensityTrack(r.Type, Geo.EncodePolyline(Geo.Simplify(points, 80, 0.0003))));
+                    tracks.Add(new DensityTrack(r.Type, Routes.RouteLines.Density(points)));
                 }
             }
         }
@@ -737,8 +766,15 @@ public partial class AtlasService
         var evidence = a.Fusion != null
             ? System.Text.Json.JsonSerializer.Deserialize<List<MatchEvidence>>(a.Fusion.Evidence, JsonCamel) ?? new()
             : new List<MatchEvidence>();
-        return new ActivityDetail(summary, a.Notes, points, hrSource, hr, memberRows, conflicts, fieldSources, places,
-            evidence, a.Fusion?.MatchConfidence, analysis?.Analysis);
+        var trackRecords = members.Where(m => trackIds.Contains(m.Id)).ToList();
+        if (trackRecords.Count == 0)
+        {
+            trackRecords.Add(a);
+        }
+
+        var (routed, route) = await DetailRouteAsync(owner, summary, trackRecords, ct);
+        return new ActivityDetail(routed, a.Notes, points, hrSource, hr, memberRows, conflicts, fieldSources, places,
+            evidence, a.Fusion?.MatchConfidence, analysis?.Analysis) { Route = route };
     }
 
     private static readonly System.Text.Json.JsonSerializerOptions JsonCamel = new(System.Text.Json.JsonSerializerDefaults.Web);
@@ -938,7 +974,11 @@ public partial class AtlasService
 
     // ---------------------------------------------------------------- CRUD
 
-    /// <summary>Changes an activity's name, type or notes</summary>
+    /// <summary>
+    /// Changes an activity's name, type or notes. Only a new type moves the record's
+    /// UpdatedAt (the track-or-type version route quality checks a match against): a
+    /// rename or a note never hides its matched route.
+    /// </summary>
     public async Task<ActivitySummary> UpdateActivityAsync(string owner, Guid id, ActivityPatch patch, CancellationToken ct = default)
     {
         var a = await _db.Activities.FirstOrDefaultAsync(x => x.Id == id && x.OwnerId == owner, ct) ?? throw new AtlasNotFoundException("Activity");
@@ -947,9 +987,12 @@ public partial class AtlasService
             a.Name = Trim(patch.Name, 300);
         }
 
+        var retyped = false;
         if (patch.Type != null)
         {
-            a.Type = NormalizeType(patch.Type);
+            var type = NormalizeType(patch.Type);
+            retyped = type != a.Type;
+            a.Type = type;
             a.TypeByUser = true;
         }
 
@@ -958,7 +1001,11 @@ public partial class AtlasService
             a.Notes = Trim(patch.Notes, 4000);
         }
 
-        a.UpdatedAt = DateTime.UtcNow;
+        if (retyped)
+        {
+            a.UpdatedAt = DateTime.UtcNow;
+        }
+
         await _db.SaveChangesAsync(ct);
         if (a.ClusterId.HasValue)
         {
@@ -973,6 +1020,11 @@ public partial class AtlasService
             {
                 gate.Release();
             }
+        }
+
+        if (retyped)
+        {
+            _routeChanges?.Changed(owner);
         }
 
         var cluster = a.ClusterId ?? a.Id;
@@ -1138,8 +1190,10 @@ public partial class AtlasService
         removed += await _db.Places.Where(x => x.OwnerId == owner && x.ImportId == importId).ExecuteDeleteAsync(ct);
         await _db.Imports.Where(i => i.Id == importId && i.OwnerId == owner).ExecuteDeleteAsync(ct);
         // Records whose fused activity's primary was deleted stand alone until re-fused
+        // (UpdatedAt moves: their fused type and drawn track change, so the route feed sees them)
+        var now = DateTime.UtcNow;
         await _db.Activities.Where(x => x.OwnerId == owner && x.ClusterId != null && !_db.Activities.Any(p => p.Id == x.ClusterId))
-            .ExecuteUpdateAsync(s => s.SetProperty(x => x.ClusterId, (Guid?)null), ct);
+            .ExecuteUpdateAsync(s => s.SetProperty(x => x.ClusterId, (Guid?)null).SetProperty(x => x.UpdatedAt, now), ct);
         _logger.LogInformation("Deleted import with {Count} items", removed);
         await QueueFusionAsync(owner, null, null, CancellationToken.None);
         return removed;
@@ -1173,10 +1227,43 @@ public partial class AtlasService
             a.Fusion != null ? a.Fusion.ConflictCount : 0,
             0);
 
+    /// <summary>
+    /// <see cref="ToSummary"/> with what the read-time choice of geometry needs (route
+    /// quality on): the record's check columns, an outing's evidence and whether fusion
+    /// took the distance from the track
+    /// </summary>
+    private static readonly System.Linq.Expressions.Expression<Func<AtlasActivity, ActivitySummary>> ToSummaryRouted = a =>
+        new ActivitySummary(a.Id,
+            a.Fusion != null && a.Fusion.Type != null ? a.Fusion.Type : a.Type,
+            a.Name ?? (a.Fusion != null ? a.Fusion.Name : null),
+            a.Fusion != null ? a.Fusion.StartTime : a.StartTime,
+            a.Fusion != null ? a.Fusion.EndTime : a.EndTime,
+            a.Fusion != null && a.Fusion.DistanceM != null ? a.Fusion.DistanceM : a.DistanceM,
+            a.Fusion != null && a.Fusion.DurationS != null ? a.Fusion.DurationS : a.DurationS,
+            a.Fusion != null && a.Fusion.ElevationGainM != null ? a.Fusion.ElevationGainM : a.ElevationGainM,
+            a.Fusion != null && a.Fusion.AvgHeartRate != null ? a.Fusion.AvgHeartRate : a.AvgHeartRate,
+            a.Fusion != null && a.Fusion.MaxHeartRate != null ? a.Fusion.MaxHeartRate : a.MaxHeartRate,
+            a.Source, a.Fusion != null && a.Fusion.Polyline != null ? a.Fusion.Polyline : a.Polyline,
+            a.Fusion != null && a.Fusion.MinLat != null ? a.Fusion.MinLat : a.MinLat,
+            a.Fusion != null && a.Fusion.MinLon != null ? a.Fusion.MinLon : a.MinLon,
+            a.Fusion != null && a.Fusion.MaxLat != null ? a.Fusion.MaxLat : a.MaxLat,
+            a.Fusion != null && a.Fusion.MaxLon != null ? a.Fusion.MaxLon : a.MaxLon,
+            a.PointCount,
+            SplitSources(a.Fusion != null ? a.Fusion.Sources : a.Source),
+            a.Fusion != null ? a.Fusion.MemberCount : 1,
+            a.Fusion != null ? a.Fusion.ConflictCount : 0,
+            0)
+        {
+            RecordUpdatedAt = a.UpdatedAt,
+            SegmentCount = a.Fusion != null ? a.Fusion.SegmentCount : 1,
+            OutingEvidence = a.Fusion != null && a.Fusion.SegmentCount > 1 ? a.Fusion.Evidence : null,
+            DistanceFromTrack = a.Fusion != null && a.Fusion.FieldSources.Contains(DistanceFromTrackMark)
+        };
+
     private static List<string> SplitSources(string sources) =>
         sources.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
 
-    private static readonly Func<AtlasActivity, ActivitySummary> ToSummaryCompiled = ToSummary.Compile();
+    private static readonly Func<AtlasActivity, ActivitySummary> ToSummaryCompiled = ToSummaryRouted.Compile();
 
     private static ActivitySummary Summarize(AtlasActivity a) => ToSummaryCompiled(a);
 
