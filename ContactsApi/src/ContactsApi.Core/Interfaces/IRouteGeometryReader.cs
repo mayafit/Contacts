@@ -48,6 +48,17 @@ public record ChosenRoute(Guid RecordId, string Polyline, double? MatchedDistanc
 public record RouteDescription(string? Grade, int? Score, IReadOnlyList<string> Flags, string? Matchable, bool NeedsImprovement,
     string? Status, double? Confidence, double? MatchedDistanceM, bool Current, string? Decision, string? Reason);
 
+/// <summary>
+/// Tells the route-quality service that an Owner's tracks or types changed outside an
+/// import (an edited type, a merge or a split), so it reads its change feed now
+/// rather than at its next poll. Best effort, never blocks the edit.
+/// </summary>
+public interface IRouteChangeSignal
+{
+    /// <summary>The Owner's tracks or fused types changed</summary>
+    void Changed(string owner);
+}
+
 /// <summary>Chooses, at read time, the geometry Atlas draws (AD-34 rule 3)</summary>
 public interface IRouteGeometryReader
 {

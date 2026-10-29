@@ -81,6 +81,8 @@ builder.Services.AddSingleton<InteractiveLoad>();
 // The backend calls the route-quality service's /internal/v1 with Routes__BackendToken
 RoutesServiceClient.Configure(builder.Services, builder.Configuration);
 builder.Services.AddSingleton<RoutesServiceClient>();
+// Edits of a type, merges and splits wake the service (imports wake it after fusion)
+builder.Services.AddSingleton<ContactsApi.Core.Interfaces.IRouteChangeSignal>(sp => sp.GetRequiredService<RoutesServiceClient>());
 // The fusion service: imports queue their time windows, it fuses them in the background
 builder.Services.AddSingleton<FusionSignal>();
 builder.Services.AddSingleton<ContactsApi.Infrastructure.Atlas.IFusionSignal>(sp => sp.GetRequiredService<FusionSignal>());

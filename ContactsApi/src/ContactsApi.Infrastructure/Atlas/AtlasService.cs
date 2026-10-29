@@ -26,17 +26,20 @@ public partial class AtlasService
     private readonly ILogger<AtlasService> _logger;
     private readonly IFusionSignal? _signal;
     private readonly ContactsApi.Core.Interfaces.IRouteGeometryReader? _routes;
+    private readonly ContactsApi.Core.Interfaces.IRouteChangeSignal? _routeChanges;
 
     /// <summary>Creates the service</summary>
     /// <param name="signal">The fusion service; without it (tests, tools) changes are fused right away</param>
     /// <param name="routes">Matched geometry (AD-34); without it every line is drawn as recorded</param>
+    /// <param name="routeChanges">Wakes the route-quality service after an edit of a type, a merge or a split</param>
     public AtlasService(AtlasDbContext db, ILogger<AtlasService> logger, IFusionSignal? signal = null,
-        ContactsApi.Core.Interfaces.IRouteGeometryReader? routes = null)
+        ContactsApi.Core.Interfaces.IRouteGeometryReader? routes = null, ContactsApi.Core.Interfaces.IRouteChangeSignal? routeChanges = null)
     {
         _db = db;
         _logger = logger;
         _signal = signal;
         _routes = routes;
+        _routeChanges = routeChanges;
     }
 
     // ---------------------------------------------------------------- ingest
@@ -971,7 +974,11 @@ public partial class AtlasService
 
     // ---------------------------------------------------------------- CRUD
 
-    /// <summary>Changes an activity's name, type or notes</summary>
+    /// <summary>
+    /// Changes an activity's name, type or notes. Only a new type moves the record's
+    /// UpdatedAt (the track-or-type version route quality checks a match against): a
+    /// rename or a note never hides its matched route.
+    /// </summary>
     public async Task<ActivitySummary> UpdateActivityAsync(string owner, Guid id, ActivityPatch patch, CancellationToken ct = default)
     {
         var a = await _db.Activities.FirstOrDefaultAsync(x => x.Id == id && x.OwnerId == owner, ct) ?? throw new AtlasNotFoundException("Activity");
@@ -980,9 +987,12 @@ public partial class AtlasService
             a.Name = Trim(patch.Name, 300);
         }
 
+        var retyped = false;
         if (patch.Type != null)
         {
-            a.Type = NormalizeType(patch.Type);
+            var type = NormalizeType(patch.Type);
+            retyped = type != a.Type;
+            a.Type = type;
             a.TypeByUser = true;
         }
 
@@ -991,7 +1001,11 @@ public partial class AtlasService
             a.Notes = Trim(patch.Notes, 4000);
         }
 
-        a.UpdatedAt = DateTime.UtcNow;
+        if (retyped)
+        {
+            a.UpdatedAt = DateTime.UtcNow;
+        }
+
         await _db.SaveChangesAsync(ct);
         if (a.ClusterId.HasValue)
         {
@@ -1006,6 +1020,11 @@ public partial class AtlasService
             {
                 gate.Release();
             }
+        }
+
+        if (retyped)
+        {
+            _routeChanges?.Changed(owner);
         }
 
         var cluster = a.ClusterId ?? a.Id;

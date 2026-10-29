@@ -51,6 +51,12 @@ public class AtlasActivity : ISourced
     public int PointCount { get; set; }
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// When the record's track or type last changed (an import, a re-import, a new type,
+    /// a cluster change). Not moved by a rename or a note: route quality compares a
+    /// matched route against it (AD-34 rule 3), and its change feed follows it.
+    /// </summary>
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
     /// <summary>

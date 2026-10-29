@@ -1337,6 +1337,9 @@ public partial class AtlasService
             gate.Release();
         }
 
+        // The fused type and an outing's recordings may have changed
+        _routeChanges?.Changed(owner);
+
         return await GetActivityAsync(owner, id, ct: ct);
     }
 
@@ -1373,6 +1376,7 @@ public partial class AtlasService
             gate.Release();
         }
 
+        _routeChanges?.Changed(owner);
         return await GetActivityAsync(owner, rest.Count > 0 ? rest[0] : memberId, ct: ct);
     }
 

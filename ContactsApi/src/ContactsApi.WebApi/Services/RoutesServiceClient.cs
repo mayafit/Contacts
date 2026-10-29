@@ -23,7 +23,7 @@ public class RoutesUnavailableException : Exception
 public record RoutesServiceAnswer(int Status, string Body);
 
 /// <summary>Calls the route-quality service</summary>
-public class RoutesServiceClient
+public class RoutesServiceClient : ContactsApi.Core.Interfaces.IRouteChangeSignal
 {
     /// <summary>The named HttpClient</summary>
     public const string HttpClientName = "routes-service";
@@ -99,6 +99,9 @@ public class RoutesServiceClient
             }
         });
     }
+
+    /// <inheritdoc />
+    public void Changed(string owner) => Wake(owner);
 
     private async Task<RoutesServiceAnswer> SendAsync(HttpMethod method, string path, object? body, CancellationToken ct)
     {

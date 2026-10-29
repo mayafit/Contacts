@@ -254,6 +254,45 @@ public class RouteGeometryDbTests
         Assert.All(density.Tracks, t => Assert.InRange(AtlasService.DecodePolyline(t.Polyline).Count, 2, RouteLines.DensityVertices));
     }
 
+    private sealed class Signal : IRouteChangeSignal
+    {
+        public readonly List<string> Owners = new();
+
+        public void Changed(string owner) => Owners.Add(owner);
+    }
+
+    [Fact]
+    public async Task A_rename_or_a_note_keeps_the_match_drawn_and_a_new_type_hides_it_and_wakes_the_service()
+    {
+        await using var c = await DbAsync();
+        if (c == null)
+        {
+            return;
+        }
+
+        var owner = "geom-edit-" + Guid.NewGuid();
+        var records = await SeedAsync(c, Service(c), owner, 1);
+        await MatchAsync(c, records[0], owner);
+        var signal = new Signal();
+        var svc = new AtlasService(c.Atlas, NullLogger<AtlasService>.Instance, null,
+            new RouteGeometryReader(c.Routes, new RouteGeometryOptions { Enabled = true }, NullLogger<RouteGeometryReader>.Instance), signal);
+        var query = new AtlasQuery { Visits = false };
+
+        await svc.UpdateActivityAsync(owner, records[0].Id, new ActivityPatch("Morning drive", null, "to the office"));
+        c.Atlas.ChangeTracker.Clear();
+        Assert.Equal(RouteGeometryKinds.Matched, Assert.Single((await svc.SearchAsync(owner, query)).Activities).Geometry);
+        // The same type again is no change either
+        await svc.UpdateActivityAsync(owner, records[0].Id, new ActivityPatch(null, "drive", null));
+        c.Atlas.ChangeTracker.Clear();
+        Assert.Equal(RouteGeometryKinds.Matched, Assert.Single((await svc.SearchAsync(owner, query)).Activities).Geometry);
+        Assert.Empty(signal.Owners);
+
+        await svc.UpdateActivityAsync(owner, records[0].Id, new ActivityPatch(null, "ride", null));
+        c.Atlas.ChangeTracker.Clear();
+        Assert.Equal(RouteGeometryKinds.Recorded, Assert.Single((await svc.SearchAsync(owner, query)).Activities).Geometry);
+        Assert.Equal(new[] { owner }, signal.Owners);
+    }
+
     [Fact]
     public async Task Detail_returns_the_matched_line_with_pieces_and_the_source_points()
     {
