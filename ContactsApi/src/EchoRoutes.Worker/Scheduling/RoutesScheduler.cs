@@ -127,6 +127,10 @@ public class RoutesScheduler : BackgroundService
     private readonly Dictionary<string, OwnerState> _state = new();
     private List<string> _owners = new();
     private DateTime _ownersAt = DateTime.MinValue;
+    private DateTime _prunedAt = DateTime.MinValue;
+
+    /// <summary>Finished jobs are kept this long (the status and the jobs API read them)</summary>
+    public static readonly TimeSpan JobRetention = TimeSpan.FromDays(7);
 
     /// <summary>Creates the scheduler</summary>
     public RoutesScheduler(IServiceScopeFactory scopes, IRoutesBackend backend, WakeSignal wake, IPause pause,
@@ -435,17 +439,20 @@ public class RoutesScheduler : BackgroundService
             else if (jobScope.From != null && jobScope.To != null)
             {
                 var size = interactive ? InteractiveBatch : improve ? _options.MatchBatch : _options.AssessBatch;
-                var page = await _backend.RangeAsync(owner, jobScope.From.Value, jobScope.To.Value, job.Cursor, size, interactive, ct);
-                var done = await ProcessIdsAsync(scope.ServiceProvider, job, owner, page.Ids, interactive, improve, jobScope.Force == true, ct);
-                if (done < page.Ids.Count)
+                var (pageCursor, offset) = SplitJobCursor(job.Cursor);
+                var page = await _backend.RangeAsync(owner, jobScope.From.Value, jobScope.To.Value, pageCursor, size, interactive, ct);
+                // Records of this page finished before it stopped early are neither redone nor counted again
+                var todo = page.Ids.Skip(offset).ToList();
+                var done = await ProcessIdsAsync(scope.ServiceProvider, job, owner, todo, interactive, improve, jobScope.Force == true, ct);
+                job.Done += done;
+                if (done < todo.Count)
                 {
                     // Stopped early (interactive work, or the breaker): this page is read again
-                    // from the same cursor; its finished records are skipped then
-                    job.Done += done;
+                    // from the same cursor, after the records already done
+                    job.Cursor = JoinJobCursor(pageCursor, offset + done);
                 }
                 else
                 {
-                    job.Done += page.Ids.Count;
                     job.Cursor = page.Next;
                     if (!page.More)
                     {
@@ -510,6 +517,22 @@ public class RoutesScheduler : BackgroundService
         return ids.Count;
     }
 
+    /// <summary>A range job's cursor: the backend's page cursor, and how many of that page are done ("cursor#n")</summary>
+    internal static (string? Cursor, int Offset) SplitJobCursor(string? cursor)
+    {
+        var at = cursor?.LastIndexOf('#') ?? -1;
+        if (at < 0 || !int.TryParse(cursor![(at + 1)..], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var n))
+        {
+            return (cursor, 0);
+        }
+
+        var page = cursor[..at];
+        return (page.Length == 0 ? null : page, n);
+    }
+
+    internal static string JoinJobCursor(string? cursor, int offset) =>
+        $"{cursor}#{offset.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+
     private static void Finish(RouteJob job, string state)
     {
         job.State = state;
@@ -553,7 +576,12 @@ public class RoutesScheduler : BackgroundService
         return JsonSerializer.Serialize(tally, Json);
     }
 
-    /// <summary>Owners from the backend, every poll interval; dropped Owners lose their cursor</summary>
+    /// <summary>
+    /// Owners from the backend, every poll interval. An error or an empty list is taken
+    /// as transient: the known Owners are kept, and nothing is deleted. An Owner missing
+    /// from a non-empty list is gone (no Atlas data left), and all of their routes data
+    /// goes with their cursor: quality, matched routes, decisions, settings and jobs.
+    /// </summary>
     private async Task RefreshOwnersAsync(CancellationToken ct)
     {
         if (DateTime.UtcNow - _ownersAt < Poll && _owners.Count > 0)
@@ -561,8 +589,29 @@ public class RoutesScheduler : BackgroundService
             return;
         }
 
-        var owners = (await _backend.OwnersAsync(ct)).Distinct().ToList();
+        List<string> owners;
+        try
+        {
+            owners = (await _backend.OwnersAsync(ct)).Distinct().ToList();
+        }
+        catch (Exception ex) when (_owners.Count > 0 && ex is not OperationCanceledException and not BackendBusyException)
+        {
+            _logger.LogWarning(ex, "Routes: the owner list could not be read; keeping the {Count} known owners", _owners.Count);
+            _ownersAt = DateTime.UtcNow;
+            return;
+        }
+
         _ownersAt = DateTime.UtcNow;
+        if (owners.Count == 0)
+        {
+            if (_owners.Count > 0)
+            {
+                _logger.LogWarning("Routes: the backend listed no owners; keeping the {Count} known owners and their data", _owners.Count);
+            }
+
+            return;
+        }
+
         _owners = owners;
         foreach (var gone in _state.Keys.Except(owners).ToList())
         {
@@ -571,10 +620,49 @@ public class RoutesScheduler : BackgroundService
 
         using var scope = _scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<RoutesDbContext>();
-        var removed = await db.Cursors.Where(c => !owners.Contains(c.OwnerId)).ExecuteDeleteAsync(ct);
+        await DeleteGoneOwnersAsync(db, owners, ct);
+        await PruneJobsAsync(db, ct);
+    }
+
+    /// <summary>Deletes every routes row of Owners the service keeps data for who are not in <paramref name="owners"/></summary>
+    private async Task DeleteGoneOwnersAsync(RoutesDbContext db, List<string> owners, CancellationToken ct)
+    {
+        // Owners with a cursor or a job: every Owner the service ever worked for
+        var known = await db.Cursors.Select(c => c.OwnerId).Union(db.Jobs.Select(j => j.OwnerId)).ToListAsync(ct);
+        var gone = known.Except(owners).ToList();
+        if (gone.Count == 0)
+        {
+            return;
+        }
+
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await db.Quality.Where(x => gone.Contains(x.OwnerId)).ExecuteDeleteAsync(ct);
+        await db.MatchedRoutes.Where(x => gone.Contains(x.OwnerId)).ExecuteDeleteAsync(ct);
+        await db.Decisions.Where(x => gone.Contains(x.OwnerId)).ExecuteDeleteAsync(ct);
+        await db.Settings.Where(x => gone.Contains(x.OwnerId)).ExecuteDeleteAsync(ct);
+        await db.Jobs.Where(x => gone.Contains(x.OwnerId)).ExecuteDeleteAsync(ct);
+        await db.Cursors.Where(x => gone.Contains(x.OwnerId)).ExecuteDeleteAsync(ct);
+        await tx.CommitAsync(ct);
+        _logger.LogInformation("Routes: removed all routes data of {Count} owners no longer served", gone.Count);
+    }
+
+    /// <summary>Finished jobs older than <see cref="JobRetention"/> go, at most once an hour</summary>
+    private async Task PruneJobsAsync(RoutesDbContext db, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        if (now - _prunedAt < TimeSpan.FromHours(1))
+        {
+            return;
+        }
+
+        _prunedAt = now;
+        var before = now - JobRetention;
+        var removed = await db.Jobs
+            .Where(j => (j.State == RouteJobStates.Done || j.State == RouteJobStates.Failed) && j.FinishedAt != null && j.FinishedAt < before)
+            .ExecuteDeleteAsync(ct);
         if (removed > 0)
         {
-            _logger.LogInformation("Routes: removed the cursors of {Count} owners no longer served", removed);
+            _logger.LogInformation("Routes: removed {Count} jobs finished more than {Days} days ago", removed, JobRetention.TotalDays);
         }
     }
 

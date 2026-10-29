@@ -97,6 +97,11 @@ public class RoutesDbContext : DbContext
         {
             e.ToTable("jobs");
             e.HasIndex(x => new { x.OwnerId, x.State, x.CreatedAt });
+            // The interactive pass looks across Owners for open interactive jobs: a partial index
+            // holding only those (a handful of rows), so the scan never reads the job history
+            e.HasIndex(x => new { x.OwnerId, x.NextAttemptAt })
+                .HasDatabaseName("IX_jobs_open_interactive")
+                .HasFilter($"\"Priority\" = '{RouteJobPriorities.Interactive}' AND \"State\" IN ('{RouteJobStates.Queued}', '{RouteJobStates.Running}')");
             e.Property(x => x.OwnerId).HasMaxLength(64);
             e.Property(x => x.Kind).HasMaxLength(16);
             e.Property(x => x.Priority).HasMaxLength(16);

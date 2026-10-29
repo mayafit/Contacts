@@ -258,6 +258,10 @@ namespace ContactsApi.Infrastructure.Routes.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("OwnerId", "NextAttemptAt")
+                        .HasDatabaseName("IX_jobs_open_interactive")
+                        .HasFilter("\"Priority\" = 'interactive' AND \"State\" IN ('queued', 'running')");
+
                     b.HasIndex("OwnerId", "State", "CreatedAt");
 
                     b.ToTable("jobs", "routes");

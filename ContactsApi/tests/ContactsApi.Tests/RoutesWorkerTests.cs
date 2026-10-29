@@ -53,7 +53,14 @@ internal sealed class FakeRoutesBackend : IRoutesBackend
         list.Add(r with { UpdatedAt = list.Max(x => x.UpdatedAt).AddSeconds(1) });
     }
 
-    public Task<List<string>> OwnersAsync(CancellationToken ct) => Task.FromResult(Records.Keys.ToList());
+    /// <summary>When set, the owners call answers this list instead of the Owners with records</summary>
+    public List<string>? OwnersAnswer;
+
+    /// <summary>When set, the owners call fails with it</summary>
+    public Exception? OwnersError;
+
+    public Task<List<string>> OwnersAsync(CancellationToken ct) =>
+        OwnersError != null ? Task.FromException<List<string>>(OwnersError) : Task.FromResult(OwnersAnswer ?? Records.Keys.ToList());
 
     public Task<RouteChangesPage> ChangesAsync(string owner, string? after, int limit, bool interactive, CancellationToken ct)
     {
