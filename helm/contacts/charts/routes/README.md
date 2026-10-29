@@ -168,7 +168,14 @@ Pi spike is a values change, not a release: `EngineConcurrency` (1),
 `SplitGapMinutes` (5000 / 15), `MaxPointsPerCall` / `MaxKmPerCall` (2000 / 600),
 `BackoffMinutes` (`1,10,60`), `BreakerFailures` / `BreakerPauseMinutes` (5 / 10),
 `MatchBatch` / `MatchPauseMs` (25 / 1000), `AssessBatch` / `PauseMs` (500 / 400),
-`PollSeconds` (120) and `SweepDays` (7).
+`PollSeconds` (120) and `SweepDays` (7). Gap filling (story 12.4a): `GapFill`
+(true), `GapFillMaxKm` (60), `GapFillTimeFactor` / `GapFillTimeSlackSeconds`
+(1.6 / 120), `GapFillMinTimeFactor` / `GapFillShortElapsedSeconds` (0.1 / 180),
+`GapFillLengthFactor` / `GapFillLengthSlackM` (2.5 / 500),
+`GapFillRoutedOnlyWeight` / `GapFillMaxRoutedOnlyLegs` (0.6 / 40),
+`GapFillMaxCallsPerDrive` (20), `GapFillTimeoutSeconds` (5),
+`GapFillHeadingTolerance` (45), `GapFillTimeoutsInARow` / `GapFillRetries`
+(3 / 3) and `OffRoadTimelineM` (100).
 
 When the engine fails `BreakerFailures` times in a row, all matching pauses for
 `BreakerPauseMinutes`; `GET /api/routes/status` shows it under `engine.breaker`.

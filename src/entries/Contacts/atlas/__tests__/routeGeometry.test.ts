@@ -1,12 +1,14 @@
 import {
   hasInferred,
+  inferredCasingStyle,
   jobText,
+  noMatchText,
   pieceStyle,
   routeCaption,
   routeStatusText,
   splitPieces,
 } from '../routeGeometry';
-import type { ActivityRouteInfo, RouteDescription } from '../types';
+import { INFERRED_COLOR, type ActivityRouteInfo, type RouteDescription } from '../types';
 
 /** A straight north-south line of 11 points, ~111 m apart (1,112 m in all) */
 const line: [number, number][] = Array.from({ length: 11 }, (_, i) => [32 + i * 0.001, 34.8]);
@@ -79,14 +81,16 @@ describe('splitPieces', () => {
 });
 
 describe('pieceStyle', () => {
-  it('draws observed solid, inferred dashed and fainter, gaps faint grey dots', () => {
+  it('draws observed solid, inferred in distinct amber dashes on a casing, gaps faint grey dots', () => {
     const observed = pieceStyle('observed', '#f00');
     const inferred = pieceStyle('inferred', '#f00');
     const gap = pieceStyle('gap', '#f00');
     expect(observed.dashArray).toBeUndefined();
     expect(observed.color).toBe('#f00');
     expect(inferred.dashArray).toBeDefined();
-    expect(inferred.opacity).toBeLessThan(observed.opacity);
+    expect(inferred.color).toBe(INFERRED_COLOR);
+    expect(inferred.opacity).toBe(1);
+    expect(inferredCasingStyle().weight).toBeGreaterThan(inferred.weight);
     expect(gap.color).not.toBe('#f00');
     expect(gap.weight).toBeLessThan(inferred.weight);
     expect(gap.opacity).toBeLessThan(observed.opacity);
@@ -181,5 +185,74 @@ describe('jobText and routeStatusText', () => {
         backfilled: true,
       }),
     ).toBe('Route matching: up to date');
+  });
+});
+
+describe('noMatchText', () => {
+  it('gives the confidence and the main reason of a match below the threshold', () => {
+    expect(
+      noMatchText(
+        route({
+          status: 'low_confidence',
+          confidence: 0.65,
+          reason: 'low confidence 0.65: a 6 km stretch with no road that fits the 4 min elapsed',
+        }),
+      ),
+    ).toBe(
+      'No confident road match (65%): a 6 km stretch with no road that fits the 4 min elapsed',
+    );
+  });
+
+  it('reads a failure without a confidence, and says little when nothing is known', () => {
+    expect(
+      noMatchText(
+        route({
+          status: 'failed',
+          confidence: null,
+          reason: 'no_match: the engine matched no point',
+        }),
+      ),
+    ).toBe('No confident road match: the engine matched no point');
+    expect(noMatchText(null)).toBe('No confident road match');
+  });
+
+  it('drops the engine detail after the first ";" and the retry count', () => {
+    expect(
+      noMatchText(
+        route({
+          status: 'low_confidence',
+          confidence: 0.5,
+          reason:
+            'low confidence 0.5: a 2 km straight jump that no road explains; engine 400 (442): No path could be found',
+        }),
+      ),
+    ).toBe('No confident road match (50%): a 2 km straight jump that no road explains');
+    expect(
+      noMatchText(
+        route({
+          status: 'failed',
+          confidence: null,
+          reason: 'the engine did not answer within 15 s (gave up after 4 attempts)',
+        }),
+      ),
+    ).toBe('No confident road match: the engine did not answer within 15 s');
+    expect(
+      noMatchText(
+        route({
+          status: 'low_confidence',
+          confidence: 0.6,
+          reason: 'a bug (gave up after 4 attempts; the routes.v1 line is kept)',
+        }),
+      ),
+    ).toBe('No confident road match (60%): a bug');
+    expect(
+      noMatchText(
+        route({
+          status: 'failed',
+          confidence: null,
+          reason: 'the engine did not answer within 15 s (attempt 2; retried after 10 min)',
+        }),
+      ),
+    ).toBe('No confident road match: the engine did not answer within 15 s');
   });
 });

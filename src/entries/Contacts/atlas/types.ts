@@ -958,6 +958,10 @@ export const typeColor = (type: string): string =>
 
 /** Place visits: a colour no activity type uses */
 export const VISIT_COLOR = '#e879f9';
+/** A matched route's inferred stretch (road with no GPS points): amber, readable on every map style */
+export const INFERRED_COLOR = '#ffb020';
+/** The dark casing under an inferred stretch, so the dashes stand out on light streets and imagery */
+export const INFERRED_CASING = '#1f2937';
 /** The active filters: time selection, area rectangle and the filter bar's chips */
 export const FILTER_COLOR = '#3987e5';
 /** Health data (heart rate) */

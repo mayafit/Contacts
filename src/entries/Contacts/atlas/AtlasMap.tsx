@@ -64,7 +64,13 @@ import DensityLayer from './DensityLayer';
 import { trackTypes } from './densityGeo';
 import { identifyMark } from './placeText';
 import { tokens } from '../theme/contactsTheme';
-import { hasInferred, pieceStyle, splitPieces, type PieceLine } from './routeGeometry';
+import {
+  hasInferred,
+  inferredCasingStyle,
+  pieceStyle,
+  splitPieces,
+  type PieceLine,
+} from './routeGeometry';
 
 /** A rectangle on the map */
 export interface Box {
@@ -121,19 +127,26 @@ interface SelectedRouteProps {
 }
 
 /**
- * The selected activity's matched route: observed pieces solid, inferred dashed and
- * fainter, gaps faint dotted (memoised: hovering the charts does not redraw it)
+ * The selected activity's matched route: observed pieces solid, inferred amber dashes
+ * on a dark casing, gaps faint dotted (memoised: hovering the charts does not redraw it)
  */
 const SelectedRouteLines: React.FC<SelectedRouteProps> = ({ runs, color }) => (
   <>
-    {runs.map((r, i) => (
-      <Polyline
-        key={`${r.kind}-${i}`}
-        positions={r.positions}
-        interactive={false}
-        pathOptions={pieceStyle(r.kind, color)}
-      />
-    ))}
+    {runs.map((r, i) =>
+      r.kind === 'inferred' ? (
+        <React.Fragment key={`${r.kind}-${i}`}>
+          <Polyline positions={r.positions} interactive={false} pathOptions={inferredCasingStyle()} />
+          <Polyline positions={r.positions} interactive={false} pathOptions={pieceStyle(r.kind, color)} />
+        </React.Fragment>
+      ) : (
+        <Polyline
+          key={`${r.kind}-${i}`}
+          positions={r.positions}
+          interactive={false}
+          pathOptions={pieceStyle(r.kind, color)}
+        />
+      ),
+    )}
   </>
 );
 const SelectedRoute = React.memo(SelectedRouteLines);

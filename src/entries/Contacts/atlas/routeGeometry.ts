@@ -12,7 +12,7 @@ import type {
   RouteStatus,
 } from './types';
 import { formatDistance } from './geo';
-import { isSet } from './types';
+import { INFERRED_CASING, INFERRED_COLOR, isSet } from './types';
 
 /** A drawable run of one kind: its positions on the map */
 export interface PieceLine {
@@ -116,20 +116,27 @@ export const splitPieces = (
   return runs;
 };
 
-/** Leaflet path options of a piece: observed solid, inferred dashed and fainter, gaps faint dotted */
+/** Leaflet path options of a piece: observed solid, inferred amber dashes, gaps faint dotted */
 export const pieceStyle = (
   kind: RoutePiece['kind'],
   color: string,
 ): { color: string; weight: number; opacity: number; dashArray?: string } => {
   switch (kind) {
     case 'inferred':
-      return { color, weight: 3.5, opacity: 0.6, dashArray: '6 7' };
+      return { color: INFERRED_COLOR, weight: 4, opacity: 1, dashArray: '8 6' };
     case 'gap':
       return { color: '#9ca3af', weight: 1.5, opacity: 0.55, dashArray: '1 5' };
     default:
       return { color, weight: 4.5, opacity: 0.95 };
   }
 };
+
+/** The solid dark casing drawn under an inferred stretch's dashes */
+export const inferredCasingStyle = (): { color: string; weight: number; opacity: number } => ({
+  color: INFERRED_CASING,
+  weight: 6.5,
+  opacity: 0.75,
+});
 
 /** Whether any run is inferred (the legend then explains the dashes) */
 export const hasInferred = (runs: PieceLine[]): boolean => runs.some((r) => r.kind === 'inferred');
@@ -231,6 +238,28 @@ export const routeCaption = (
     rejected: false,
     canFix: matchable,
   };
+};
+
+/**
+ * Why "Fix this route" found no confident match: the confidence and the main reason the
+ * route service gave (AD-35 rule 6), e.g. "No confident road match (65%): a 6 km
+ * stretch with no road that fits the 4 min elapsed"
+ * @param route - The activity's route info after the job
+ * @returns The note
+ */
+export const noMatchText = (route: ActivityRouteInfo | null | undefined): string => {
+  const d = route?.description;
+  const confidence = isSet(d?.confidence) ? ` (${pct(d.confidence)})` : '';
+  // The main reason only: no retry bookkeeping ("(gave up after N attempts)", "(attempt 1;
+  // retried after 1 min)"), and no engine detail after the first ";"
+  const why = d?.reason
+    ?.replace(/\s*\((?:gave up after \d+ attempts?|[^()]*;)[^()]*\)/g, '')
+    .split(';')[0]
+    .replace(/^low confidence [\d.]+:\s*/, '')
+    .replace(/^no_match: /, '')
+    .replace(/^no_call: /, '')
+    .trim();
+  return `No confident road match${confidence}${why ? `: ${why}` : ''}`;
 };
 
 /** A job's progress as a short text */
