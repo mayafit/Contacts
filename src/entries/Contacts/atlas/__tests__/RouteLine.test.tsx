@@ -169,4 +169,39 @@ describe('RouteLine', () => {
     expect(client.routesClearDecision).toHaveBeenCalledWith('a1');
     expect(screen.getByText('Route matching unavailable')).toBeInTheDocument();
   });
+
+  it('says why when "Fix this route" still lands below the threshold', async () => {
+    jest.useFakeTimers();
+    try {
+      const after = route({
+        status: 'low_confidence',
+        confidence: 0.65,
+        reason: 'low confidence 0.65: a 6 km stretch with no road that fits the 4 min elapsed',
+      });
+      const onChanged = jest.fn().mockResolvedValue({ summary: summary(), route: after });
+      client.routesImprove.mockResolvedValue({ jobId: 'j2' });
+      client.routesJob.mockResolvedValueOnce({ id: 'j2', state: 'done', total: 1, done: 1 });
+      render(
+        <RouteLine
+          detail={detail({}, route())}
+          view="roads"
+          onView={jest.fn()}
+          onChanged={onChanged}
+        />,
+      );
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Fix this route' }));
+      });
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(2000);
+      });
+      expect(
+        screen.getByText(
+          'No confident road match (65%): a 6 km stretch with no road that fits the 4 min elapsed',
+        ),
+      ).toBeInTheDocument();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
 });

@@ -89,6 +89,57 @@ public class RoutesOptions
     /// <summary>Most vertices of a stored full matched line, read only by the detail view (AD-34 rule 1); lists and the density map read the 400- and 80-vertex lines stored beside it</summary>
     public int MaxStoredVertices { get; set; } = 1000;
 
+    // ---- Gap filling (AD-35 rule 7, story 12.4a): every stretch the matcher left
+    // unbridged is routed with /route and kept when the route fits the elapsed time.
+
+    /// <summary>Fill unbridged stretches with a /route call (Routes__GapFill)</summary>
+    public bool GapFill { get; set; } = true;
+
+    /// <summary>A stretch whose straight line or route is longer than this (km) stays a gap</summary>
+    public double GapFillMaxKm { get; set; } = 60;
+
+    /// <summary>A route is accepted when its time is at most elapsed × this + GapFillTimeSlackSeconds</summary>
+    public double GapFillTimeFactor { get; set; } = 1.6;
+
+    /// <summary>Seconds added to the elapsed-time limit of a route</summary>
+    public double GapFillTimeSlackSeconds { get; set; } = 120;
+
+    /// <summary>A route faster than elapsed × this is rejected (the trip went elsewhere), unless the elapsed time is short</summary>
+    public double GapFillMinTimeFactor { get; set; } = 0.1;
+
+    /// <summary>An elapsed time up to this (seconds) is short: the lower time limit does not apply</summary>
+    public double GapFillShortElapsedSeconds { get; set; } = 180;
+
+    /// <summary>A route is accepted when its length is at most the straight line × this + the slack, min(GapFillLengthSlackM, max(100 m, 2 × the straight line))</summary>
+    public double GapFillLengthFactor { get; set; } = 2.5;
+
+    /// <summary>The most metres of slack added to the length limit of a route (less for a short stretch)</summary>
+    public double GapFillLengthSlackM { get; set; } = 500;
+
+    /// <summary>The anchor-quality weight of a drive built only from routes (no point matched)</summary>
+    public double GapFillRoutedOnlyWeight { get; set; } = 0.6;
+
+    /// <summary>Most /route legs of a drive built only from routes; more points than that stay failed</summary>
+    public int GapFillMaxRoutedOnlyLegs { get; set; } = 40;
+
+    /// <summary>Most /route calls of a drive with anchors; its longest stretches are filled first, the rest stay gaps</summary>
+    public int GapFillMaxCallsPerDrive { get; set; } = 20;
+
+    /// <summary>Hard timeout of one /route call, in seconds (shorter than EngineTimeoutSeconds: a fill is optional)</summary>
+    public int GapFillTimeoutSeconds { get; set; } = 5;
+
+    /// <summary>heading_tolerance (degrees) sent with the matched shape's heading at each anchor; 0 sends no heading</summary>
+    public double GapFillHeadingTolerance { get; set; } = 45;
+
+    /// <summary>/route timeouts in a row within a record that count (once) for the breaker and stop its filling</summary>
+    public int GapFillTimeoutsInARow { get; set; } = 3;
+
+    /// <summary>Re-matches (after the first backoff step) of a record whose filling timed out; then its result is kept</summary>
+    public int GapFillRetries { get; set; } = 3;
+
+    /// <summary>A Google Timeline anchor counts as off-road only beyond this (metres; its gps_accuracy is 75 m)</summary>
+    public double OffRoadTimelineM { get; set; } = 100;
+
     /// <summary>Days between orphan sweeps of an Owner (AD-34 rule 7: weekly)</summary>
     public double SweepDays { get; set; } = 7;
 

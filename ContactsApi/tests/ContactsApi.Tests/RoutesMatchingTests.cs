@@ -79,6 +79,30 @@ internal static class SyntheticTrace
         return JsonDocument.Parse(body.ToJsonString());
     }
 
+    /// <summary>
+    /// A /route answer: the straight synthetic road between the locations, a vertex
+    /// about every 111 m, at <paramref name="kmh"/>; <paramref name="lengthFactor"/>
+    /// stretches the reported length (a detour the shape does not show)
+    /// </summary>
+    public static JsonDocument RouteAnswer(IReadOnlyList<(double Lat, double Lon)> locations, double kmh, double lengthFactor = 1)
+    {
+        var (a, b) = (locations[0], locations[^1]);
+        var straight = Geo.Haversine(a.Lat, a.Lon, b.Lat, b.Lon);
+        var n = Math.Max(1, (int)Math.Ceiling(straight / 111));
+        var shape = Enumerable.Range(0, n + 1).Select(i => (a.Lat + (b.Lat - a.Lat) * i / n, a.Lon + (b.Lon - a.Lon) * i / n)).ToList();
+        var lengthM = straight * lengthFactor;
+        var body = new JsonObject
+        {
+            ["trip"] = new JsonObject
+            {
+                ["legs"] = new JsonArray(new JsonObject { ["shape"] = Encode(shape, 6) }),
+                ["summary"] = new JsonObject { ["length"] = lengthM / 1000, ["time"] = lengthM / (kmh / 3.6) },
+                ["units"] = "kilometers"
+            }
+        };
+        return JsonDocument.Parse(body.ToJsonString());
+    }
+
     public static string Encode(IEnumerable<(double Lat, double Lon)> points, int precision)
     {
         var f = Math.Pow(10, precision);
@@ -196,7 +220,7 @@ public class RouteMatchingTests
     }
 
     [Fact]
-    public void An_unmatched_point_makes_a_gap_and_lowers_only_the_matched_share()
+    public void An_unmatched_point_makes_a_gap_that_counts_against_coverage_until_filled()
     {
         var vertices = Enumerable.Range(0, 10).Select(i => i * 2).ToList();
         var labels = vertices.Select((v, i) => i == 5 ? new SyntheticTrace.Label("unmatched", v) : M(v)).ToList();
@@ -207,8 +231,10 @@ public class RouteMatchingTests
 
         SyntheticTrace.AssertContiguous(r);
         Assert.Equal(new[] { PieceKinds.Observed, PieceKinds.Gap, PieceKinds.Observed }, r.Pieces.Select(p => p.Kind));
-        Assert.Equal((0.9, 1.0, 0), (r.Metrics.MatchedShare, r.Metrics.Continuity, r.Metrics.EngineBreaks));
-        Assert.Equal(0.9, r.Confidence);
+        Assert.Equal((0.9, 0.9, 1.0, 0), (r.Metrics.MatchedShare, r.Metrics.AnchorQuality, r.Metrics.Continuity, r.Metrics.EngineBreaks));
+        // routes.v2: unfilled, the 444 m gap of the 2 km line is the weakest factor
+        Assert.Equal(0.778, r.Metrics.Coverage);
+        Assert.Equal(0.778, r.Confidence);
         Assert.Equal(RouteStatuses.Matched, r.Status);
     }
 
@@ -442,6 +468,20 @@ public class EngineClientTests
 
         Assert.True(ex.Timeout);
         Assert.InRange(watch.Elapsed.TotalSeconds, 0.9, 5);
+    }
+
+    [Fact]
+    public async Task A_route_call_has_its_own_shorter_timeout()
+    {
+        var handler = new Handler { Answer = async (_, ct) => { await Task.Delay(TimeSpan.FromSeconds(30), ct); return new HttpResponseMessage(); } };
+        var client = new ValhallaClient(new Factory(handler), Options.Create(new RoutesOptions { EngineTimeoutSeconds = 20, GapFillTimeoutSeconds = 1 }));
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+
+        var ex = await Assert.ThrowsAsync<EngineUnavailableException>(() => client.RouteAsync(new JsonObject(), default));
+
+        Assert.True(ex.Timeout);
+        Assert.InRange(watch.Elapsed.TotalSeconds, 0.9, 5);
+        Assert.Contains("within 1 s", ex.Message);
     }
 
     [Fact]

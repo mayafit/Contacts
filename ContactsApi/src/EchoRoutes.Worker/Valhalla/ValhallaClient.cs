@@ -60,6 +60,11 @@ public interface IValhallaClient
     /// <exception cref="EngineUnavailableException">Timeout, connection failure or 5xx</exception>
     /// <exception cref="EngineRejectedException">The engine cannot match this trace</exception>
     Task<JsonDocument> TraceAttributesAsync(JsonObject request, CancellationToken ct);
+
+    /// <summary>One /route call (gap filling, AD-35 rule 7), within its own shorter timeout (GapFillTimeoutSeconds) and the same concurrency</summary>
+    /// <exception cref="EngineUnavailableException">Timeout, connection failure or 5xx</exception>
+    /// <exception cref="EngineRejectedException">The engine found no route</exception>
+    Task<JsonDocument> RouteAsync(JsonObject request, CancellationToken ct);
 }
 
 /// <summary>Valhalla over HTTP</summary>
@@ -71,6 +76,7 @@ public class ValhallaClient : IValhallaClient
     private readonly IHttpClientFactory _http;
     private readonly SemaphoreSlim _inFlight;
     private readonly TimeSpan _timeout;
+    private readonly TimeSpan _routeTimeout;
     private string? _version;
 
     /// <summary>Creates the client</summary>
@@ -79,6 +85,7 @@ public class ValhallaClient : IValhallaClient
         _http = http;
         _inFlight = new SemaphoreSlim(Math.Max(1, options.Value.EngineConcurrency));
         _timeout = TimeSpan.FromSeconds(Math.Max(1, options.Value.EngineTimeoutSeconds));
+        _routeTimeout = TimeSpan.FromSeconds(Math.Max(1, options.Value.GapFillTimeoutSeconds));
     }
 
     /// <inheritdoc />
@@ -119,14 +126,19 @@ public class ValhallaClient : IValhallaClient
     }
 
     /// <inheritdoc />
-    public async Task<JsonDocument> TraceAttributesAsync(JsonObject request, CancellationToken ct)
+    public Task<JsonDocument> TraceAttributesAsync(JsonObject request, CancellationToken ct) => PostAsync("trace_attributes", request, _timeout, ct);
+
+    /// <inheritdoc />
+    public Task<JsonDocument> RouteAsync(JsonObject request, CancellationToken ct) => PostAsync("route", request, _routeTimeout, ct);
+
+    private async Task<JsonDocument> PostAsync(string path, JsonObject request, TimeSpan timeout, CancellationToken ct)
     {
         await _inFlight.WaitAsync(ct);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        cts.CancelAfter(_timeout);
+        cts.CancelAfter(timeout);
         try
         {
-            using var response = await _http.CreateClient(HttpClientName).PostAsJsonAsync("trace_attributes", request, cts.Token);
+            using var response = await _http.CreateClient(HttpClientName).PostAsJsonAsync(path, request, cts.Token);
             if ((int)response.StatusCode >= 500 || response.StatusCode == HttpStatusCode.TooManyRequests)
             {
                 throw new EngineUnavailableException($"the engine answered {(int)response.StatusCode}", false);
@@ -142,7 +154,7 @@ public class ValhallaClient : IValhallaClient
         }
         catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
         {
-            throw new EngineUnavailableException($"the engine did not answer within {_timeout.TotalSeconds:0} s", true, ex);
+            throw new EngineUnavailableException($"the engine did not answer within {timeout.TotalSeconds:0} s", true, ex);
         }
         catch (HttpRequestException ex)
         {

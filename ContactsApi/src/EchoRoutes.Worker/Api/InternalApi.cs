@@ -181,6 +181,7 @@ public static class InternalApi
             .ToListAsync(ct);
         var cursor = await db.Cursors.AsNoTracking().FirstOrDefaultAsync(c => c.OwnerId == ownerId, ct);
         var waiting = await matcher.PendingCountAsync(ownerId, ct);
+        var rematching = await matcher.RematchCountAsync(ownerId, ct);
         var jobRecords = jobs.Where(j => j.Kind == RouteJobKinds.Improve).Sum(j => Math.Max(0, j.Total - j.Done));
         // Per record: the measured match time, plus the batch pause spread over the batch
         var perRecordS = (breaker.AvgRecordMs > 0 ? breaker.AvgRecordMs / 1000 : 1.0)
@@ -196,6 +197,9 @@ public static class InternalApi
             Running = jobs.Count(j => j.State == RouteJobStates.Running),
             Retrying = jobs.Count(j => j.NextAttemptAt != null),
             WaitingForMatch = waiting,
+            // Of those, re-matches of rows from an older rule version (AD-34 rule 7)
+            RematchRemaining = rematching,
+            RuleVersion = RouteQuality.RuleVersion,
             EtaSeconds = (int)Math.Ceiling((waiting + jobRecords) * perRecordS),
             LastRunAt = cursor?.LastRunAt,
             LastError = cursor?.LastError,

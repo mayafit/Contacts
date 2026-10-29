@@ -55,8 +55,11 @@ public static class Matchability
 /// <summary>Rule routes.v1, stage A</summary>
 public static class RouteQuality
 {
-    /// <summary>The rule version stored on every row; bumping it re-assesses everything</summary>
-    public const string RuleVersion = "routes.v1";
+    /// <summary>
+    /// The rule version stored on every row; bumping it re-assesses and re-matches
+    /// (AD-34 rule 7). routes.v2: gap filling by /route and confidence v2 (AD-35 rules 6 and 7)
+    /// </summary>
+    public const string RuleVersion = "routes.v2";
 
     /// <summary>Phases whose types are matched now</summary>
     public static readonly IReadOnlySet<string> EnabledPhases = new HashSet<string> { "R1" };
