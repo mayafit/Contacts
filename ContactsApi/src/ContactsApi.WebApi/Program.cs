@@ -3,6 +3,7 @@ using ContactsApi.Infrastructure.Vault;
 using ContactsApi.WebApi.Configuration;
 using ContactsApi.WebApi.Middleware;
 using ContactsApi.WebApi.Services;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.DataProtection;
 using Serilog;
 using Serilog.Formatting.Compact;
@@ -64,6 +65,24 @@ builder.Services.AddDbContext<ContactsApi.Infrastructure.Atlas.AtlasDbContext>(o
     o.UseNpgsql(string.IsNullOrWhiteSpace(atlasConnection) ? "Host=unset" : atlasConnection,
         npgsql => npgsql.MigrationsHistoryTable("__ef_migrations", "atlas")));
 builder.Services.AddScoped<ContactsApi.Infrastructure.Atlas.AtlasService>();
+// Routes module (AD-34): reads routes (matched lines, quality) and writes decisions only,
+// with the backend's own role; the schema's migrations belong to the route-quality service
+builder.Services.AddDbContext<ContactsApi.Infrastructure.Routes.RoutesDbContext>(o =>
+    o.UseNpgsql(string.IsNullOrWhiteSpace(atlasConnection) ? "Host=unset" : atlasConnection));
+builder.Services.AddSingleton(new ContactsApi.Infrastructure.Routes.RouteGeometryOptions
+{
+    Enabled = !string.IsNullOrWhiteSpace(atlasConnection) && !string.IsNullOrWhiteSpace(builder.Configuration["Routes:ServiceUrl"])
+});
+builder.Services.AddScoped<ContactsApi.Core.Interfaces.IRouteGeometryReader, ContactsApi.Infrastructure.Routes.RouteGeometryReader>();
+builder.Services.AddScoped<ContactsApi.Infrastructure.Routes.RouteOwnerData>();
+// The route-quality service reads Atlas only through /internal/routes/* (AD-33)
+builder.Services.AddScoped<ContactsApi.Infrastructure.Atlas.AtlasRoutesFeed>();
+builder.Services.AddSingleton<InteractiveLoad>();
+// The backend calls the route-quality service's /internal/v1 with Routes__BackendToken
+RoutesServiceClient.Configure(builder.Services, builder.Configuration);
+builder.Services.AddSingleton<RoutesServiceClient>();
+// Edits of a type, merges and splits wake the service (imports wake it after fusion)
+builder.Services.AddSingleton<ContactsApi.Core.Interfaces.IRouteChangeSignal>(sp => sp.GetRequiredService<RoutesServiceClient>());
 // The fusion service: imports queue their time windows, it fuses them in the background
 builder.Services.AddSingleton<FusionSignal>();
 builder.Services.AddSingleton<ContactsApi.Infrastructure.Atlas.IFusionSignal>(sp => sp.GetRequiredService<FusionSignal>());
@@ -180,6 +199,10 @@ builder.Services.AddCors(options =>
     });
 });
 
+// EchoService: internal services' tokens (Routes__ServiceToken from Vault), each
+// accepted only on its own /internal path (AD-3 rule 3, AD-33 rule 2); never the default scheme
+builder.Services.AddEchoServiceAuth(builder.Configuration["Routes:ServiceToken"]);
+
 // Add API documentation
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -210,6 +233,22 @@ app.UseSwaggerUI(c =>
 
 // CORS must come before authentication
 app.UseCors();
+
+// Map and timeline reads in flight: the route-quality service's batch calls wait
+app.UseMiddleware<InteractiveLoadMiddleware>();
+
+// Nothing under /internal/** is anonymous: only an EchoService token valid for the path passes
+app.UseWhen(ctx => ctx.Request.Path.StartsWithSegments("/internal"), internalApi => internalApi.Use(async (ctx, next) =>
+{
+    var result = await ctx.AuthenticateAsync(EchoServiceDefaults.Scheme);
+    if (!result.Succeeded)
+    {
+        await ctx.ChallengeAsync(EchoServiceDefaults.Scheme);
+        return;
+    }
+
+    await next();
+}));
 
 // Session management
 app.UseSession();
@@ -252,9 +291,9 @@ app.UseWhen(ctx => ctx.Request.Path.StartsWithSegments("/api") && !ctx.Request.P
         await next();
     }));
 
-// Authentication & Authorization
-// app.UseAuthentication(); // TODO: Add when implementing proper auth
-// app.UseAuthorization();
+// Authorization: only the EchoService policy of /internal/** so far; the session and
+// PAT schemes of AD-3 rule 3 are still per controller and per path
+app.UseAuthorization();
 
 // Map controllers
 // MCP clients authenticate with a personal access token (Bearer), never the

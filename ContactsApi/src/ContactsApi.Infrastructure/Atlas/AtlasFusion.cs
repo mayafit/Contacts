@@ -309,7 +309,11 @@ public static class Fusion
     /// record's own track (a source summary that lost most of the recording)
     /// </summary>
     public static double? DistanceOf(FusionCandidate c) =>
-        c.TrackM is > 0 && (c.DistanceM is not > 0 || c.DistanceM < c.TrackM * 0.5) ? Math.Round(c.TrackM.Value) : c.DistanceM;
+        DistanceFromTrack(c) ? Math.Round(c.TrackM!.Value) : c.DistanceM;
+
+    /// <summary>The record's distance is its own track length (the source gave none, or too little)</summary>
+    public static bool DistanceFromTrack(FusionCandidate c) =>
+        c.TrackM is > 0 && (c.DistanceM is not > 0 || c.DistanceM < c.TrackM * 0.5);
 
     /// <summary>
     /// The recordings of a group that make up its outing: the best record and every
@@ -566,6 +570,11 @@ public static class Fusion
         if (distance != null)
         {
             fields["distanceM"] = distance.Source;
+            if (DistanceFromTrack(distance))
+            {
+                // The track's straight-line length: a matched route may replace it (AD-34 rule 5)
+                fields["distance"] = "track";
+            }
         }
 
         var climb = primary.ElevationGainM.HasValue ? primary : byRank.FirstOrDefault(m => m.ElevationGainM.HasValue);
@@ -654,6 +663,10 @@ public static class Fusion
         if (distance.HasValue)
         {
             fields["distanceM"] = primary.Source;
+            if (segments.Any(DistanceFromTrack))
+            {
+                fields["distance"] = "track";
+            }
         }
 
         if (avgHr.HasValue)
@@ -1107,7 +1120,12 @@ public partial class AtlasService
         var needHr = fused.Where(g => !g.AvgHeartRate.HasValue && !Vehicles.Contains(g.Type)).ToList();
         var hrById = await HeartRateAsync(owner, needHr, ct);
 
-        // Replace the window's fusion: reset, then write fused and enhanced activities
+        // Replace the window's fusion: reset, then write fused and enhanced activities.
+        // The clusters before the reset: records whose cluster changes get a new UpdatedAt
+        var clustersBefore = await _db.Activities.AsNoTracking()
+            .Where(a => a.OwnerId == owner && ids.Contains(a.Id) && a.ClusterId != null)
+            .Select(a => new { a.Id, a.ClusterId })
+            .ToDictionaryAsync(a => a.Id, a => a.ClusterId!.Value, ct);
         await _db.Activities.Where(a => a.OwnerId == owner && ids.Contains(a.Id) && a.ClusterId != null)
             .ExecuteUpdateAsync(s => s.SetProperty(a => a.ClusterId, (Guid?)null), ct);
         await _db.Fusions.Where(f => f.OwnerId == owner && ids.Contains(f.ActivityId)).ExecuteDeleteAsync(ct);
@@ -1182,11 +1200,50 @@ public partial class AtlasService
                  WHERE a.""Id"" = v.m", ct);
         }
 
+        // Only records that joined, left or changed cluster: an unchanged re-fusion
+        // must not touch every record (a match is hidden until re-verified)
+        var changed = ClusterChanges(clustersBefore, memberIdList, clusterIdList);
+        if (changed.Length > 0)
+        {
+            var now = DateTime.UtcNow;
+            await _db.Activities.Where(a => a.OwnerId == owner && changed.Contains(a.Id))
+                .ExecuteUpdateAsync(s => s.SetProperty(a => a.UpdatedAt, now), ct);
+        }
+
         await _db.SaveChangesAsync(ct);
         var result = new FuseResult(items.Count, multi, conflicts);
         _logger.LogInformation("Fusion: {Activities} records, {Fused} fused activities, {Enhanced} enhanced by health data, {Conflicts} conflicts",
             result.Activities, result.Fused, enhanced, result.Conflicts);
         return result;
+    }
+
+    /// <summary>The records whose cluster after the run differs from before it</summary>
+    internal static Guid[] ClusterChanges(IReadOnlyDictionary<Guid, Guid> before, IReadOnlyList<Guid> members, IReadOnlyList<Guid> clusters)
+    {
+        var after = new Dictionary<Guid, Guid>(members.Count);
+        for (var i = 0; i < members.Count; i++)
+        {
+            after[members[i]] = clusters[i];
+        }
+
+        var changed = new HashSet<Guid>();
+        foreach (var (id, cluster) in before)
+        {
+            if (!after.TryGetValue(id, out var now) || now != cluster)
+            {
+                changed.Add(id);
+            }
+        }
+
+        foreach (var (id, cluster) in after)
+        {
+            if (!before.TryGetValue(id, out var was) || was != cluster)
+            {
+                changed.Add(id);
+            }
+        }
+
+        return changed.ToArray();
     }
 
     private sealed class SampleRow
@@ -1280,6 +1337,9 @@ public partial class AtlasService
             gate.Release();
         }
 
+        // The fused type and an outing's recordings may have changed
+        _routeChanges?.Changed(owner);
+
         return await GetActivityAsync(owner, id, ct: ct);
     }
 
@@ -1316,6 +1376,7 @@ public partial class AtlasService
             gate.Release();
         }
 
+        _routeChanges?.Changed(owner);
         return await GetActivityAsync(owner, rest.Count > 0 ? rest[0] : memberId, ct: ct);
     }
 

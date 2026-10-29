@@ -127,30 +127,37 @@ item 11).
 As the Owner, I want a self-hosted routing engine with Israel's map data, so that
 routes can be matched without sending my location history anywhere.
 
-Acceptance criteria:
-- `docker manifest inspect` shows that the pinned Valhalla 3.9.x digest lists
-  `linux/arm64`. The digest is recorded in the chart and in architecture §7.
-- `routing-tiles.yml` runs monthly and on manual dispatch. Geofabrik updates
+Acceptance criteria (status after the spike, 2026-10-29: [x] done, [ ] open):
+- [x] `docker manifest inspect` shows that the pinned Valhalla 3.9.x digest lists
+  `linux/arm64`. The digest is recorded in the chart and in architecture §7
+  (`3.9.1@sha256:4fd114eb…`).
+- [ ] `routing-tiles.yml` runs monthly and on manual dispatch. Geofabrik updates
   extracts daily, so each run downloads the latest `israel-and-palestine` with an
   MD5 check, and builds the tiles and admins with the **same** pinned image. It
   publishes `contacts-routing-tiles:il-<yyyymmdd>` (AD-32 rule 3: a short slug,
   ≤ 128 characters, no `+` or `@`), built `FROM busybox`, holding
   `valhalla_tiles.tar`, the region `.poly` outlines and `graph.json` (with the
-  extract timestamp and the tar size).
-- The engine config sets `service_limits.trace.max_distance` to 600 km and
-  `max_shape` to 2,000, and has no tile URL (AD-32 rules 2 and 7).
-- The tiles image is rolled out by Flux image automation, or by a tag-bump PR
+  extract timestamp and the tar size). *The spike's image,
+  `il-20261029-r2@sha256:791011ad…`, was built by hand and also holds the tuned
+  `valhalla.json`; the workflow must ship that config too.*
+- [x] The engine config sets `service_limits.trace.max_distance` (200 km in the
+  spike's config; the service's per-call split now follows it) and `max_shape`
+  to 2,000, and has no tile URL (AD-32 rules 2 and 7).
+- [ ] The tiles image is rolled out by Flux image automation, or by a tag-bump PR
   while that is missing; the PR also updates the `emptyDir` size (AD-32 rule 4).
   No Pi node downloads map data.
-- **Spike on the Pi,** with 500 real Timeline drives, records: the build time
-  and peak RAM in CI; the tiles size; the engine's RSS while serving with
-  `max_cache_size` set to 64 MiB; and the median and p95 match time. The results
-  replace the estimates in AD-32 and AD-36 (AA-15), and they confirm that tiles
-  built on x64 load on arm64 (AA-16).
-- The spike measures each node's free memory under its normal load, and
-  `routes.nodeSelector` is set to the node with the most (AD-36 rule 2).
-- If the median is above 3 s per drive, the AD-36 rule 6 fallback is applied and
-  the spike is measured again.
+- [x] **Spike on the Pi,** with 500 real Timeline drives (round 2): 82 tiles, a
+  199 MB tar; one server thread with a 32 MiB LRU cache plateaus at about
+  366 MiB anonymous RSS (about 477 MiB charged, peak 582 MiB); median 0.134 s,
+  p95 0.73 s, max 5.0 s per drive; about 1.0 h for 15,420 drives. The results
+  replace the estimates in AD-32 and AD-36 (AA-15), and tiles built on x64 load
+  on arm64 (AA-16). The CI build's time and peak RAM were not measured.
+  Write-up: the spike's round-2 `RESULTS.md`, summarised in AD-32 and AD-36.
+- [x] The spike measured each node's free memory under its normal load (rasp02
+  about 1.9 GiB, rasp01 about 1.1 GiB and overcommitted), and
+  `routes.nodeSelector` is `kubernetes.io/hostname: rasp02` (AD-36 rule 2).
+- [x] The median (0.134 s) is far below 3 s per drive, so the AD-36 rule 6
+  fallback is not needed.
 
 ### 12.2 Route-quality service skeleton and the `routes` schema — R1
 
@@ -249,8 +256,8 @@ Acceptance criteria:
   `trace_attributes`, with the AD-35 costing (`auto`, `bus`, or `auto` for a
   taxi), `search_radius`, the per-source `gps_accuracy` (Timeline 75 m, dense
   GPS 15 m), `breakage_distance` of 10 km and timestamps. Gaps longer than 10 km
-  or 15 min are cut first and become `gap` pieces. A trace longer than 600 km is
-  split into calls of at most 600 km and 2,000 points (AD-32 rule 2).
+  or 15 min are cut first and become `gap` pieces. A trace longer than 200 km is
+  split into calls of at most 200 km and 2,000 points (AD-32 rule 2).
 - Valhalla's polyline6 shape is converted to precision 5 before it is stored.
 - Pieces follow AD-35 rule 7: `matched` and `interpolated` points are observed
   anchors, placed on the shape with `edge_index` and `distance_along_edge`; legs

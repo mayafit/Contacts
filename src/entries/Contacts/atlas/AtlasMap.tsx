@@ -26,6 +26,7 @@ import type {
   PhotoMapData,
   PhotoSummary,
   PointOutput,
+  RoutePiece,
   VisitSummary,
 } from './types';
 import { PHOTO_COLOR, photoCountText, spread, takenText } from './photos';
@@ -63,6 +64,7 @@ import DensityLayer from './DensityLayer';
 import { trackTypes } from './densityGeo';
 import { identifyMark } from './placeText';
 import { tokens } from '../theme/contactsTheme';
+import { hasInferred, pieceStyle, splitPieces, type PieceLine } from './routeGeometry';
 
 /** A rectangle on the map */
 export interface Box {
@@ -78,6 +80,11 @@ export interface AtlasMapProps {
   visits: VisitSummary[];
   /** Full track of the selected activity */
   selectedTrack?: PointOutput[];
+  /**
+   * The selected activity's matched route, drawn instead of its track (the track's
+   * points then show as small dots when zoomed in); null draws the recorded track
+   */
+  selectedRoute?: { id: string; polyline: string; pieces?: RoutePiece[] | null } | null;
   selectedId?: string | null;
   /** The visit open in the side panel */
   selectedVisitId?: string | null;
@@ -103,6 +110,66 @@ export interface AtlasMapProps {
   /** Opens the photo viewer on a list at a photo */
   onOpenPhoto?: (photos: PhotoSummary[], index: number) => void;
 }
+
+/** Source points are shown on a matched route from this zoom on */
+const SOURCE_DOTS_ZOOM = 14;
+
+/** Props for SelectedRoute */
+interface SelectedRouteProps {
+  runs: PieceLine[];
+  color: string;
+}
+
+/**
+ * The selected activity's matched route: observed pieces solid, inferred dashed and
+ * fainter, gaps faint dotted (memoised: hovering the charts does not redraw it)
+ */
+const SelectedRouteLines: React.FC<SelectedRouteProps> = ({ runs, color }) => (
+  <>
+    {runs.map((r, i) => (
+      <Polyline
+        key={`${r.kind}-${i}`}
+        positions={r.positions}
+        interactive={false}
+        pathOptions={pieceStyle(r.kind, color)}
+      />
+    ))}
+  </>
+);
+const SelectedRoute = React.memo(SelectedRouteLines);
+
+/** Props for SourceDots */
+interface SourceDotsProps {
+  points: [number, number][];
+  color: string;
+}
+
+/**
+ * The recorded points under a matched route, as small dots, only when zoomed in
+ * (its own zoom state: zooming re-renders only the dots)
+ */
+const SourceDotsLayer: React.FC<SourceDotsProps> = ({ points, color }) => {
+  const map = useMap();
+  const [zoom, setZoom] = useState(() => map.getZoom());
+  useMapEvents({ zoomend: () => setZoom(map.getZoom()) });
+  if (zoom < SOURCE_DOTS_ZOOM) {
+    return null;
+  }
+  return (
+    <>
+      {points.map((p, i) => (
+        <CircleMarker
+          key={i}
+          center={p}
+          radius={2}
+          interactive={false}
+          pathOptions={{ color, weight: 1, fillColor: color, fillOpacity: 0.9, opacity: 0.9 }}
+        />
+      ))}
+    </>
+  );
+};
+const SourceDots = React.memo(SourceDotsLayer);
 
 /** Waits this long after a filter change before loading the density map (ms) */
 const DENSITY_DEBOUNCE = 400;
@@ -454,6 +521,7 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
   activities,
   visits,
   selectedTrack,
+  selectedRoute,
   selectedId,
   selectedVisitId,
   area,
@@ -532,6 +600,25 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
     [activities],
   );
   const selectedFlight = lines.find((l) => l.a.id === selectedId && l.flight);
+  // The selected matched route's runs, decoded once per route (not on hover)
+  const routeRuns = useMemo(
+    () =>
+      selectedRoute
+        ? splitPieces(decodePolyline(selectedRoute.polyline), selectedRoute.pieces)
+        : null,
+    [selectedRoute],
+  );
+  const routeColor = useMemo(() => {
+    const a = activities.find((x) => x.id === selectedId);
+    return a ? typeColor(a.type) : highlightColor;
+  }, [activities, selectedId, highlightColor]);
+  const sourceDots = useMemo(
+    () =>
+      routeRuns && selectedTrack
+        ? selectedTrack.map((p) => [p.lat, p.lon] as [number, number])
+        : null,
+    [routeRuns, selectedTrack],
+  );
   // Items with photos get a small dot (the open one's panel shows its photos instead):
   // at the middle of a track, beside a visit. Positions made once per result list.
   const trackBadges = useMemo(
@@ -566,8 +653,9 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
       ...activities.map((a) => a.type),
       ...(visits.length ? ['visit'] : []),
       ...(trackBadges.length || visitBadges.length ? ['photos'] : []),
+      ...(routeRuns && hasInferred(routeRuns) ? ['inferred'] : []),
     ];
-  }, [density, densityData, activities, visits, trackBadges, visitBadges]);
+  }, [density, densityData, activities, visits, trackBadges, visitBadges, routeRuns]);
 
   return (
     <Box sx={{ position: 'relative', height: '100%', width: '100%' }}>
@@ -611,22 +699,25 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
         )}
         {density && <DensityLayer data={densityData} />}
         {!density &&
-          lines.map(({ a, path, flight }) => (
-            <Polyline
-              key={a.id}
-              positions={path}
-              pathOptions={{
-                color: typeColor(a.type),
-                // Many tracks at once: thinner and lighter, so the streets stay readable
-                weight: a.id === selectedId ? 5 : crowded ? 1.5 : flight ? 2 : 2.5,
-                opacity: selectedId && a.id !== selectedId ? 0.3 : crowded ? 0.5 : 0.9,
-                dashArray: flight ? '8 6' : undefined,
-              }}
-              eventHandlers={{ click: () => onSelectActivity(a.id) }}
-            >
-              <Tooltip sticky>{describeActivity(a)}</Tooltip>
-            </Polyline>
-          ))}
+          lines
+            // The selected matched route is drawn by its pieces (dashes would be hidden under it)
+            .filter(({ a }) => !(routeRuns && a.id === selectedId))
+            .map(({ a, path, flight }) => (
+              <Polyline
+                key={a.id}
+                positions={path}
+                pathOptions={{
+                  color: typeColor(a.type),
+                  // Many tracks at once: thinner and lighter, so the streets stay readable
+                  weight: a.id === selectedId ? 5 : crowded ? 1.5 : flight ? 2 : 2.5,
+                  opacity: selectedId && a.id !== selectedId ? 0.3 : crowded ? 0.5 : 0.9,
+                  dashArray: flight ? '8 6' : undefined,
+                }}
+                eventHandlers={{ click: () => onSelectActivity(a.id) }}
+              >
+                <Tooltip sticky>{describeActivity(a)}</Tooltip>
+              </Polyline>
+            ))}
         {!density &&
           lines
             .filter((l) => l.flight)
@@ -649,6 +740,11 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
             positions={selectedFlight.path}
             pathOptions={{ color: highlightColor, weight: 2.5, opacity: 0.95, dashArray: '8 6' }}
           />
+        ) : routeRuns ? (
+          <>
+            <SelectedRoute runs={routeRuns} color={routeColor} />
+            {sourceDots && <SourceDots points={sourceDots} color={highlightColor} />}
+          </>
         ) : (
           selectedTrack &&
           selectedTrack.length > 1 && (

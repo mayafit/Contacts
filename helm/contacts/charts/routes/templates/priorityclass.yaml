@@ -1,0 +1,13 @@
+{{- if and .Values.enabled .Values.priorityClass.create }}
+# Background work yields to everything else on the Pi (AD-36 rule 1)
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: {{ .Values.priorityClass.name }}
+  labels:
+    {{- include "routes.labels" . | nindent 4 }}
+value: {{ .Values.priorityClass.value }}
+globalDefault: false
+preemptionPolicy: Never
+description: "Contacts background workers (route quality, faces): lowest priority"
+{{- end }}

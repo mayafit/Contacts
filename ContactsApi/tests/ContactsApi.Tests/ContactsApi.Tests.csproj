@@ -5,6 +5,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
+    <!-- The web projects bring ASP.NET Core 9; run on the next major where only that is installed -->
+    <RollForward>Major</RollForward>
   </PropertyGroup>
 
   <ItemGroup>
@@ -21,6 +23,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\ContactsApi.Infrastructure\ContactsApi.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\EchoRoutes.Worker\EchoRoutes.Worker.csproj" />
+    <ProjectReference Include="..\..\src\ContactsApi.WebApi\ContactsApi.WebApi.csproj" />
   </ItemGroup>
 
 </Project>

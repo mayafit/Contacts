@@ -14,3 +14,10 @@ vault:
   kvPath: "secret/data/contacts"
   role: "contacts"
   authPath: "auth/kubernetes"
+
+# The route-quality service (Epic 12). Set enabled together with the umbrella's
+# routes.enabled: the backend then calls <release>-routes on /internal/v1 with
+# Routes__BackendToken, and the fusion worker wakes it after each run.
+routes:
+  enabled: false
+  port: 8080

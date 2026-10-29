@@ -180,7 +180,7 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
 
                     b.HasKey("ActivityId");
 
-                    b.HasIndex("OwnerId");
+                    b.HasIndex("OwnerId", "UpdatedAt");
 
                     b.ToTable("activity_fusion", "atlas");
                 });
@@ -255,6 +255,10 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
+                    b.Property<string>("SourceType")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<DateTime>("StartTime")
                         .HasColumnType("timestamp with time zone");
 
@@ -271,15 +275,17 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("ClusterId");
-
                     b.HasIndex("ImportId");
+
+                    b.HasIndex("OwnerId", "ClusterId");
 
                     b.HasIndex("OwnerId", "StartTime");
 
                     b.HasIndex("OwnerId", "Source", "ExternalId")
                         .IsUnique()
                         .HasFilter("\"ExternalId\" IS NOT NULL");
+
+                    b.HasIndex("OwnerId", "UpdatedAt", "Id");
 
                     b.ToTable("activities", "atlas");
                 });

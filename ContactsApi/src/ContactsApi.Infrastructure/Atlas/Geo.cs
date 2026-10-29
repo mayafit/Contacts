@@ -77,8 +77,23 @@ public static class Geo
             return points.ToList();
         }
 
+        return SimplifyIndices(points, max, startTolerance).Select(i => points[i]).ToList();
+    }
+
+    /// <summary>
+    /// <see cref="Simplify"/>, returning the indexes of the kept points (ascending,
+    /// both ends included), so positions along the line can be carried over.
+    /// </summary>
+    public static List<int> SimplifyIndices(IReadOnlyList<(double Lat, double Lon)> points, int max = 400,
+        double startTolerance = 0.00001)
+    {
+        if (points.Count <= max || points.Count < 3)
+        {
+            return Enumerable.Range(0, points.Count).ToList();
+        }
+
         var tolerance = startTolerance;
-        List<(double, double)> result;
+        List<int> result;
         do
         {
             result = DouglasPeucker(points, tolerance);
@@ -89,7 +104,7 @@ public static class Geo
         return result;
     }
 
-    private static List<(double Lat, double Lon)> DouglasPeucker(IReadOnlyList<(double Lat, double Lon)> pts, double tolerance)
+    private static List<int> DouglasPeucker(IReadOnlyList<(double Lat, double Lon)> pts, double tolerance)
     {
         var keep = new bool[pts.Count];
         keep[0] = keep[^1] = true;
@@ -118,7 +133,7 @@ public static class Geo
             }
         }
 
-        return pts.Where((_, i) => keep[i]).ToList();
+        return Enumerable.Range(0, pts.Count).Where(i => keep[i]).ToList();
     }
 
     private static double PerpendicularDistance((double Lat, double Lon) p, (double Lat, double Lon) a, (double Lat, double Lon) b)

@@ -103,6 +103,25 @@ const AtlasHome: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [detail, setDetail] = useState<ActivityDetail | null>(null);
+  // The open activity drawn on roads (its matched route) or as recorded
+  const [routeView, setRouteView] = useState<'roads' | 'recorded'>('roads');
+  const detailId = detail?.summary.id;
+  useEffect(() => setRouteView('roads'), [detailId]);
+  // One object per detail and view, so the map decodes the route's pieces once
+  const selectedRoute = useMemo(
+    () =>
+      detail &&
+      detail.summary.geometry === 'matched' &&
+      detail.summary.polyline &&
+      routeView === 'roads'
+        ? {
+            id: detail.summary.id,
+            polyline: detail.summary.polyline,
+            pieces: detail.summary.pieces,
+          }
+        : null,
+    [detail, routeView],
+  );
   const [visit, setVisit] = useState<VisitSummary | null>(null);
   const [cursor, setCursor] = useState<[number, number] | null>(null);
   const [importOpen, setImportOpen] = useState(false);
@@ -635,6 +654,7 @@ const AtlasHome: React.FC = () => {
                 activities={result?.activities ?? []}
                 visits={result?.visits ?? []}
                 selectedTrack={detail?.points}
+                selectedRoute={selectedRoute}
                 selectedId={detail?.summary.id}
                 selectedVisitId={visit?.id}
                 area={area}
@@ -788,6 +808,20 @@ const AtlasHome: React.FC = () => {
                 }}
                 photos={panelPhotos}
                 onOpenPhoto={(index) => setViewer({ photos: panelPhotos, index })}
+                routeView={routeView}
+                onRouteView={setRouteView}
+                onRouteChanged={async () => {
+                  // The list and the map draw the new choice too
+                  setReloadKey((k) => k + 1);
+                  try {
+                    const next = await backendApiClient.atlasActivity(detail.summary.id);
+                    setDetail(next);
+                    return next;
+                  } catch {
+                    setDetail(null);
+                    return null;
+                  }
+                }}
                 onShowPlace={(lat, lon, visitId) => {
                   const v = result?.visits.find((x) => x.id === visitId);
                   if (v) {
