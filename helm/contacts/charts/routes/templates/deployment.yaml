@@ -99,12 +99,15 @@ spec:
               port: http
             initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds }}
           readinessProbe:
             httpGet:
               path: {{ .Values.probes.readiness.path }}
               port: http
             initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
           resources:
             {{- toYaml .Values.resources.routes | nindent 12 }}
           securityContext:
@@ -135,9 +138,12 @@ spec:
           readinessProbe:
             exec:
               # python3 ships with the image (valhalla_build_config is Python); curl may not
-              command: ["python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:{{ .Values.valhalla.port }}/status', timeout=3)"]
+              command: ["python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:{{ .Values.valhalla.port }}/status', timeout={{ .Values.valhalla.readinessProbe.timeoutSeconds }})"]
             initialDelaySeconds: 10
-            periodSeconds: 15
+            periodSeconds: {{ .Values.valhalla.readinessProbe.periodSeconds }}
+            # The command's own timeout gives up first
+            timeoutSeconds: {{ add .Values.valhalla.readinessProbe.timeoutSeconds 5 }}
+            failureThreshold: {{ .Values.valhalla.readinessProbe.failureThreshold }}
           resources:
             {{- toYaml .Values.resources.valhalla | nindent 12 }}
           securityContext:
