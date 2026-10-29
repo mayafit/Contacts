@@ -114,8 +114,10 @@ docker buildx build --platform linux/arm64 -f src/EchoRoutes.Worker/Dockerfile \
   -t ghcr.io/mayafit/contacts-routes:$TAG --push .
 ```
 
-Then set `routes.image.tag: <that sha>` in the release values (the chart's default
-is the sha the chart was last tested with). A new worker build is a values change.
+Then set `routes.image.tag: <that sha>` in the release values. The chart's default
+(`7caa18b`) names the commit of the R1 review fixes; it exists in GHCR only once
+someone has built and pushed it, so always set the tag you pushed. A new worker
+build is a values change.
 
 ## Network policies
 
