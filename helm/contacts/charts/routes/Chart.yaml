@@ -2,5 +2,5 @@ apiVersion: v2
 name: routes
 description: Contacts route-quality service (EchoRoutes.Worker) with Valhalla in the same pod
 type: application
-version: 0.2.0
+version: 0.3.0
 appVersion: "1.0.0"

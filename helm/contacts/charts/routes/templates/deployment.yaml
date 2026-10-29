@@ -45,8 +45,9 @@ spec:
       securityContext:
         fsGroup: 1001
       initContainers:
-        # The tiles image (busybox) unpacks its tar straight into the emptyDir, with
-        # the outlines and graph.json: no PersistentVolume, no download (AD-32 rule 4)
+        # The tiles image (busybox) copies its tar, Valhalla's config, the outlines and
+        # graph.json into the emptyDir: no PersistentVolume, no download (AD-32 rule 4).
+        # Valhalla reads the tar in place (mjolnir.tile_extract), as in spike 12.1
         - name: tiles
           image: "{{ .Values.tiles.repository }}:{{ .Values.tiles.tag }}"
           imagePullPolicy: {{ .Values.tiles.pullPolicy }}
@@ -55,9 +56,7 @@ spec:
             - |
               set -e
               src={{ .Values.tiles.sourceDir }}
-              rm -rf /data/valhalla_tiles && mkdir -p /data/valhalla_tiles
-              tar -xf "$src/valhalla_tiles.tar" -C /data/valhalla_tiles
-              cp "$src"/*.poly "$src/graph.json" /data/
+              cp "$src/valhalla_tiles.tar" "$src/valhalla.json" "$src/graph.json" "$src"/*.poly /data/
               for f in admins.sqlite timezones.sqlite; do [ ! -f "$src/$f" ] || cp "$src/$f" /data/; done
           securityContext:
             runAsUser: 1001
@@ -118,12 +117,9 @@ spec:
               mountPath: /tmp
         - name: valhalla
           image: {{ .Values.valhalla.image | quote }}
-          command: ["/bin/sh", "-c"]
-          args:
-            - |
-              set -e
-              python3 /config/configure.py /tmp/valhalla.json
-              exec valhalla_service /tmp/valhalla.json {{ .Values.valhalla.threads }}
+          # The config shipped in the tiles image (paths under /data, loopback only,
+          # no tile URL, no elevation download), with the spike's thread count
+          command: ["valhalla_service", {{ .Values.valhalla.config | quote }}, {{ .Values.valhalla.threads | quote }}]
           # Listens on 127.0.0.1 only: reachable from the routes container, nothing else
           readinessProbe:
             exec:
@@ -138,10 +134,7 @@ spec:
             readOnlyRootFilesystem: true
           volumeMounts:
             - name: tiles
-              mountPath: /tiles
-              readOnly: true
-            - name: valhalla-config
-              mountPath: /config
+              mountPath: /data
               readOnly: true
             - name: valhalla-tmp
               mountPath: /tmp
@@ -153,7 +146,4 @@ spec:
           emptyDir: {}
         - name: valhalla-tmp
           emptyDir: {}
-        - name: valhalla-config
-          configMap:
-            name: {{ include "routes.fullname" . }}-valhalla
 {{- end }}

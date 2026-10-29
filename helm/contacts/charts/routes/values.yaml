@@ -8,33 +8,40 @@ image:
   pullPolicy: IfNotPresent
   pullSecret: ""
 
-# Valhalla 3.9.x. Story 12.1 pins the digest that lists linux/arm64
-# (repository@sha256:...) and records it in architecture section 7.
+# Valhalla 3.9.1, pinned by spike 12.1 (the digest lists linux/arm64)
 valhalla:
-  image: ghcr.io/valhalla/valhalla:3.9.1
+  image: ghcr.io/valhalla/valhalla:3.9.1@sha256:4fd114eb1d26b8fc2f43bcb3df234c1b63a0bf13c277405e5943d5361dc575de
+  # Fixed by the config in the tiles image (httpd.service.listen tcp://127.0.0.1:8002)
   port: 8002
-  threads: 2
-  # 64 MiB tile cache instead of the 1 GB default (AD-36 rule 1)
-  maxCacheSize: 67108864
+  # Server threads (valhalla_service <config> <N>). Spike 12.1: 1 plateaus at about
+  # 366 MiB anonymous memory; 2 kept growing and is rejected for now
+  threads: 1
+  # Valhalla runs with the valhalla.json shipped in the tiles image (spike 12.1
+  # round 2: 32 MiB LRU tile cache, reserved memory released, httpd timeout 14 s,
+  # trace max_distance 200 km). files/valhalla.json is a reference copy of it;
+  # the chart does not template a config over it.
+  config: /data/valhalla.json
 
 # The monthly CI tiles build (AD-32 rule 3): FROM busybox, holding
 # valhalla_tiles.tar, the region .poly outlines and graph.json
 tiles:
   repository: ghcr.io/mayafit/contacts-routing-tiles
-  # Placeholder until the first build publishes il-<yyyymmdd>
-  tag: il-latest
+  # Spike 12.1 round 2: israel-and-palestine 2026-10-27 tiles (82 tiles, a 199 MB
+  # tar) with the tuned valhalla.json; linux/arm64
+  tag: il-20261029-r2@sha256:791011ad3816eaeb816aebbcbbfdf1e0b070f5ab5103248acd9f572a2f776b56
   pullPolicy: IfNotPresent
   # Where the tiles image keeps its files
   sourceDir: /tiles
   # The tar's size + 25%, rounded up to 256Mi, at least 1Gi (AD-32 rule 4)
-  sizeLimit: 2Gi
+  sizeLimit: 1Gi
 
 service:
   type: ClusterIP
   port: 8080
 
-# Pinned by story 12.1's spike to the node with the most free RAM (AD-36 rule 2)
-nodeSelector: {}
+# Spike 12.1: rasp02 has about 1.9 GiB free; rasp01 is memory-overcommitted (AD-36 rule 2)
+nodeSelector:
+  kubernetes.io/hostname: rasp02
 
 priorityClass:
   # Shared with the face worker when it arrives (AD-20); cluster-scoped
@@ -47,9 +54,10 @@ resources:
   routes:
     requests: { cpu: 50m, memory: 96Mi }
     limits: { cpu: 500m, memory: 256Mi }
+  # Spike 12.1: about 477 MiB charged at steady state, peak 582 MiB; about 0.83 cores busy
   valhalla:
-    requests: { cpu: 100m, memory: 192Mi, ephemeral-storage: 1Gi }
-    limits: { cpu: 1000m, memory: 512Mi, ephemeral-storage: 2Gi }
+    requests: { cpu: 500m, memory: 512Mi, ephemeral-storage: 256Mi }
+    limits: { cpu: 1000m, memory: 768Mi, ephemeral-storage: 1Gi }
   init:
     requests: { cpu: 50m, memory: 32Mi }
     limits: { cpu: 200m, memory: 64Mi }
@@ -65,7 +73,8 @@ config:
   # here so the Pi spike's findings are a values change, not a release.
   # Engine requests in flight (AD-36 rule 3: one)
   Routes__EngineConcurrency: "1"
-  # Hard per-call timeout; a timeout backs the record off and counts for the breaker
+  # Hard per-call timeout; a timeout backs the record off and counts for the breaker.
+  # Valhalla itself gives up at 14 s (httpd.service.timeout_seconds in the image's config)
   Routes__EngineTimeoutSeconds: "15"
   Routes__BreakageDistanceM: "5000"
   Routes__SearchRadiusM: "100"
@@ -74,9 +83,10 @@ config:
   # Gaps cut before the call (they become gap pieces)
   Routes__SplitGapM: "5000"
   Routes__SplitGapMinutes: "15"
-  # Per call (must not exceed the engine's service_limits.trace)
+  # Per call (must not exceed the engine's service_limits.trace: max_shape 2000,
+  # max_distance 200 km in the image's config)
   Routes__MaxPointsPerCall: "2000"
-  Routes__MaxKmPerCall: "600"
+  Routes__MaxKmPerCall: "200"
   # Per-record backoff after engine failures, then failed
   Routes__BackoffMinutes: "1,10,60"
   # N engine failures in a row pause all matching for M minutes

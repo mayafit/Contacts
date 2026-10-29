@@ -280,6 +280,41 @@ public class RoutesMatchDbTests
     }
 
     [Fact]
+    public async Task A_map_snap_refusal_is_final_for_the_record_and_never_trips_the_breaker()
+    {
+        // Spike 12.1: about 2.7% of drives answer 400 E444 "map_snap failed"
+        var backend = new FakeRoutesBackend();
+        var engine = new EchoEngine { Fail = _ => new EngineRejectedException(444, "engine 400 (444): map_snap algorithm failed to snap the shape points to the correct shape") };
+        await using var sp = Services(backend, engine, null, o => o.BreakerFailures = 3);
+        if (sp == null)
+        {
+            return;
+        }
+
+        var owner = "e444-" + Guid.NewGuid();
+        backend.Add(owner, 6);
+        await AssessAllAsync(sp, owner);
+
+        var r = await PendingBatchAsync(sp, owner);
+        Assert.False(r.Stopped);
+        Assert.Equal(6, engine.Requests.Count);
+        var breaker = sp.GetRequiredService<EngineBreaker>();
+        Assert.False(breaker.IsOpen);
+        Assert.Equal(0, breaker.ConsecutiveFailures);
+        using var scope = sp.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<RoutesDbContext>();
+        var rows = await db.MatchedRoutes.AsNoTracking().Where(m => m.OwnerId == owner).ToListAsync();
+        Assert.Equal(6, rows.Count);
+        // Final: failed with the engine's reason, no retry scheduled
+        Assert.All(rows, m => Assert.Equal((RouteStatuses.Failed, 0, (DateTime?)null), (m.Status, m.Attempts, m.NextAttemptAt)));
+        Assert.All(rows, m => Assert.Contains("444", m.Reason));
+
+        engine.Requests.Clear();
+        await PendingBatchAsync(sp, owner);
+        Assert.Empty(engine.Requests);
+    }
+
+    [Fact]
     public async Task A_batch_stops_after_the_current_record_when_interactive_work_arrives()
     {
         var backend = new FakeRoutesBackend();

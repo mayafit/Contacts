@@ -9,9 +9,9 @@ Atlas beyond the original lines coming back.
 
 | Container | What | Listens |
 | --- | --- | --- |
-| `tiles` (init) | The tiles image (`contacts-routing-tiles`, FROM busybox) unpacks `valhalla_tiles.tar` into the `emptyDir` and copies `graph.json` and the `.poly` outlines | nothing |
+| `tiles` (init) | The tiles image (`contacts-routing-tiles`, FROM busybox) copies `valhalla_tiles.tar`, `valhalla.json`, `graph.json` and the `.poly` outlines into the `emptyDir` | nothing |
 | `routes` | The .NET service: scheduler, stage A rule `routes.v1`, `/internal/v1/*`, `/health/live`, `/health/ready` | `:8080` |
-| `valhalla` | The routing engine. Its config is generated at start from the image's defaults, with no tile URL, no elevation download, a 64 MiB cache and the AD-32 trace limits | `127.0.0.1:8002` only |
+| `valhalla` | The routing engine: `valhalla_service /data/valhalla.json 1`, with the config shipped in the tiles image (spike 12.1 round 2: tiles read from the tar, a 32 MiB LRU cache, reserved memory released, no tile URL, no elevation download, a 14 s server timeout, trace limits 200 km and 2,000 points). `files/valhalla.json` is a reference copy; the chart templates nothing over it | `127.0.0.1:8002` only |
 
 `/health/ready` turns ready once `graph.json` has been read and Valhalla answers.
 
@@ -67,10 +67,13 @@ account `<release>-routes` in the release namespace, with a policy that reads
 
 ### 3. The tiles image
 
-`tiles.tag` defaults to the placeholder `il-latest`. Story 12.1 publishes
-`contacts-routing-tiles:il-<yyyymmdd>`, pins the Valhalla digest in
-`valhalla.image`, sets `tiles.sizeLimit` from the tar's size and sets
-`nodeSelector` to the node with the most free RAM.
+`tiles.tag` is `il-20261029-r2@sha256:791011ad…` (spike 12.1 round 2: 82 tiles,
+a 199 MB tar, so `tiles.sizeLimit` is the 1Gi floor). `valhalla.image` is pinned to
+`3.9.1@sha256:4fd114eb…`, and `nodeSelector` is `kubernetes.io/hostname: rasp02`
+(about 1.9 GiB free; rasp01 is overcommitted). A new tiles image must keep
+`valhalla.json` beside the tar, with its paths under `/data`; a config change is
+a tiles-image change. Results: AD-32 and AD-36 in the architecture, and story
+12.1 in the epic.
 
 ### 4. The worker image
 
@@ -122,8 +125,8 @@ database and engine through port-forwards and prints aggregates only.
 | Switch on | `routes.enabled: true` (this pod) **and** `backend.routes.enabled: true` (the backend sets `Routes__ServiceUrl`; that also turns on the backend's matched-route reads, `RouteGeometryOptions.Enabled`) |
 | Vault keys (`secret/data/contacts`) | `Routes__ServiceToken`, `Routes__BackendToken` (backend and routes), `Routes__ConnectionString` (routes only); see step 2 |
 | DB roles | `echo_routes` owns schema `routes`; the backend role (`contactsapi`) needs `USAGE` on `routes`, `SELECT` on its tables, and `INSERT, UPDATE, DELETE` on `route_decisions` and `settings` (step 1). Without the grants the map silently draws the recorded lines and decisions answer 503 `ROUTES_UNAVAILABLE` |
-| Tiles image | `tiles.tag` (`contacts-routing-tiles:il-<yyyymmdd>`); the placeholder `il-latest` must be replaced by the tag story 12.1 publishes (step 3) |
-| Spike results | The Pi spike's numbers (build time, memory, match time, accuracy) belong in `docs/planning/epic-12-route-quality.md` story 12.1; `scripts/routes/accuracy-check.py` reproduces the accuracy figures |
+| Tiles image | `tiles.tag` = `il-20261029-r2@sha256:791011ad…` (step 3); it carries the engine's `valhalla.json` |
+| Spike results | Story 12.1 (round 2, 2026-10-29): median 0.134 s, p95 0.73 s per drive, about 1.0 h for 15,420 drives, about 366 MiB anonymous RSS with one thread; details in AD-32 and AD-36 and the epic's story 12.1; `scripts/routes/accuracy-check.py` reproduces the accuracy figures |
 | What the Owner sees | `GET /api/routes/status` (one line in the import dialog), `GET /api/routes/export` (JSON with GeoJSON matched routes) |
 
 Switching either flag off returns every map, list and panel to the recorded lines;

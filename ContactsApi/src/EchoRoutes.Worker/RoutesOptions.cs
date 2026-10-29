@@ -68,8 +68,8 @@ public class RoutesOptions
     /// <summary>Most points of one engine call (service_limits.trace.max_shape)</summary>
     public int MaxPointsPerCall { get; set; } = 2000;
 
-    /// <summary>Most kilometres of one engine call (service_limits.trace.max_distance)</summary>
-    public double MaxKmPerCall { get; set; } = 600;
+    /// <summary>Most kilometres of one engine call (service_limits.trace.max_distance: 200 km in the tiles image's config, spike 12.1)</summary>
+    public double MaxKmPerCall { get; set; } = 200;
 
     /// <summary>Records per stage B batch (AD-36 rule 3)</summary>
     public int MatchBatch { get; set; } = 25;

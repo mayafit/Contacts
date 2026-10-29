@@ -11,33 +11,4 @@ data:
   {{- end }}
   Routes__ValhallaUrl: "http://127.0.0.1:{{ .Values.valhalla.port }}"
   Routes__BackendUrl: "http://{{ .Release.Name }}-backend:{{ .Values.networkPolicy.backendPort }}"
----
-# Valhalla's config, written at start from the image's defaults: no tile URL and
-# no elevation download (no outbound calls), loopback only, the AD-32 trace limits
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ include "routes.fullname" . }}-valhalla
-  labels:
-    {{- include "routes.labels" . | nindent 4 }}
-data:
-  configure.py: |
-    import json, subprocess, sys
-    config = json.loads(subprocess.check_output(["valhalla_build_config"]))
-    mjolnir = config["mjolnir"]
-    mjolnir["tile_dir"] = "/tiles/valhalla_tiles"
-    mjolnir["tile_extract"] = ""
-    mjolnir["tile_url"] = ""
-    mjolnir["max_cache_size"] = {{ .Values.valhalla.maxCacheSize | int }}
-    mjolnir["admin"] = "/tiles/admins.sqlite"
-    mjolnir["timezone"] = "/tiles/timezones.sqlite"
-    config.setdefault("additional_data", {})["elevation"] = ""
-    config["httpd"]["service"]["listen"] = "tcp://127.0.0.1:{{ .Values.valhalla.port }}"
-    trace = config["service_limits"]["trace"]
-    trace["max_distance"] = 600000.0
-    trace["max_shape"] = 2000
-    config["meili"]["customizable"] = ["mode", "search_radius", "gps_accuracy", "breakage_distance",
-        "interpolation_distance", "max_route_distance_factor", "max_route_time_factor"]
-    with open(sys.argv[1], "w") as f:
-        json.dump(config, f, indent=1)
 {{- end }}
