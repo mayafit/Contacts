@@ -62,6 +62,7 @@ import {
   routeRankText,
 } from './AnalysisSections';
 import { tokens } from '../theme/contactsTheme';
+import RouteLine, { type RouteView } from './RouteLine';
 
 /** Props for ActivityPanel */
 export interface ActivityPanelProps {
@@ -82,6 +83,11 @@ export interface ActivityPanelProps {
   photos?: PhotoSummary[];
   /** Opens the viewer at one of the photos */
   onOpenPhoto?: (index: number) => void;
+  /** The route drawn as matched (roads) or recorded */
+  routeView?: RouteView;
+  onRouteView?: (view: RouteView) => void;
+  /** Loads the activity again after a route change (revert, fix) */
+  onRouteChanged?: () => Promise<ActivityDetail | null>;
 }
 
 /** Icon and text of a linked place's role */
@@ -192,6 +198,9 @@ const ActivityPanel: React.FC<ActivityPanelProps> = ({
   onOpenActivity,
   photos,
   onOpenPhoto,
+  routeView = 'roads',
+  onRouteView,
+  onRouteChanged,
 }) => {
   const s = detail.summary;
   const [editing, setEditing] = useState(false);
@@ -234,8 +243,16 @@ const ActivityPanel: React.FC<ActivityPanelProps> = ({
   const hoverX = (x: number | null) =>
     seek(!isSet(x) ? null : axis === 'time' || !hasDistance ? x : timeAtDistance(samples, x));
 
+  // The source's distance stays; the matched length is shown beside it (AD-34 rule 5)
+  const onRoads =
+    s.geometry === 'matched' &&
+    isSet(s.onRoadsM) &&
+    detail.fieldSources?.distance !== 'track' &&
+    Math.abs(s.onRoadsM - (s.distanceM ?? 0)) >= 100
+      ? ` · ${formatDistance(s.onRoadsM)} on roads`
+      : '';
   const stats = [
-    ['Distance', formatDistance(s.distanceM)],
+    ['Distance', s.distanceM ? `${formatDistance(s.distanceM)}${onRoads}` : ''],
     ['Time', formatDuration(s.durationS)],
     ['Climb', isSet(s.elevationGainM) ? `${Math.round(s.elevationGainM)} m` : ''],
     [
@@ -289,6 +306,14 @@ const ActivityPanel: React.FC<ActivityPanelProps> = ({
           </>
         )}
       </Typography>
+      {onRouteView && onRouteChanged && (
+        <RouteLine
+          detail={detail}
+          view={routeView}
+          onView={onRouteView}
+          onChanged={onRouteChanged}
+        />
+      )}
 
       {editing && (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25, mt: 1.5 }}>

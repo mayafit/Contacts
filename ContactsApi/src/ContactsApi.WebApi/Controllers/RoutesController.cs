@@ -4,6 +4,9 @@
  * only from the session; nothing in a request body names one.
  * @module ContactsApi.WebApi.Controllers
  */
+using System.Text.Json;
+using ContactsApi.Infrastructure.Atlas;
+using ContactsApi.Infrastructure.Routes;
 using ContactsApi.WebApi.Models.Responses;
 using ContactsApi.WebApi.Services;
 using Microsoft.AspNetCore.Mvc;
@@ -13,6 +16,9 @@ namespace ContactsApi.WebApi.Controllers;
 /// <summary>What to assess or improve: ids (≤ 2,000), a time range, or everything</summary>
 /// <param name="Force">improve: match even what does not need it (never against "Keep the original")</param>
 public record RoutesRunRequest(List<Guid>? ActivityIds, DateTime? From, DateTime? To, bool? All, bool? Force);
+
+/// <summary>An Owner's decision about an Activity's route: reject ("Keep the original") or accept</summary>
+public record RouteDecisionRequest(string? Kind);
 
 /// <summary>/api/routes: on-demand route quality for the signed-in Owner</summary>
 [ApiController]
@@ -27,12 +33,106 @@ public class RoutesController : ControllerBase
 
     private readonly GoogleTokenService _tokens;
     private readonly RoutesServiceClient _routes;
+    private readonly IServiceProvider _services;
 
     /// <summary>Creates the controller</summary>
-    public RoutesController(GoogleTokenService tokens, RoutesServiceClient routes)
+    /// <param name="services">Resolves the Atlas and Routes data services only on the endpoints that use them</param>
+    public RoutesController(GoogleTokenService tokens, RoutesServiceClient routes, IServiceProvider services)
     {
         _tokens = tokens;
         _routes = routes;
+        _services = services;
+    }
+
+    /// <summary>
+    /// Records the Owner's decision for an Activity's route, keyed by each drawn record's
+    /// natural key. "reject" ("Keep the original") draws the recorded line again everywhere
+    /// and is never matched again automatically.
+    /// </summary>
+    [HttpPut("activities/{id:guid}/decision")]
+    public Task<IActionResult> Decide(Guid id, [FromBody] RouteDecisionRequest request) =>
+        WithRecords(id, async (owner, keys, data, ct) =>
+        {
+            var kind = request.Kind?.Trim().ToLowerInvariant();
+            if (kind != RouteDecisionKinds.Reject && kind != RouteDecisionKinds.Accept)
+            {
+                return BadRequest(ApiResponse<object>.ErrorResponse("INVALID_INPUT", "kind is reject or accept."));
+            }
+
+            await data.SetDecisionAsync(owner, keys, kind, ct);
+            return Ok(ApiResponse<object>.SuccessResponse(new { kind, records = keys.Count }));
+        });
+
+    /// <summary>Removes the Owner's decision for an Activity's route ("Try again" first deletes the reject)</summary>
+    [HttpDelete("activities/{id:guid}/decision")]
+    public Task<IActionResult> ClearDecision(Guid id) =>
+        WithRecords(id, async (owner, keys, data, ct) =>
+        {
+            var removed = await data.ClearDecisionAsync(owner, keys, ct);
+            return Ok(ApiResponse<object>.SuccessResponse(new { removed }));
+        });
+
+    /// <summary>
+    /// The Owner's routes data as JSON (AD-34 rule 8): decisions, settings, quality metrics
+    /// and matched routes as GeoJSON with their piece kinds. Streamed.
+    /// </summary>
+    [HttpGet("export")]
+    public async Task Export()
+    {
+        var owner = await OwnerAsync();
+        if (owner == null)
+        {
+            Response.StatusCode = StatusCodes.Status401Unauthorized;
+            await Response.WriteAsJsonAsync(ApiResponse<object>.ErrorResponse("SESSION_EXPIRED", "Your Google session expired. Please sign in again."));
+            return;
+        }
+
+        var data = _services.GetRequiredService<RouteOwnerData>();
+        Response.ContentType = "application/json";
+        Response.Headers.ContentDisposition = "attachment; filename=\"echo-routes.json\"";
+        try
+        {
+            await using var writer = new Utf8JsonWriter(Response.Body);
+            await data.ExportAsync(owner, writer, HttpContext.RequestAborted);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException && !Response.HasStarted)
+        {
+            Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+            Response.Headers.ContentDisposition = default;
+            await Response.WriteAsJsonAsync(ApiResponse<object>.ErrorResponse("ROUTES_UNAVAILABLE", "Route data cannot be read right now."));
+        }
+    }
+
+    private async Task<IActionResult> WithRecords(Guid id,
+        Func<string, List<string>, RouteOwnerData, CancellationToken, Task<IActionResult>> action)
+    {
+        var owner = await OwnerAsync();
+        if (owner == null)
+        {
+            return Unauthorized(ApiResponse<object>.ErrorResponse("SESSION_EXPIRED", "Your Google session expired. Please sign in again."));
+        }
+
+        if (!_services.GetRequiredService<RouteGeometryOptions>().Enabled)
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                ApiResponse<object>.ErrorResponse("ROUTES_UNAVAILABLE", "Route quality is not enabled."));
+        }
+
+        try
+        {
+            var records = await _services.GetRequiredService<AtlasService>().RouteRecordsAsync(owner, id, HttpContext.RequestAborted);
+            return await action(owner, records.Select(r => r.SourceKey).ToList(), _services.GetRequiredService<RouteOwnerData>(),
+                HttpContext.RequestAborted);
+        }
+        catch (AtlasNotFoundException)
+        {
+            return NotFound(ApiResponse<object>.ErrorResponse("NOT_FOUND", "Activity not found."));
+        }
+        catch (Exception ex) when (ex is Microsoft.EntityFrameworkCore.DbUpdateException or Npgsql.NpgsqlException)
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                ApiResponse<object>.ErrorResponse("ROUTES_UNAVAILABLE", "Route decisions cannot be saved right now."));
+        }
     }
 
     /// <summary>Queues assessment and matching ("Fix this route", "Improve routes")</summary>

@@ -808,6 +808,20 @@ const AtlasHome: React.FC = () => {
                 }}
                 photos={panelPhotos}
                 onOpenPhoto={(index) => setViewer({ photos: panelPhotos, index })}
+                routeView={routeView}
+                onRouteView={setRouteView}
+                onRouteChanged={async () => {
+                  // The list and the map draw the new choice too
+                  setReloadKey((k) => k + 1);
+                  try {
+                    const next = await backendApiClient.atlasActivity(detail.summary.id);
+                    setDetail(next);
+                    return next;
+                  } catch {
+                    setDetail(null);
+                    return null;
+                  }
+                }}
                 onShowPlace={(lat, lon, visitId) => {
                   const v = result?.visits.find((x) => x.id === visitId);
                   if (v) {
