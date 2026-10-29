@@ -9,6 +9,7 @@ using EchoRoutes.Worker;
 using EchoRoutes.Worker.Api;
 using EchoRoutes.Worker.Assess;
 using EchoRoutes.Worker.Backend;
+using EchoRoutes.Worker.Matching;
 using EchoRoutes.Worker.Scheduling;
 using EchoRoutes.Worker.Valhalla;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
@@ -36,7 +37,8 @@ builder.Services.AddDbContext<RoutesDbContext>(o =>
 builder.Services.AddHttpClient(ValhallaClient.HttpClientName, c =>
 {
     c.BaseAddress = new Uri(options.ValhallaUrl.TrimEnd('/') + "/");
-    c.Timeout = TimeSpan.FromSeconds(10);
+    // A backstop only: ValhallaClient enforces Routes__EngineTimeoutSeconds per call
+    c.Timeout = TimeSpan.FromSeconds(Math.Max(1, options.EngineTimeoutSeconds) + 15);
 });
 builder.Services.AddHttpClient(RoutesBackendClient.HttpClientName, c =>
 {
@@ -63,7 +65,10 @@ builder.Services.AddSingleton(sp =>
 
     return coverage;
 });
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<EngineBreaker>();
 builder.Services.AddScoped<AssessRunner>();
+builder.Services.AddScoped<MatchRunner>();
 builder.Services.AddSingleton<WakeSignal>();
 builder.Services.AddSingleton<IPause, TaskPause>();
 builder.Services.AddHostedService<RoutesScheduler>();

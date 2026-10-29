@@ -119,6 +119,8 @@ namespace ContactsApi.Infrastructure.Routes.Migrations
                     b.HasIndex("OwnerId", "ActivityId")
                         .IsUnique();
 
+                    b.HasIndex("OwnerId", "NextAttemptAt");
+
                     b.ToTable("matched_routes", "routes");
                 });
 
@@ -323,6 +325,8 @@ namespace ContactsApi.Infrastructure.Routes.Migrations
 
                     b.HasIndex("OwnerId", "ActivityId")
                         .IsUnique();
+
+                    b.HasIndex("OwnerId", "NeedsImprovement", "SourceUpdatedAt");
 
                     b.ToTable("route_quality", "routes");
                 });

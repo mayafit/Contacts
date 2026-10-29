@@ -73,6 +73,16 @@ public class AssessRunner
     }
 
     /// <summary>
+    /// Assesses tracks already fetched (stage B fetches once and reuses them), writing
+    /// route_quality; returns each record's assessment
+    /// </summary>
+    public async Task<Dictionary<Guid, RouteAssessment>> AssessTracksAsync(string owner, List<RouteTrack> tracks, CancellationToken ct)
+    {
+        var stored = await StoredAsync(owner, tracks.Select(t => t.Id).ToList(), ct);
+        return await WriteAsync(owner, tracks, stored, ct);
+    }
+
+    /// <summary>
     /// Assesses the feed's candidates. A record whose UpdatedAt, point count and fused
     /// type equal the stored values (under the current rule) is skipped with no track
     /// fetched: after a re-fusion the feed returns the whole window, and the stored
@@ -122,12 +132,13 @@ public class AssessRunner
     private Task<Dictionary<Guid, RouteQualityRow>> StoredAsync(string owner, List<Guid> ids, CancellationToken ct) =>
         _db.Quality.Where(q => q.OwnerId == owner && ids.Contains(q.ActivityId)).ToDictionaryAsync(q => q.ActivityId, ct);
 
-    private async Task WriteAsync(string owner, List<RouteTrack> tracks, Dictionary<Guid, RouteQualityRow> stored, CancellationToken ct,
-        IReadOnlyDictionary<Guid, string>? keys = null)
+    private async Task<Dictionary<Guid, RouteAssessment>> WriteAsync(string owner, List<RouteTrack> tracks, Dictionary<Guid, RouteQualityRow> stored,
+        CancellationToken ct, IReadOnlyDictionary<Guid, string>? keys = null)
     {
+        var result = new Dictionary<Guid, RouteAssessment>();
         if (tracks.Count == 0)
         {
-            return;
+            return result;
         }
 
         var ids = tracks.Select(t => t.Id).ToList();
@@ -138,6 +149,7 @@ public class AssessRunner
         {
             var a = RouteQuality.Assess(t.Type, t.SourceType, t.Points, t.Before, t.After, _coverage.Covers);
             var hash = RouteQuality.InputHash(t.Points);
+            result[t.Id] = a;
             if (!stored.TryGetValue(t.Id, out var row))
             {
                 row = new RouteQualityRow { OwnerId = owner, ActivityId = t.Id };
@@ -169,5 +181,6 @@ public class AssessRunner
         }
 
         await _db.SaveChangesAsync(ct);
+        return result;
     }
 }

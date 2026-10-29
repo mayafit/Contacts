@@ -31,7 +31,8 @@ public record ApiError(string Code, string Message, DateTime Timestamp);
 
 /// <summary>Queue an assessment</summary>
 /// <param name="Interactive">Started by the Owner from the UI or MCP (≤ 50 ids makes it interactive)</param>
-public record AssessRequest(string? OwnerId, JobScope? Scope, bool? Interactive);
+/// <param name="Force">improve only: skip the "needs improvement" gate; never overrides a reject decision</param>
+public record AssessRequest(string? OwnerId, JobScope? Scope, bool? Interactive, bool? Force = null);
 
 /// <summary>New fused data for an Owner</summary>
 public record WakeRequest(string? OwnerId);
@@ -76,7 +77,10 @@ public static class InternalApi
     {
         var v1 = app.MapGroup("/internal/v1");
         v1.MapPost("/assess", (AssessRequest request, RoutesDbContext db, WakeSignal wake, CancellationToken ct) =>
-            QueueAsync(request, db, wake, ct));
+            QueueAsync(RouteJobKinds.Assess, request, db, wake, ct));
+        // Assessment and matching; force skips the "needs improvement" gate, never a reject
+        v1.MapPost("/improve", (AssessRequest request, RoutesDbContext db, WakeSignal wake, CancellationToken ct) =>
+            QueueAsync(RouteJobKinds.Improve, request, db, wake, ct));
         v1.MapPost("/wake", (WakeRequest request, WakeSignal wake) =>
         {
             if (!ValidOwner(request.OwnerId))
@@ -134,10 +138,9 @@ public static class InternalApi
                 Regions = coverage.Names
             });
         });
-        // POST /improve (stage B) arrives with matching, story 12.4
     }
 
-    private static async Task<IResult> QueueAsync(AssessRequest request, RoutesDbContext db, WakeSignal wake, CancellationToken ct)
+    private static async Task<IResult> QueueAsync(string kind, AssessRequest request, RoutesDbContext db, WakeSignal wake, CancellationToken ct)
     {
         if (!ValidOwner(request.OwnerId))
         {
@@ -146,25 +149,40 @@ public static class InternalApi
 
         var ids = request.Scope?.ActivityIds?.Distinct().ToList();
         var all = request.Scope?.All == true;
-        if (all == (ids is { Count: > 0 }) || ids?.Count > JobIdsMax)
+        var range = request.Scope?.From != null || request.Scope?.To != null;
+        var forms = (ids is { Count: > 0 } ? 1 : 0) + (all ? 1 : 0) + (range ? 1 : 0);
+        if (forms != 1 || ids?.Count > JobIdsMax
+            || (range && (request.Scope!.From == null || request.Scope.To == null || request.Scope.From >= request.Scope.To)))
         {
             return ApiEnvelope.Fail(StatusCodes.Status400BadRequest, "INVALID_INPUT",
-                $"The scope is either activityIds (1 to {JobIdsMax}) or all.");
+                $"The scope is one of activityIds (1 to {JobIdsMax}), from and to (from before to), or all.");
         }
 
         var interactive = request.Interactive == true && ids is { Count: <= RoutesScheduler.InteractiveBatch };
+        var scope = new JobScope(ids, all ? true : null,
+            range ? DateTime.SpecifyKind(request.Scope!.From!.Value, DateTimeKind.Utc) : null,
+            range ? DateTime.SpecifyKind(request.Scope!.To!.Value, DateTimeKind.Utc) : null,
+            kind == RouteJobKinds.Improve && request.Force == true ? true : null);
         var job = new RouteJob
         {
             OwnerId = request.OwnerId!,
-            Kind = RouteJobKinds.Assess,
+            Kind = kind,
             Priority = interactive ? RouteJobPriorities.Interactive : RouteJobPriorities.Batch,
-            Scope = JsonSerializer.Serialize(new JobScope(ids, all ? true : null), new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            Scope = JsonSerializer.Serialize(scope, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
             Total = ids?.Count ?? 0
         };
         db.Jobs.Add(job);
         await db.SaveChangesAsync(ct);
-        wake.Poke();
-        return ApiEnvelope.Ok(new { jobId = job.Id }, StatusCodes.Status202Accepted);
+        if (interactive)
+        {
+            wake.Interactive();
+        }
+        else
+        {
+            wake.Poke();
+        }
+
+        return ApiEnvelope.Ok(new { jobId = job.Id, job.Priority }, StatusCodes.Status202Accepted);
     }
 
     private static bool ValidOwner(string? owner) => !string.IsNullOrWhiteSpace(owner) && owner.Length <= 64;

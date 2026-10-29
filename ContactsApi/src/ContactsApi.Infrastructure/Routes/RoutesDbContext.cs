@@ -41,6 +41,8 @@ public class RoutesDbContext : DbContext
         {
             e.ToTable("route_quality");
             e.HasIndex(x => new { x.OwnerId, x.ActivityId }).IsUnique();
+            // Stage B's waiting records, newest change first
+            e.HasIndex(x => new { x.OwnerId, x.NeedsImprovement, x.SourceUpdatedAt });
             e.Property(x => x.OwnerId).HasMaxLength(64);
             e.Property(x => x.SourceKey).HasMaxLength(256);
             e.Property(x => x.Type).HasMaxLength(32);
@@ -57,6 +59,8 @@ public class RoutesDbContext : DbContext
         {
             e.ToTable("matched_routes");
             e.HasIndex(x => new { x.OwnerId, x.ActivityId }).IsUnique();
+            // Due retries (per-record backoff)
+            e.HasIndex(x => new { x.OwnerId, x.NextAttemptAt });
             e.Property(x => x.OwnerId).HasMaxLength(64);
             e.Property(x => x.SourceKey).HasMaxLength(256);
             e.Property(x => x.InputHash).HasMaxLength(64);

@@ -9,6 +9,7 @@ using System.Text.Json;
 using ContactsApi.Infrastructure.Routes;
 using EchoRoutes.Worker.Assess;
 using EchoRoutes.Worker.Backend;
+using EchoRoutes.Worker.Matching;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -50,6 +51,21 @@ public class WakeSignal
         }
     }
 
+    private int _interactive;
+
+    /// <summary>An interactive job was queued: running batches stop after their current record</summary>
+    public void Interactive()
+    {
+        Interlocked.Exchange(ref _interactive, 1);
+        Poke();
+    }
+
+    /// <summary>Interactive work is waiting (asked between records)</summary>
+    public bool InteractivePending => Volatile.Read(ref _interactive) == 1;
+
+    /// <summary>Clears the hint (the scheduler is about to run the interactive jobs)</summary>
+    public void TakeInteractive() => Interlocked.Exchange(ref _interactive, 0);
+
     /// <summary>Takes the Owners woken since the last call</summary>
     public List<string> TakeWoken()
     {
@@ -66,8 +82,9 @@ public class WakeSignal
     public Task<bool> WaitAsync(TimeSpan timeout, CancellationToken ct) => _wake.WaitAsync(timeout, ct);
 }
 
-/// <summary>A job's scope: ids (the backend resolves any query into ids) or everything</summary>
-public record JobScope(List<Guid>? ActivityIds, bool? All);
+/// <summary>A job's scope: ids (the backend resolves any query into ids), a time range, or everything</summary>
+/// <param name="Force">improve only: skip the "needs improvement" gate (never a reject decision)</param>
+public record JobScope(List<Guid>? ActivityIds, bool? All, DateTime? From = null, DateTime? To = null, bool? Force = null);
 
 /// <summary>
 /// The round-robin scheduler. Each turn: interactive jobs first (one batch per Owner),
@@ -257,13 +274,25 @@ public class RoutesScheduler : BackgroundService
             else
             {
                 var ids = jobScope.ActivityIds ?? new List<Guid>();
-                var slice = ids.Skip(job.Done).Take(priority == RouteJobPriorities.Interactive ? InteractiveBatch : _options.AssessBatch).ToList();
-                var runner = scope.ServiceProvider.GetRequiredService<AssessRunner>();
-                var result = slice.Count > 0
-                    ? await runner.AssessIdsAsync(owner, slice, priority == RouteJobPriorities.Interactive, ct)
-                    : new AssessBatchResult(0, 0, 0, false);
-                job.Done += slice.Count;
-                job.Counts = JsonSerializer.Serialize(new { assessed = Count(job.Counts, "assessed") + result.Assessed }, Json);
+                var interactive = priority == RouteJobPriorities.Interactive;
+                if (job.Kind == RouteJobKinds.Improve)
+                {
+                    var slice = ids.Skip(job.Done).Take(interactive ? InteractiveBatch : _options.MatchBatch).ToList();
+                    var tally = await ImproveIdsAsync(scope.ServiceProvider, owner, slice, interactive, jobScope.Force == true, ct);
+                    job.Done += tally.Processed;
+                    job.Counts = AddCounts(job.Counts, tally.Tally);
+                }
+                else
+                {
+                    var slice = ids.Skip(job.Done).Take(interactive ? InteractiveBatch : _options.AssessBatch).ToList();
+                    var runner = scope.ServiceProvider.GetRequiredService<AssessRunner>();
+                    var result = slice.Count > 0
+                        ? await runner.AssessIdsAsync(owner, slice, interactive, ct)
+                        : new AssessBatchResult(0, 0, 0, false);
+                    job.Done += slice.Count;
+                    job.Counts = JsonSerializer.Serialize(new { assessed = Count(job.Counts, "assessed") + result.Assessed }, Json);
+                }
+
                 if (job.Done >= ids.Count)
                 {
                     job.State = RouteJobStates.Done;
@@ -284,6 +313,42 @@ public class RoutesScheduler : BackgroundService
 
         await db.SaveChangesAsync(CancellationToken.None);
         return true;
+    }
+
+    /// <summary>
+    /// Assesses and matches records named by id. Records the backend does not return
+    /// (another Owner's, or deleted) count as processed. A batch job yields to
+    /// interactive work between records; an interactive one never does.
+    /// </summary>
+    private async Task<MatchBatchResult> ImproveIdsAsync(IServiceProvider sp, string owner, List<Guid> ids, bool interactive, bool force,
+        CancellationToken ct)
+    {
+        if (ids.Count == 0)
+        {
+            return new MatchBatchResult(0, 0, new MatchTally(), false);
+        }
+
+        var tracks = new List<RouteTrack>(ids.Count);
+        foreach (var chunk in ids.Chunk(RoutesFeedLimits.TracksMax))
+        {
+            tracks.AddRange(await _backend.TracksAsync(owner, chunk, interactive, ct));
+        }
+
+        // In the job's order, so a batch that stops early resumes at the right id
+        var position = ids.Select((id, i) => (id, i)).GroupBy(x => x.id).ToDictionary(g => g.Key, g => g.First().i);
+        tracks = tracks.OrderBy(t => position.GetValueOrDefault(t.Id)).ToList();
+        var runner = sp.GetRequiredService<MatchRunner>();
+        var result = await runner.ImproveAsync(owner, tracks, force, interactive ? () => false : () => _wake.InteractivePending, ct);
+        result.Tally.Gone += ids.Count - tracks.Count;
+        var processed = result.Stopped && result.Processed < tracks.Count ? position[tracks[result.Processed].Id] : ids.Count;
+        return result with { Seen = ids.Count, Processed = processed };
+    }
+
+    private static string AddCounts(string json, MatchTally add)
+    {
+        var tally = string.IsNullOrEmpty(json) ? new MatchTally() : JsonSerializer.Deserialize<MatchTally>(json, Json) ?? new MatchTally();
+        tally.Add(add);
+        return JsonSerializer.Serialize(tally, Json);
     }
 
     /// <summary>Owners from the backend, every poll interval; dropped Owners lose their cursor</summary>

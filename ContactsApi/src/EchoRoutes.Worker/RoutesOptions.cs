@@ -37,4 +37,64 @@ public class RoutesOptions
 
     /// <summary>How often each Owner's change feed is polled, in seconds (AD-33 rule 6)</summary>
     public int PollSeconds { get; set; } = 120;
+
+    // ---- Stage B: the engine. Every engine-facing number is configuration (AD-36;
+    // the Pi spike sets them), never a constant in the code.
+
+    /// <summary>Engine requests in flight at once (AD-36 rule 3: one)</summary>
+    public int EngineConcurrency { get; set; } = 1;
+
+    /// <summary>Hard per-call timeout, in seconds; a timeout is an engine failure</summary>
+    public int EngineTimeoutSeconds { get; set; } = 15;
+
+    /// <summary>Valhalla breakage_distance in metres</summary>
+    public double BreakageDistanceM { get; set; } = 5000;
+
+    /// <summary>Valhalla search_radius in metres (never below the source's gps_accuracy)</summary>
+    public double SearchRadiusM { get; set; } = 100;
+
+    /// <summary>gps_accuracy for Google Timeline points, in metres</summary>
+    public double GpsAccuracyTimelineM { get; set; } = 75;
+
+    /// <summary>gps_accuracy for dense GPS sources (Sports Tracker, Google Fit, GPX…), in metres</summary>
+    public double GpsAccuracyDenseM { get; set; } = 15;
+
+    /// <summary>A gap longer than this (metres) is cut before the call and becomes a gap piece</summary>
+    public double SplitGapM { get; set; } = 5000;
+
+    /// <summary>A gap longer than this (minutes) is cut before the call and becomes a gap piece</summary>
+    public double SplitGapMinutes { get; set; } = 15;
+
+    /// <summary>Most points of one engine call (service_limits.trace.max_shape)</summary>
+    public int MaxPointsPerCall { get; set; } = 2000;
+
+    /// <summary>Most kilometres of one engine call (service_limits.trace.max_distance)</summary>
+    public double MaxKmPerCall { get; set; } = 600;
+
+    /// <summary>Records per stage B batch (AD-36 rule 3)</summary>
+    public int MatchBatch { get; set; } = 25;
+
+    /// <summary>Pause after each stage B batch, in milliseconds</summary>
+    public int MatchPauseMs { get; set; } = 1000;
+
+    /// <summary>Per-record backoff after an engine failure, in minutes, comma separated; one more failure is final</summary>
+    public string BackoffMinutes { get; set; } = "1,10,60";
+
+    /// <summary>Consecutive engine failures (errors or timeouts) that open the circuit breaker</summary>
+    public int BreakerFailures { get; set; } = 5;
+
+    /// <summary>How long an open breaker pauses all matching, in minutes</summary>
+    public double BreakerPauseMinutes { get; set; } = 10;
+
+    /// <summary>Most vertices of a stored matched line (AD-34 rule 1)</summary>
+    public int MaxStoredVertices { get; set; } = 1000;
+
+    /// <summary>Days between orphan sweeps of an Owner (AD-34 rule 7: weekly)</summary>
+    public double SweepDays { get; set; } = 7;
+
+    /// <summary>The backoff steps, parsed</summary>
+    public TimeSpan[] Backoff() =>
+        BackoffMinutes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(s => double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var m) ? m : 0)
+            .Where(m => m > 0).Select(TimeSpan.FromMinutes).ToArray();
 }

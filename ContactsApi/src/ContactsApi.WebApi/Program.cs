@@ -68,6 +68,9 @@ builder.Services.AddScoped<ContactsApi.Infrastructure.Atlas.AtlasService>();
 // The route-quality service reads Atlas only through /internal/routes/* (AD-33)
 builder.Services.AddScoped<ContactsApi.Infrastructure.Atlas.AtlasRoutesFeed>();
 builder.Services.AddSingleton<InteractiveLoad>();
+// The backend calls the route-quality service's /internal/v1 with Routes__BackendToken
+RoutesServiceClient.Configure(builder.Services, builder.Configuration);
+builder.Services.AddSingleton<RoutesServiceClient>();
 // The fusion service: imports queue their time windows, it fuses them in the background
 builder.Services.AddSingleton<FusionSignal>();
 builder.Services.AddSingleton<ContactsApi.Infrastructure.Atlas.IFusionSignal>(sp => sp.GetRequiredService<FusionSignal>());
