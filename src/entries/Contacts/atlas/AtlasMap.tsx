@@ -125,6 +125,8 @@ export interface AtlasMapProps {
   onMark?: (lat: number, lon: number) => void;
   /** Removes a marked point (a click on it) */
   onUnmark?: (index: number) => void;
+  /** The selected flight's path: its flown track or the great circle between its airports (AD-42) */
+  flightPath?: [number, number][] | null;
 }
 
 /** A numbered marked point, at the Owner's size and colour (AD-41) */
@@ -660,6 +662,7 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
   marking,
   onMark,
   onUnmark,
+  flightPath,
 }) => {
   const ui = useUi();
   // One canvas renderer, made once; GrabDistance keeps its tolerance (AD-41 rule 6)
@@ -886,7 +889,7 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
             ))}
         {density ? null : selectedFlight ? (
           <Polyline
-            positions={selectedFlight.path}
+            positions={flightPath ?? selectedFlight.path}
             pathOptions={{
               color: highlightColor,
               weight: 2.5,

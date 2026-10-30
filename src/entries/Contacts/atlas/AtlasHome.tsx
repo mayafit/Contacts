@@ -195,6 +195,29 @@ const AtlasHome: React.FC = () => {
     window.history.replaceState(null, '', window.location.pathname + (rest ? `?${rest}` : ''));
   }, []);
 
+  // Back from allowing email content for flights (AD-42): flights are searched within the hour
+  const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('connected') !== 'mail') {
+      return;
+    }
+    if (params.get('declined')) {
+      setError('Echo may not read email content: the permission was not given.');
+    } else {
+      setNotice(
+        'Echo may now read email content; your flights are searched in your mail within the hour.',
+      );
+    }
+    params.delete('connected');
+    params.delete('declined');
+    const rest = params.toString();
+    window.history.replaceState(null, '', window.location.pathname + (rest ? `?${rest}` : ''));
+  }, []);
+
+  // The selected flight's path from its flight block (AD-42 rule 8)
+  const [flightPath, setFlightPath] = useState<[number, number][] | null>(null);
+
   // Back from the Google sign-in that was asked to allow Drive (AD-40): the Google Drive tab
   const [driveAllowed, setDriveAllowed] = useState(false);
   useEffect(() => {
@@ -734,6 +757,11 @@ const AtlasHome: React.FC = () => {
           {error}
         </Alert>
       )}
+      {notice && (
+        <Alert severity="success" onClose={() => setNotice(null)} sx={{ borderRadius: 0 }}>
+          {notice}
+        </Alert>
+      )}
       {mergeFrom && (
         <Alert
           severity="info"
@@ -762,6 +790,7 @@ const AtlasHome: React.FC = () => {
                 selectedTrack={detail?.points}
                 selectedRoute={selectedRoute}
                 selectedId={detail?.summary.id}
+                flightPath={flightPath}
                 selectedVisitId={visit?.id}
                 area={area}
                 drawing={drawing}
@@ -866,6 +895,7 @@ const AtlasHome: React.FC = () => {
               <ActivityPanel
                 key={detail.summary.id}
                 detail={detail}
+                onFlightPath={setFlightPath}
                 onBack={() => {
                   setDetail(null);
                   setCursor(null);

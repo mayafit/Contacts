@@ -28,4 +28,8 @@
   <ItemGroup>
     <InternalsVisibleTo Include="ContactsApi.Tests" />
   </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Atlas/Flights/airports.csv" LogicalName="ContactsApi.Infrastructure.Atlas.Flights.airports.csv" />
+  </ItemGroup>
 </Project>
