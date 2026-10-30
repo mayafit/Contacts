@@ -174,6 +174,26 @@ const AtlasHome: React.FC = () => {
   // Bumped when new results arrive, so the map fits to them (not to the old ones)
   const [fitTick, setFitTick] = useState(0);
 
+  // Back from the Google sign-in that was asked to allow Drive (AD-40): the Google Drive tab
+  const [driveAllowed, setDriveAllowed] = useState(false);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('connected') !== 'takeout') {
+      return;
+    }
+    if (params.get('declined')) {
+      setError('Google Drive was not connected: the permission was not given.');
+    } else {
+      setDriveAllowed(true);
+    }
+    setImportTab('google-drive');
+    setImportOpen(true);
+    params.delete('connected');
+    params.delete('declined');
+    const rest = params.toString();
+    window.history.replaceState(null, '', window.location.pathname + (rest ? `?${rest}` : ''));
+  }, []);
+
   // Back from Microsoft's sign-in (OneDrive): show the OneDrive tab with the outcome
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1060,6 +1080,8 @@ const AtlasHome: React.FC = () => {
         }}
         onChanged={changed}
         initialTab={importTab}
+        driveAllowed={driveAllowed}
+        onDriveConnected={() => setDriveAllowed(false)}
       />
       <PhotoViewer
         photos={viewer?.photos ?? []}

@@ -171,6 +171,50 @@ public class GoogleTokenService
         }
     }
 
+    /// <summary>
+    /// An access token for a user's stored sign-in, telling a refused sign-in (none stored,
+    /// or Google answers invalid_grant: sign in again) from Google not being reachable now
+    /// (try later). Used by background pickups that must not give up on a network blip.
+    /// </summary>
+    /// <param name="userId">Google account id ("sub")</param>
+    /// <returns>The token, or null and whether the sign-in was refused</returns>
+    public async Task<(string? AccessToken, bool Refused)> GetAccessTokenOrWhyAsync(string userId)
+    {
+        if (_userTokens.TryGetValue(userId, out var cached) && cached.ExpiresAt - DateTime.UtcNow > TimeSpan.FromMinutes(10))
+        {
+            return (cached.AccessToken, false);
+        }
+
+        var refreshToken = await GetStoredRefreshTokenAsync(userId);
+        if (refreshToken == null)
+        {
+            return (null, true);
+        }
+
+        try
+        {
+            var flow = new GoogleAuthorizationCodeFlow(new GoogleAuthorizationCodeFlow.Initializer
+            {
+                ClientSecrets = new ClientSecrets { ClientId = _options.ClientId, ClientSecret = _options.ClientSecret }
+            });
+            var response = await flow.RefreshTokenAsync("user", refreshToken, CancellationToken.None);
+            var token = (response.AccessToken, DateTime.UtcNow.AddSeconds(response.ExpiresInSeconds ?? 3600));
+            _userTokens[userId] = token;
+            return (token.AccessToken, false);
+        }
+        catch (Google.Apis.Auth.OAuth2.Responses.TokenResponseException ex)
+            when (ex.Error?.Error is "invalid_grant" or "unauthorized_client" or "invalid_client")
+        {
+            _logger.LogWarning("Google refused the refresh token ({Error})", ex.Error?.Error);
+            return (null, true);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Google could not be reached to renew a sign-in");
+            return (null, false);
+        }
+    }
+
     /// <summary>Remembers a user's refresh token beyond the session, encrypted</summary>
     /// <param name="userId">Google account id ("sub")</param>
     /// <param name="refreshToken">Refresh token</param>

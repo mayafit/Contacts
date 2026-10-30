@@ -32,6 +32,7 @@ import { SamsungCollector, samsungKind } from './importers/samsung';
 import { tokens } from '../theme/contactsTheme';
 import { thinTrack, trackLength } from './geo';
 import SportsTrackerTab from './SportsTrackerTab';
+import GoogleDriveTab from './GoogleDriveTab';
 import OneDriveTab from './OneDriveTab';
 
 /** Props for ImportDialog */
@@ -42,10 +43,14 @@ export interface ImportDialogProps {
   onChanged: () => void;
   /** The tab shown when it opens (default: files) */
   initialTab?: ImportTab;
+  /** Back from the Google sign-in that allowed Drive (AD-40): the Google Drive tab connects */
+  driveAllowed?: boolean;
+  /** The Google Drive tab connected after the sign-in */
+  onDriveConnected?: () => void;
 }
 
 /** The dialog's tabs */
-export type ImportTab = 'files' | 'sports-tracker' | 'onedrive';
+export type ImportTab = 'files' | 'sports-tracker' | 'onedrive' | 'google-drive';
 
 /** Items per request: keeps each request well under Cloudflare's 100 MB */
 const MAX_POINTS = 25_000;
@@ -173,6 +178,8 @@ const ImportDialog: React.FC<ImportDialogProps> = ({
   onClose,
   onChanged,
   initialTab = 'files',
+  driveAllowed = false,
+  onDriveConnected,
 }) => {
   const [tab, setTab] = useState<ImportTab>(initialTab);
   useEffect(() => {
@@ -297,6 +304,7 @@ const ImportDialog: React.FC<ImportDialogProps> = ({
         <Tab value="files" label="Files" disabled={busy} />
         <Tab value="sports-tracker" label="Sports Tracker" disabled={busy} />
         <Tab value="onedrive" label="OneDrive photos" disabled={busy} />
+        <Tab value="google-drive" label="Google Drive" disabled={busy} />
       </Tabs>
       <DialogContent sx={{ pt: '16px !important' }}>
         <Box sx={{ display: tab === 'sports-tracker' ? 'block' : 'none' }}>
@@ -305,6 +313,14 @@ const ImportDialog: React.FC<ImportDialogProps> = ({
         <Box sx={{ display: tab === 'onedrive' ? 'block' : 'none' }}>
           <OneDriveTab open={open} onChanged={onChanged} />
         </Box>
+        {tab === 'google-drive' && (
+          <GoogleDriveTab
+            open={open}
+            onChanged={onChanged}
+            justAllowed={driveAllowed}
+            onConnected={onDriveConnected}
+          />
+        )}
         {tab === 'files' && (
           <>
             <Typography variant="body2" sx={{ color: tokens.textSecondary, mb: 1 }}>

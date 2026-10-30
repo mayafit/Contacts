@@ -5,8 +5,8 @@
 > places worth a review that they have not reviewed yet.
 
 Builds on Epic 10 (`epic-10-personal-atlas.md`: import, places, the place panel,
-Insights). Requirements: PRD FR-64 to FR-66 (`echo/prd.md` §4.13). Architecture:
-AD-39 (`echo/architecture.md` §5B).
+Insights). Requirements: PRD FR-64 to FR-67 (`echo/prd.md` §4.13). Architecture:
+AD-39 and AD-40 (`echo/architecture.md` §5B).
 
 ## The data (first Owner, 2026-10-30)
 
@@ -74,6 +74,36 @@ Acceptance criteria (FR-66, AD-39 rules 5 and 6):
 - [x] A concurrent choice stored once; a check constraint on the decisions; the
   overview reads counts from small columns and shows a linked review at its place.
 
+### 13.6 Reviews from a scheduled Takeout on Drive — Phase 1
+
+As the Owner, I want my new reviews to arrive by themselves, so I schedule Takeout to
+Drive once and Echo picks up each export.
+
+Acceptance criteria (FR-67, AD-40):
+- [x] The opt-in `takeout` adds `drive.readonly` to the Google sign-in, like the Gmail
+  and Calendar opt-ins; declining leaves the sign-in as it was.
+- [x] `atlas.connections` row `google-drive-takeout`: connect (only with the scope
+  granted), status, check now, disconnect.
+- [x] The daily check: Takeout zips only, new ones oldest first, over 500 MB skipped,
+  streamed to `/tmp` and deleted, only the reviews file read (at most 20 MB), imported
+  as its own import, each export once.
+- [x] Lost access marks the connection expired; a renewal note after 70 days.
+- [x] The import dialog's Google Drive tab, with the steps to schedule Takeout.
+- [x] Tests: the parser (C#) on a Takeout-shaped zip; the check against a fake Drive
+  (new, seen, oversized, no reviews, lost access); the opt-in scopes; the tab (Jest).
+
+### 13.7 Takeout pickup review fixes — Phase 1
+
+- [x] Only the Owner's own files; `.zip` by name, no MIME filter.
+- [x] A check claims its connection (one at a time, also across pods) and always ends
+  with a status; dead claims reset at start.
+- [x] Refused sign-in (expired) told from Google unreachable (error); a 403 on one
+  file is that file's note; passing failures retried, lasting ones seen.
+- [x] The first check takes only the newest export; new reviews counted, not all.
+- [x] Download time limit, bounded zip entry read, `/tmp` capped at 1 GiB.
+- [x] The tab polls after Check now and connect, and connects once after the sign-in;
+  the opt-in is refused while signed out.
+
 ### 13.4 Tests — Phase 1
 
 - [x] Pure: the parser (published, draft, answers, the `location` array form, skips,
@@ -99,3 +129,4 @@ Acceptance criteria (FR-66, AD-39 rules 5 and 6):
 | FR-64 Import my reviews | 13.1, 13.4 |
 | FR-65 My review on each place | 13.2, 13.4 |
 | FR-66 Reminders to review | 13.3, 13.4 |
+| FR-67 Reviews from a scheduled Takeout on Drive | 13.6 |

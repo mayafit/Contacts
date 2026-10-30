@@ -310,7 +310,7 @@ export interface LinkedPlace {
 
 /** A connected account that Atlas syncs from */
 export interface SourceConnection {
-  provider: 'sports-tracker' | 'onedrive';
+  provider: 'sports-tracker' | 'onedrive' | 'google-drive-takeout';
   /** Username or email as entered */
   account: string | null;
   status: 'idle' | 'syncing' | 'error' | 'expired';
@@ -507,6 +507,27 @@ export interface ReviewsOverview {
   recent: PlaceReview[];
   due: ReviewDue[];
   dueTotal: number;
+}
+
+/** A Takeout export the Drive pickup handled (AD-40) */
+export interface TakeoutSeen {
+  id: string;
+  name: string;
+  modified: string;
+  /** Reviews read from it; null when none could be (note says why) */
+  reviews: number | null;
+  note: string | null;
+}
+
+/** The Google Drive connection for scheduled Takeout exports (AD-40) */
+export interface TakeoutDriveStatus {
+  /** The Google sign-in allows reading Drive */
+  granted: boolean;
+  connection: SourceConnection | null;
+  /** The newest export handled */
+  lastExport: TakeoutSeen | null;
+  /** No new export for 70 days: the Takeout schedule may have ended */
+  stale: boolean;
 }
 
 /** A choice about a review reminder */
