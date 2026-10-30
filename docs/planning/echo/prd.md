@@ -667,13 +667,22 @@ When a route is matched to roads, Echo records which roads it followed: route nu
 Some drives cannot be placed on the roads from their own points: they are too sparse, or the engine breaks on them. In the first Owner's data on 2026-10-29 this was 2,713 of 14,369 matchable drives (2,081 low confidence, 632 failed). But the Owner drives the same trips again and again: **88%** of those drives (2,394) have at least one confidently matched drive whose start and end are both within about 500 m of theirs; 2,290 have three or more, and 2,315 have one that started within two hours of the same time of day. A drive home from work is the **reverse** of the drives to work (37 drives match only reversed).
 
 **On demand,** for one drive the Owner chooses ("Rebuild from similar drives" in the Activity panel), Echo:
-1. **Finds similar drives.** These are the Owner's own confidently matched drives of the same type whose start and end are both near this drive's start and end, or near its end and start (reversed). A drive counts as similar only when this drive's own recorded points lie along it. Similar times of day, and drives that agree with each other, rank higher.
+1. **Finds similar drives.** These are the Owner's own confidently matched drives of the same type that run along this drive's own recorded points, in either direction. The **way** decides, not the ends: a recording often starts late or stops early (the phone found its fix only on the road, or the last point is a stray one), so a drive is similar when most of this drive's points lie along it, wherever the two start and end. Among them, Echo prefers:
+   - the way that most of the similar drives take (a common commute beats a one-off detour that happens to pass the same few points);
+   - the same time of day and the same kind of day (a weekday morning commute for a weekday morning drive);
+   - a way that could be driven in this drive's real time, without a long detour;
+   - drives whose start and end are also near this one's.
+
+   Echo tries the best drive of up to three different ways, so a rare way still gets its chance when the common one does not fit.
 2. **Borrows points.** Between two of this drive's real points that both lie along the most similar drive, Echo adds synthetic points taken from that drive's road line. Each synthetic point is timed between the two real points, in proportion to the distance along the line, so the drive never moves faster than its type allows. Where this drive left the similar drive's way, nothing is borrowed.
 3. **Matches again.** The real and borrowed points are placed on the roads as usual (FR-56).
 4. **Suggests.** The result is drawn on the map as a **suggestion**, with what it is based on: "From 14 similar drives (6 agree), the closest on 3 Sep at 08:12, reversed", and its confidence. The Owner chooses **Use this route** or **Discard**. Nothing changes until they choose.
 
 Details:
 - **Results.** Measured on 60 of the first Owner's weak drives, picked at random: a rebuild placed **38** on the roads with confidence, against 6 by the normal matching. 9 had no similar drive that follows them; those are for marking the way.
+- **Why the way, not the ends** (2026-10-30). A morning commute recorded with 11 points over 27 minutes started at home but stopped about 2 km short of work, its last point a stray one. Only **1** of the Owner's 9,143 confident drives had both ends within 500 m of it, so a search by the ends found nothing. Yet dozens of commutes had 9 of its 11 points within 200 m of their way.
+- **Partial overlap.** Points are borrowed only between this drive's own first and last points along the similar drive: a route is never extended to where the recording did not go (the place it "probably" ended is a guess the Owner can make by marking the way).
+- **Stray points.** A point that the drive could only have reached, and left, faster than its type allows (with a minute's slack, as Timeline times are rounded) is left out of the search.
 - **Provenance.** Borrowed stretches are *inferred* pieces (dashed), never *observed*. The confidence counts only the drive's real points. It also counts the share of them that lie along the similar drive, so a weak resemblance gives a weak suggestion.
 - **Lasting.** A route the Owner used is kept as it is when Echo's matching rule changes. It is rebuilt automatically only when the drive's own points change, and "Revert to recorded" still applies.
 - **No similar drives.** When no similar drive is found, or the resemblance is too weak, the panel says so and offers marking the way (FR-63).

@@ -640,6 +640,30 @@ Acceptance criteria (FR-63, AD-38):
   interactive jobs; marking ends with an unrebuildable reload and is exclusive with
   the Area tool.
 
+### 12.19 Similar drives by the way, not the ends — R1
+
+As the Owner, I want a drive whose recording started late, stopped early or ended on
+a stray point rebuilt from the drives that run along its points, so that a commute
+with a bad end is not left with "no similar drive".
+
+Acceptance criteria (FR-62, AD-38 rule 3, amended 2026-10-30):
+- [x] `matched_routes.Cells` (bigint[], GIN): the 0.01° cells within 200 m of the
+  line, written with every line and filled at start-up for rows matched before it
+  (migration `RoutesCells`; no rule bump).
+- [x] Stray points (reached and left faster than 1.5 × the maximum, with 60 s of
+  slack) take no part in the search.
+- [x] The pool: rows whose cells overlap the drive's points' cells, with a cover of at
+  least 0.6; rows without cells yet by both ends; the best 200 by cover, ends, time.
+- [x] Each line scored in both directions; dropped when its span is faster than the
+  type's maximum; scored by fit, time of day, kind of day, detour and ends.
+- [x] The best 30 grouped into ways (90% of the span within 150 m); the bases tried
+  are the best of up to three ways; the basis says how many drives take its way.
+- [x] `no_similar` says when drives are still being prepared.
+- [x] The panel: "From 40 similar drives (12 take this way), the closest on …".
+- [x] Tests: pure (cells, stray points, a late start and an early stop, direction,
+  pace, ways, kinds of day), Postgres (the corridor pool, the fallback by ends, the
+  backfill), Jest (the basis text).
+
 ## Coverage
 
 | Requirement | Stories |
@@ -651,7 +675,7 @@ Acceptance criteria (FR-63, AD-38):
 | FR-59 Route quality in Insights | 12.10 |
 | FR-60 Routes abroad | 12.11 |
 | FR-61 Roads travelled | 12.16 |
-| FR-62 Rebuild from similar drives | 12.17 |
+| FR-62 Rebuild from similar drives | 12.17, 12.19 |
 | FR-63 Mark the way | 12.18 |
 | NFR-20 Route matching stays home | 12.1, 12.2 |
 | NFR-21 Route quality fits the Pi | 12.1, 12.5, 12.7 |
