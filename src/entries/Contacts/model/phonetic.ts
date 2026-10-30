@@ -222,22 +222,28 @@ export const buildDictionary = (contacts: Contact[]): SpellingDictionary => {
 };
 
 /** Where a part's spelling came from, strongest first */
-export type SpellingSource = 'twin' | 'contacts' | 'gemini';
+export type SpellingSource = 'twin' | 'contacts' | 'translate' | 'gemini';
 
-const WEAKNESS: Record<SpellingSource, number> = { twin: 0, contacts: 1, gemini: 2 };
+const WEAKNESS: Record<SpellingSource, number> = { twin: 0, contacts: 1, translate: 2, gemini: 3 };
+
+/** A spelling a service gave */
+export interface ServiceSpelling {
+  spelling: string;
+  source: 'translate' | 'gemini';
+}
 
 /**
  * One word's spelling: a Latin word as it is; a Hebrew word from the dictionary,
  * else piece by piece over its hyphens, else from Gemini's answers.
  * @param word - Normalized word
  * @param dict - The dictionary
- * @param extra - Gemini's spellings
+ * @param extra - The services' spellings
  * @returns The spelling and its source, or null
  */
 const spellWord = (
   word: string,
   dict: SpellingDictionary,
-  extra: Record<string, string>,
+  extra: Record<string, ServiceSpelling>,
 ): { spelling: string; source: SpellingSource | null } | null => {
   if (!isHebrewWord(word)) {
     return { spelling: word, source: null };
@@ -250,7 +256,7 @@ const spellWord = (
   if (pieces.length > 1 && pieces.every((p) => p && dict.has(p))) {
     return { spelling: pieces.map((p) => dict.get(p)!.spelling).join('-'), source: 'contacts' };
   }
-  return extra[word] ? { spelling: extra[word], source: 'gemini' } : null;
+  return extra[word] ?? null;
 };
 
 /** What a click does for one empty phonetic part */
@@ -271,14 +277,14 @@ export interface PartFill {
  * @param name - The draft's name
  * @param twins - Its twins
  * @param dict - The dictionary
- * @param extra - Gemini's spellings so far
+ * @param extra - The services' spellings so far
  * @returns One entry per part to fill
  */
 export const planFill = (
   name: ContactName,
   twins: Twin[],
   dict: SpellingDictionary,
-  extra: Record<string, string> = {},
+  extra: Record<string, ServiceSpelling> = {},
 ): PartFill[] =>
   PHONETIC_PARTS.flatMap(({ part, name: field, phonetic }): PartFill[] => {
     const words = wordsOf(name[field]);
@@ -302,7 +308,18 @@ export const planFill = (
   });
 
 /**
- * The distinct Hebrew words a plan still needs from Gemini (at most 20).
+ * The name's words in order (first, middle, last) that may be sent for context: Hebrew
+ * words of the sendable form and Latin words; at most 10.
+ * @param name - The name
+ * @returns Words
+ */
+export const nameContext = (name: ContactName): string[] =>
+  PHONETIC_PARTS.flatMap(({ name: field }) => wordsOf(name[field]))
+    .filter((w) => (isHebrewWord(w) && SENDABLE.test(w)) || /^[A-Za-z'-]{1,40}$/.test(w))
+    .slice(0, 10);
+
+/**
+ * The distinct Hebrew words a plan still needs from a service (at most 20).
  * @param plan - The plan
  * @returns Words
  */

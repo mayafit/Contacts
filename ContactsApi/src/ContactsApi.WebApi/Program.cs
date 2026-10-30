@@ -52,6 +52,9 @@ builder.Services.AddSingleton<ScopePreferences>();
 // Assistant: Gemini key from Vault (Gemini__ApiKey); without it the assistant reports itself disabled
 builder.Services.Configure<ContactsApi.WebApi.Controllers.GeminiOptions>(builder.Configuration.GetSection("Gemini"));
 builder.Services.AddSingleton<GeminiService>();
+// The phonetic fill's Google Translate (AD-43 rule 4); off until GoogleTranslate__ApiKey is set
+builder.Services.Configure<GoogleTranslateOptions>(builder.Configuration.GetSection("GoogleTranslate"));
+builder.Services.AddSingleton<NameTranslator>();
 builder.Services.AddHttpClient("gemini", c =>
 {
     c.BaseAddress = new Uri("https://generativelanguage.googleapis.com/");

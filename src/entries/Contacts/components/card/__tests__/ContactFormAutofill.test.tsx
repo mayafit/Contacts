@@ -45,7 +45,10 @@ describe('contact card auto-fill (FR-77, FR-78)', () => {
   });
 
   it('fills the phonetic name from the contacts and Gemini, only the empty Hebrew parts', async () => {
-    client.transliterateNames.mockResolvedValue({ אברהמי: 'Avrahami' });
+    client.transliterateNames.mockResolvedValue({
+      spellings: { אברהמי: 'Avrahami' },
+      sources: { אברהמי: 'gemini' },
+    });
     render(
       <Harness
         initial={{ resourceName: 'people/1', names: [{ givenName: 'יוסי', familyName: 'אברהמי' }] }}
@@ -56,7 +59,7 @@ describe('contact card auto-fill (FR-77, FR-78)', () => {
     fireEvent.click(screen.getAllByRole('button', { name: 'Fill from the Hebrew name' })[0]);
     await waitFor(() => expect(latest.names?.[0].phoneticFamilyName).toBe('Avrahami'));
     // Only the word the contacts do not spell was sent
-    expect(client.transliterateNames).toHaveBeenCalledWith(['אברהמי']);
+    expect(client.transliterateNames).toHaveBeenCalledWith(['אברהמי'], ['יוסי', 'אברהמי']);
     expect(latest.names?.[0]).toMatchObject({
       phoneticGivenName: 'Yossi',
       phoneticFullName: null,

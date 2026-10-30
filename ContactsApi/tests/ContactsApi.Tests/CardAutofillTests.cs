@@ -117,4 +117,33 @@ public class CardAutofillTests
         Assert.Equal("יוסי\nכהן", request["contents"]![0]!["parts"]![0]!["text"]!.GetValue<string>());
         Assert.Equal(0, request["generationConfig"]!["temperature"]!.GetValue<int>());
     }
+    [Fact]
+    public void A_framed_translation_spells_the_name_word_by_word()
+    {
+        var name = new[] { "טל", "שחר" };
+        Assert.Equal(new Dictionary<string, string> { ["טל"] = "Tal", ["שחר"] = "Shahar" },
+            NameTranslator.Align(name, "My name is Tal Shahar."));
+        // Latin words of the name keep their place and are not returned
+        Assert.Equal(new Dictionary<string, string> { ["כהן"] = "Cohen" },
+            NameTranslator.Align(new[] { "Dana", "כהן" }, "my name is dana cohen"));
+        Assert.Equal("Ben-David", NameTranslator.Align(new[] { "בן-דוד" }, "My name is Ben-David")["בן-דוד"]);
+        // Another number of words, another sentence, or not Latin: nothing is guessed
+        Assert.Empty(NameTranslator.Align(new[] { "אבי", "ברלב" }, "My name is Avi Bar Lev"));
+        Assert.Empty(NameTranslator.Align(name, "dawn dew"));
+        Assert.Empty(NameTranslator.Align(name, "My name is Tal 5"));
+        Assert.Empty(NameTranslator.Align(name, null));
+        Assert.Equal("O'Neil", NameTranslator.Align(new[] { "או'ניל" }, "My name is O&#39;Neil")["או'ניל"]);
+    }
+
+    [Fact]
+    public void Only_name_words_go_to_Google_Translate()
+    {
+        Assert.Equal(new[] { "דנה", "Cohen", "בן-דוד" }, Transliteration.CheckName(new[] { "דנה", " Cohen ", "בן-דוד" }));
+        // The name is context only: odd words are dropped, not refused
+        Assert.Equal(new[] { "דנה" }, Transliteration.CheckName(new[] { "דנה", "a b", "<b>", "\"" }));
+        Assert.Null(Transliteration.CheckName(new[] { "<b>" }));
+        Assert.Null(Transliteration.CheckName(Array.Empty<string>()));
+        Assert.Null(Transliteration.CheckName(null));
+        Assert.Equal(10, Transliteration.CheckName(Enumerable.Repeat("דנה", 11))!.Count);
+    }
 }

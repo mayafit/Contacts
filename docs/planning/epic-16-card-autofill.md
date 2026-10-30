@@ -44,6 +44,30 @@ What Echo already has:
   **Find in mail**, fill at once or the menu, "already on", the address type, the
   captions and the T2 link (rule 8).
 
+### 16.4 The same fills in the table — Phase 1
+
+On 2026-10-30, after 16.1 and 16.2 were live, the Owner asked for the fills in the
+table's cells too, when a cell is edited and its text box appears.
+
+- [x] `EditableCell` `assist`: the button inside an empty text box, the menu, focus
+  kept so the click does not save (AD-43 rule 10).
+- [x] `cellAssist.tsx`: the Phonetic name and Email columns, through the card's
+  `spellPhonetic` and `lookUpEmail`; a new address typed by its domain.
+
+### 16.5 Google Translate before Gemini — Phase 1
+
+On 2026-10-30 the Owner preferred a translation service to Gemini (faster, no model
+tokens). Google Translate translates a name alone as words ("dawn dew" for טל שחר);
+framed as "שמי …" ("My name is …") it spelled 10 hard names right.
+
+- [x] `NameTranslator`: Cloud Translation v2 with the frame, the alignment
+  (as many words as the name, Latin only), the key in a header (AD-43 rule 4).
+- [x] `POST /api/assistant/transliterate {words, name}`: Translate first, Gemini for
+  the words left; sources in the reply; the caption names Google Translate.
+- [ ] The operator enables the Cloud Translation API on a Google Cloud project and
+  puts its key in Vault (`secret/contacts`, `GoogleTranslate__ApiKey`). Until then
+  the fill uses Gemini.
+
 ### 16.3 Deployment — Phase 1
 
 - [ ] Merged, images built for arm64, rolled out; checked on the Owner's Contacts.
