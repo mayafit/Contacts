@@ -850,6 +850,35 @@ For a flight with a number, Echo finds the actual flight in public data and show
 - **Otherwise** the map draws the great-circle arc between the actual departure and arrival airports (no longer between the phone's last and first points), and the panel says the flown path is not available for older flights.
 - The Owner's own recorded points stay as they are; the path is the aircraft's, drawn in the flight's style.
 
+### 4.16 Contacts: Auto-fill in the Contact Card (Proposed)
+
+Most of the Owner's Contacts are written in Hebrew. Their phonetic names (the Latin spelling Google and the phone use to sort them and for voice) and their email addresses are often empty, although Echo can usually find both: the Owner's other Contacts already spell most Hebrew names, an English version of the same person is often on file, and the person's mail is in the Owner's mailbox. FR-14 already proposes emails for many Contacts at once, from the activity scan; these requirements bring both fills into the contact card, for the one Contact the Owner is editing, at a click.
+
+- **Only the draft.** Both fills change the card's draft, never Google. The Owner sees the value, can change it, and saves it with **Save** as any edit (FR-05). Closing the card without saving drops it.
+- **The card and the merge dialog.** The contact card's form is also the merge dialog's (FR-10), so the fills are there too.
+
+#### FR-77: Fill the phonetic name from the Hebrew name — Proposed
+An empty phonetic field (first, middle or last) whose name part is written in Hebrew shows an **auto-fill** symbol inside it. Clicking it fills **every empty phonetic part** whose name part is in Hebrew, in Latin letters, and says where each spelling came from.
+
+- **Where the spelling comes from**, in order:
+  1. **The same person in English.** Another of the Owner's Contacts with the same phone number or email address whose name is written in Latin letters (a Hebrew/English twin, FR-10): its name part is the phonetic part ("from Dana Cohen, same phone"). When several such Contacts disagree on a part, none of them is used for it.
+  2. **How the Owner's Contacts spell the name.** For each Hebrew word, the Latin spelling the Owner's other Contacts most often carry for it in the same position (the phonetic first name of each Contact named "יוסי" says how the Owner spells יוסי: "Yossi"). It follows the Owner's own conventions ("Cohen", not "Kohen") and needs no service.
+  3. **Gemini**, for the words neither of the above spells: only those Hebrew words are sent, with no other detail of the Contact (§5.2). The panel says "suggested by Gemini; check the spelling".
+- **A part is filled whole or not at all.** When one word of a part cannot be spelled (Gemini not configured, its limit reached, or no answer), that part stays empty and the card says which word could not be spelled. A part is never half Hebrew.
+- **When.** Only when the Owner clicks: Echo never fills a phonetic name by itself, and nothing is sent to Gemini without that click.
+
+#### FR-78: Find the email in my mail — Proposed
+An email field that is empty shows a **find in mail** symbol inside it; a Contact with no email at all shows **Find in mail** beside **Add email**. Clicking it looks for the person's address in the Owner's mail, by their name.
+
+- **Which names.** The Contact's names as in the draft (so a phonetic name just filled counts): the full name, first and last name, the phonetic name, and each nickname with the last name. A name needs at least two words (a first name alone matches too many people); without one the symbol says "Needs a first and last name".
+- **Where it looks**, both at once:
+  1. **The activity scan's names** (tier T1, FR-12): the addresses whose display names in mail headers and meeting invitations match a name, as FR-14 does.
+  2. **The mailbox** (tier T2, §5.1): a Gmail search for mails **from** the person by each name, the newest 25, of which Echo reads only the sender (name and address), never the subject or the body. A sender counts when its name or address matches one of the Contact's names (Gmail's search also finds partial names).
+- **The Owner's own addresses** are never proposed.
+- **What the Owner sees.** At most 3 addresses, best first: the exact name before a partial one, then the most mail. Each says how it was found: "as “Dana Cohen” · 12 mails · last 3 weeks ago". An address already on another Contact says "already on Dana Levi" and is listed last. When the only address found is an exact match on no other Contact, it is filled at once; otherwise the Owner picks one (or none). The type is **Home** for a personal mail service (Gmail, Outlook, Walla and the like) and **Work** otherwise.
+- **Without T2** only the activity scan's names are checked, and when nothing is found the card offers **Allow reading email content** (the T2 opt-in; it leaves the page, so the card says so). Without T1 either, only the mailbox search would run, so the symbol asks for that permission.
+- **Nothing is stored**: the senders are read in memory for the click and dropped.
+
 ## 5. Privacy Model
 
 Privacy is a product pillar, not a compliance appendix. The requirements in §4.10 and NFR-07, NFR-08 and NFR-11 implement it.
@@ -860,7 +889,7 @@ Privacy is a product pillar, not a compliance appendix. The requirements in §4.
 |---|---|---|---|
 | **T0: Base** | Google Contacts (read/write); the Owner's profile (and, from Phase 0, their email address, checked against the allowlist, FR-51) | On at sign-in | Built |
 | **T1: Touchpoints** | Gmail headers (From/To/Cc/date), Calendar events (time, attendees, title) | Off | Built |
-| **T2: Email content** | The permission (`gmail.readonly`, which replaces the T1 Gmail permission) allows reading the whole mailbox. Echo reads only the last 3 emails from each Contact the Owner chooses (up to 10), and, for each flight in Atlas, the newest 20 mails that name both its airports (FR-73). It processes them in memory and never stores them; of a flight's mails it keeps only the flight number, the scheduled times and which mail (subject, sender, date). | Off | Built (flights: Proposed) |
+| **T2: Email content** | The permission (`gmail.readonly`, which replaces the T1 Gmail permission) allows reading the whole mailbox. Echo reads only the last 3 emails from each Contact the Owner chooses (up to 10), and, for each flight in Atlas, the newest 20 mails that name both its airports (FR-73). When the Owner asks to find a Contact's email (FR-78), it reads the sender (name and address) of the newest 25 mails Gmail finds from that Contact's names, and nothing else of them. It processes them in memory and never stores them; of a flight's mails it keeps only the flight number, the scheduled times and which mail (subject, sender, date). | Off | Built (flights, find email: Proposed) |
 | **T3: Life sources** | Each Atlas source connected or imported separately (Timeline, Sports Tracker, health exports, OneDrive photo metadata) | Off per source | Built |
 | **T4: Faces** | Face detections and templates computed from Photos | Off; separate biometric consent | Proposed |
 
@@ -875,7 +904,7 @@ Privacy is a product pillar, not a compliance appendix. The requirements in §4.
 | Third party | Receives | When | Owner control |
 |---|---|---|---|
 | **Google (People, Gmail, Calendar)** | API calls for each Owner's own data, with that Owner's own grant | T0–T2 | Revoke tier; Google account permissions |
-| **Google Gemini** | Assistant messages, the records the Assistant looks up (contacts and activities; with Connect, only the matched results and citations that Echo computed, which name people with places and times, per FR-31 and Q-5), web search queries, and T2 email text for extraction | Only when the Owner uses the Assistant or enrichment; Connect results only while the Owner's switch is on (default on) | Do not use the Assistant; disclosure in the panel; switch "Let Gemini word answers about people and places" (FR-31, FR-47) |
+| **Google Gemini** | Assistant messages, the records the Assistant looks up (contacts and activities; with Connect, only the matched results and citations that Echo computed, which name people with places and times, per FR-31 and Q-5), web search queries, T2 email text for extraction, and, when the Owner clicks to fill a phonetic name (FR-77), the Hebrew words of that Contact's name that the Owner's own Contacts do not already spell (nothing else of the Contact) | Only when the Owner uses the Assistant, enrichment or the phonetic fill; Connect results only while the Owner's switch is on (default on) | Do not use the Assistant; disclosure in the panel; switch "Let Gemini word answers about people and places" (FR-31, FR-47) |
 | **OpenStreetMap services** (Nominatim, Photon, Overpass) | Coordinates, including automatic background lookups of frequent Places (never home or work stays) | Manual Identify; background identification | Turn off background lookup (Proposed, FR-47) |
 | **OpenStreetMap Nominatim** (address lookup, Proposed) | Free text: the location text of calendar events (FR-34) and the postal addresses of Contacts (FR-36). Each text is sent once and the answer is cached. | Only while the address lookup switch is on; event locations also need T1 | Address lookup switch (FR-47); **off by default** |
 | **Map tile servers** (OpenFreeMap, OSM, Esri) | Viewed map areas | When the map is shown | none (inherent) |

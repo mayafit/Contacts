@@ -103,6 +103,13 @@ public class SuggestEmailsRequest
     public List<NameQuery> Contacts { get; set; } = new();
 }
 
+/// <summary>One contact's names, to find its address (FR-78)</summary>
+public class FindEmailRequest
+{
+    /// <summary>The contact's names, two words or more each (at most 6 are used)</summary>
+    public List<string> Names { get; set; } = new();
+}
+
 /// <summary>
 /// Email and meeting activity per address. Built by <see cref="ActivityWorker"/>
 /// after the user connects Gmail and Calendar (<c>/api/auth/login?activity=true</c>).
@@ -114,13 +121,15 @@ public class ActivityController : ControllerBase
     private readonly ActivityStore _store;
     private readonly ActivityWorker _worker;
     private readonly GoogleTokenService _tokens;
+    private readonly ILogger<ActivityController> _logger;
 
     /// <summary>Creates the controller</summary>
-    public ActivityController(ActivityStore store, ActivityWorker worker, GoogleTokenService tokens)
+    public ActivityController(ActivityStore store, ActivityWorker worker, GoogleTokenService tokens, ILogger<ActivityController> logger)
     {
         _store = store;
         _worker = worker;
         _tokens = tokens;
+        _logger = logger;
     }
 
     /// <summary>Snapshot state, cheap enough to poll during a scan</summary>
@@ -319,6 +328,97 @@ public class ActivityController : ControllerBase
         }
 
         return Ok(ApiResponse<object>.SuccessResponse(new { available = snapshot.Directory != null, suggestions = result }));
+    }
+
+    /// <summary>
+    /// One contact's address (AD-43 rule 7): the directory's names, and, with email
+    /// content allowed, the senders Gmail finds for the contact's names (the From header
+    /// only). A Gmail fault still returns what the directory knows.
+    /// </summary>
+    /// <param name="request">The contact's names</param>
+    /// <returns>Up to 3 candidates, whether the directory exists, and the mailbox search's state</returns>
+    [HttpPost("find-email")]
+    public async Task<IActionResult> FindEmail([FromBody] FindEmailRequest request)
+    {
+        var userId = await SignedInUserAsync();
+        if (userId == null)
+        {
+            return SessionExpired();
+        }
+
+        var names = (request?.Names ?? new())
+            .Where(n => !string.IsNullOrWhiteSpace(n) && n.Length <= 100 && NameMatcher.Normalize(n).Contains(' '))
+            .Distinct()
+            .Take(6)
+            .ToList();
+        var variants = names.Select(NameMatcher.Normalize).Distinct().ToList();
+        if (variants.Count == 0)
+        {
+            return BadRequest(ApiResponse<object>.ErrorResponse("INVALID_INPUT", "A first and last name is needed."));
+        }
+
+        var snapshot = await _store.GetAsync(userId);
+        var mine = (snapshot.MyEmails ?? new())
+            .Concat(await _store.GetSelfAsync(userId))
+            .Select(OwnAddresses.Normalize)
+            .Where(e => e.Length > 0)
+            .ToHashSet();
+        var fromDirectory = (snapshot.Directory ?? new Dictionary<string, DirectoryEntry>())
+            .Select(kv => new FoundEmail
+            {
+                Email = kv.Key,
+                Names = kv.Value.Names.Take(3).ToList(),
+                Score = NameMatcher.Score(variants, kv.Key, kv.Value.Names),
+                Mails = kv.Value.Sent + kv.Value.Received,
+                LastSeen = kv.Value.LastSeen,
+                Sources = new() { "directory" }
+            })
+            .Where(f => f.Score > 0)
+            .ToList();
+
+        var fromMail = new List<FoundEmail>();
+        string mail;
+        var query = SenderSearch.Query(names);
+        if (!Connection().Signatures)
+        {
+            mail = "not_allowed";
+        }
+        else if (query == null)
+        {
+            mail = "searched";
+        }
+        else
+        {
+            try
+            {
+                var senders = await new GmailMailSenders(async _ =>
+                        await _tokens.GetAccessTokenAsync(HttpContext) ?? throw new ActivityScanException("NOT_CONNECTED", "Session ended"))
+                    .SearchAsync(query, SenderSearch.MaxMessages, HttpContext.RequestAborted);
+                fromMail = SenderSearch.FromMail(variants, senders);
+                mail = "searched";
+            }
+            catch (ActivityScanException ex) when (ex.Code == "NOT_CONNECTED")
+            {
+                mail = "sign_in";
+            }
+            catch (ActivityScanException)
+            {
+                mail = "failed";
+            }
+            catch (Exception ex) when (!HttpContext.RequestAborted.IsCancellationRequested)
+            {
+                // A timeout or an unexpected answer: the directory's candidates still count
+                _logger.LogWarning(ex, "Searching the mailbox for a contact's address failed");
+                mail = "failed";
+            }
+        }
+
+        return Ok(ApiResponse<object>.SuccessResponse(new
+        {
+            candidates = SenderSearch.Merge(fromDirectory, fromMail, mine),
+            directory = snapshot.Directory != null,
+            mail
+        }));
     }
 
     /// <summary>Starts bringing the snapshot up to date (no-op while a scan runs)</summary>

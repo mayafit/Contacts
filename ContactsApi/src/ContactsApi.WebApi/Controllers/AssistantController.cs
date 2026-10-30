@@ -35,6 +35,13 @@ public class AssistantSearchRequest
     public string Query { get; set; } = string.Empty;
 }
 
+/// <summary>Hebrew name words to spell (FR-77)</summary>
+public class TransliterateRequest
+{
+    /// <summary>At most 20 words</summary>
+    public List<string> Words { get; set; } = new();
+}
+
 /// <summary>
 /// Forwards the assistant's conversation to Gemini so the API key stays on the
 /// server. The agent loop and its tools run in the browser; this only adds the
@@ -170,6 +177,40 @@ public class AssistantController : ControllerBase
             }
 
             return new JsonObject { ["text"] = text, ["sources"] = sources };
+        });
+    }
+
+    /// <summary>
+    /// Latin spellings of Hebrew name words for the phonetic fill (AD-43 rule 4): only
+    /// the words are sent, and only spellings of Latin letters come back
+    /// </summary>
+    /// <param name="body">The words</param>
+    /// <returns>Word → spelling, for the words Gemini spelled</returns>
+    [HttpPost("transliterate")]
+    public async Task<IActionResult> Transliterate([FromBody] TransliterateRequest body)
+    {
+        var words = Transliteration.Check(body?.Words);
+        if (words == null)
+        {
+            return BadRequest(ApiResponse<object>.ErrorResponse("INVALID_INPUT",
+                $"Up to {Transliteration.MaxWords} Hebrew name words, each up to 40 letters"));
+        }
+
+        var refusal = await CheckAsync("phonetic", 30);
+        if (refusal != null)
+        {
+            return refusal;
+        }
+
+        return await CallAsync(Transliteration.Request(words), response =>
+        {
+            var spellings = new JsonObject();
+            foreach (var (word, spelling) in Transliteration.Parse(response, words))
+            {
+                spellings[word] = spelling;
+            }
+
+            return new JsonObject { ["spellings"] = spellings };
         });
     }
 

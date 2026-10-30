@@ -8,12 +8,17 @@ import {
   Autocomplete,
   Box,
   Button,
+  CircularProgress,
   IconButton,
+  InputAdornment,
+  Link,
+  Menu,
+  MenuItem,
   TextField,
   Tooltip,
   Typography,
 } from '@mui/material';
-import { Add, DeleteOutline } from '@mui/icons-material';
+import { Add, AutoFixHigh, DeleteOutline, ManageSearch } from '@mui/icons-material';
 import type {
   Contact,
   ContactAddress,
@@ -25,6 +30,9 @@ import type {
   ContactUserDefined,
 } from '../../types/Contact';
 import { tokens } from '../../theme/contactsTheme';
+import { clean } from '../../model/contactView';
+import type { PhoneticPart } from '../../model/phonetic';
+import { describeChoice, useCardAutofill, type FillCaption } from './useCardAutofill';
 
 /** Props for ContactForm */
 export interface ContactFormProps {
@@ -101,7 +109,9 @@ const Field: React.FC<{
   multiline?: boolean;
   type?: string;
   autoFocus?: boolean;
-}> = ({ label, value, onChange, disabled, multiline, type, autoFocus }) => (
+  /** A button at the end of the field */
+  action?: React.ReactNode;
+}> = ({ label, value, onChange, disabled, multiline, type, autoFocus, action }) => (
   <TextField
     label={label}
     value={value ?? ''}
@@ -114,8 +124,65 @@ const Field: React.FC<{
     type={type}
     autoFocus={autoFocus}
     inputProps={{ dir: 'auto' }}
+    InputProps={
+      action
+        ? { endAdornment: <InputAdornment position="end">{action}</InputAdornment> }
+        : undefined
+    }
   />
 );
+
+/**
+ * A small icon button inside a field (AD-43), a spinner while it works.
+ * @param props - Label, icon, busy flag, click handler
+ * @returns Button
+ */
+const FieldAction: React.FC<{
+  label: string;
+  icon: React.ReactNode;
+  busy?: boolean;
+  disabled?: boolean;
+  onClick: (anchor: HTMLElement) => void;
+}> = ({ label, icon, busy, disabled, onClick }) => (
+  <Tooltip title={label}>
+    <span>
+      <IconButton
+        aria-label={label}
+        size="small"
+        edge="end"
+        disabled={busy || disabled}
+        onClick={(e) => onClick(e.currentTarget)}
+      >
+        {busy ? <CircularProgress size={16} /> : icon}
+      </IconButton>
+    </span>
+  </Tooltip>
+);
+
+/**
+ * The line a fill leaves under its section.
+ * @param props - Caption
+ * @returns Caption, or nothing
+ */
+const Caption: React.FC<{ caption: FillCaption | null }> = ({ caption }) =>
+  caption ? (
+    <Typography
+      variant="caption"
+      component="div"
+      dir="auto"
+      sx={{ mt: 1, color: caption.tone === 'warn' ? tokens.attention : tokens.textMuted }}
+    >
+      {caption.text}
+      {caption.action && (
+        <>
+          {' '}
+          <Link component="button" variant="caption" onClick={caption.action.onClick}>
+            {caption.action.label}
+          </Link>
+        </>
+      )}
+    </Typography>
+  ) : null;
 
 /**
  * Free-text type picker suggesting Google's standard types.
@@ -152,13 +219,16 @@ function ListEditor<T>({
   create,
   addLabel,
   disabled,
+  extra,
 }: {
   items: T[] | null | undefined;
   onChange: (items: T[]) => void;
-  renderRow: (item: T, update: (item: T) => void) => React.ReactNode;
+  renderRow: (item: T, update: (item: T) => void, index: number) => React.ReactNode;
   create: () => T;
   addLabel: string;
   disabled?: boolean;
+  /** Shown beside the add button */
+  extra?: React.ReactNode;
 }) {
   const list = items ?? [];
   return (
@@ -166,7 +236,7 @@ function ListEditor<T>({
       {list.map((item, i) => (
         <Box key={i} sx={{ display: 'flex', gap: 1, alignItems: 'flex-start' }}>
           <Box sx={{ flex: 1, display: 'flex', gap: 1, minWidth: 0, flexWrap: 'wrap' }}>
-            {renderRow(item, (next) => onChange(list.map((x, j) => (j === i ? next : x))))}
+            {renderRow(item, (next) => onChange(list.map((x, j) => (j === i ? next : x))), i)}
           </Box>
           <Tooltip title="Remove">
             <span>
@@ -192,6 +262,7 @@ function ListEditor<T>({
         >
           {addLabel}
         </Button>
+        {extra}
       </Box>
     </Box>
   );
@@ -210,6 +281,25 @@ const grid2 = {
  */
 const ContactForm: React.FC<ContactFormProps> = ({ draft, onChange, disabled }) => {
   const name: ContactName = draft.names?.[0] ?? {};
+  const fill = useCardAutofill(draft, onChange);
+  const phoneticAction = (part: PhoneticPart) =>
+    fill.phonetic.fillable.has(part) && !disabled ? (
+      <FieldAction
+        label="Fill from the Hebrew name"
+        icon={<AutoFixHigh fontSize="small" />}
+        busy={fill.phonetic.busy}
+        onClick={() => void fill.phonetic.fill()}
+      />
+    ) : undefined;
+  const findAction = (row: number) => (
+    <FieldAction
+      label={fill.email.canSearch ? 'Find in mail' : 'Needs a first and last name'}
+      icon={<ManageSearch fontSize="small" />}
+      busy={fill.email.busy}
+      disabled={!fill.email.canSearch}
+      onClick={(anchor) => void fill.email.find(anchor, row)}
+    />
+  );
   const setName = (patch: Partial<ContactName>) =>
     onChange({ ...draft, names: [{ ...name, ...patch }] });
   const set = <K extends keyof Contact>(key: K, value: Contact[K]) =>
@@ -283,20 +373,24 @@ const ContactForm: React.FC<ContactFormProps> = ({ draft, onChange, disabled }) 
             value={name.phoneticGivenName}
             onChange={(v) => setName({ phoneticGivenName: v, phoneticFullName: null })}
             disabled={disabled}
+            action={phoneticAction('given')}
           />
           <Field
             label="Phonetic last name"
             value={name.phoneticFamilyName}
             onChange={(v) => setName({ phoneticFamilyName: v, phoneticFullName: null })}
             disabled={disabled}
+            action={phoneticAction('family')}
           />
           <Field
             label="Phonetic middle name"
             value={name.phoneticMiddleName}
             onChange={(v) => setName({ phoneticMiddleName: v, phoneticFullName: null })}
             disabled={disabled}
+            action={phoneticAction('middle')}
           />
         </Box>
+        <Caption caption={fill.phonetic.caption} />
       </Section>
 
       <Section title="Phone">
@@ -334,7 +428,23 @@ const ContactForm: React.FC<ContactFormProps> = ({ draft, onChange, disabled }) 
           create={() => ({ value: '', type: 'home' })}
           addLabel="Add email"
           disabled={disabled}
-          renderRow={(e, update) => (
+          extra={
+            !disabled && !(draft.emailAddresses ?? []).length ? (
+              <Tooltip title={fill.email.canSearch ? '' : 'Needs a first and last name'}>
+                <span>
+                  <Button
+                    size="small"
+                    startIcon={fill.email.busy ? <CircularProgress size={14} /> : <ManageSearch />}
+                    onClick={(ev) => void fill.email.find(ev.currentTarget, null)}
+                    disabled={fill.email.busy || !fill.email.canSearch}
+                  >
+                    Find in mail
+                  </Button>
+                </span>
+              </Tooltip>
+            ) : undefined
+          }
+          renderRow={(e, update, i) => (
             <>
               <TypeField
                 options={EMAIL_TYPES}
@@ -349,11 +459,41 @@ const ContactForm: React.FC<ContactFormProps> = ({ draft, onChange, disabled }) 
                   value={e.value}
                   onChange={(value) => update({ ...e, value })}
                   disabled={disabled}
+                  action={!disabled && !clean(e.value) ? findAction(i) : undefined}
                 />
               </Box>
             </>
           )}
         />
+        <Caption caption={fill.email.caption} />
+        <Menu
+          open={!!fill.email.menu}
+          anchorEl={fill.email.menu?.anchor}
+          onClose={fill.email.closeMenu}
+        >
+          {fill.email.menu?.choices.map((c) => (
+            <MenuItem
+              key={c.email}
+              onClick={() => fill.email.pick(c, fill.email.menu!.row)}
+              sx={{ display: 'block', maxWidth: 420 }}
+            >
+              <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                {c.email}
+              </Typography>
+              <Typography
+                variant="caption"
+                component="div"
+                dir="auto"
+                sx={{ color: tokens.textMuted, whiteSpace: 'normal' }}
+              >
+                {describeChoice(c)}
+              </Typography>
+            </MenuItem>
+          ))}
+          <MenuItem onClick={fill.email.closeMenu}>
+            <Typography variant="body2">None of these</Typography>
+          </MenuItem>
+        </Menu>
       </Section>
 
       <Section title="Work">
