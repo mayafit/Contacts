@@ -53,15 +53,30 @@ public static class FlightMatch
             return new PublicMatch(byLookup, "callsign");
         }
 
-        var fits = RouteFits(flights, arrivals, sched, start, end, airlineIcaos);
-        return fits.Count == 1 ? new PublicMatch(fits[0], "route") : null;
+        var fits = RouteFits(flights, arrivals, sched, start, end, airlineIcaos, callsignNumbers, number);
+        // A flight seen landing at the arrival airport first; one whose landing no receiver saw
+        // only when no other fits
+        var landed = fits.Where(f => f.Arrival != null).ToList();
+        return landed.Count == 1 ? new PublicMatch(landed[0], "route")
+            : landed.Count == 0 && fits.Count == 1 ? new PublicMatch(fits[0], "route")
+            : null;
     }
 
-    /// <summary>The call signs worth asking adsbdb about: flights to an arrival candidate, nearest first</summary>
-    public static List<string> ToLookUp(IReadOnlyList<OpenSkyFlight> flights, IReadOnlySet<string> arrivals, DateTime anchor) =>
-        flights.Where(f => f.Callsign.Length > 0 && f.Arrival != null && arrivals.Contains(f.Arrival))
+    /// <summary>
+    /// The call signs worth asking adsbdb about, nearest first: flights to an arrival candidate,
+    /// and, with a schedule, the number's airline's flights with no estimated arrival
+    /// </summary>
+    public static List<string> ToLookUp(IReadOnlyList<OpenSkyFlight> flights, IReadOnlySet<string> arrivals, DateTime anchor,
+        DateTime? sched = null, IReadOnlyCollection<string>? airlineIcaos = null) =>
+        flights.Where(f => f.Callsign.Length > 0
+                && ((f.Arrival != null && arrivals.Contains(f.Arrival)) || (f.Arrival == null && OpenOfAirline(f, sched, airlineIcaos))))
             .OrderBy(f => Math.Abs((f.FirstSeen - anchor).TotalMinutes))
             .Select(f => f.Callsign).Distinct().Take(CallsignLookups).ToList();
+
+    /// <summary>With a schedule, a flight with no estimated arrival of the number's airline</summary>
+    private static bool OpenOfAirline(OpenSkyFlight f, DateTime? sched, IReadOnlyCollection<string>? airlineIcaos) =>
+        f.Arrival == null && sched != null && airlineIcaos != null
+        && FlightNumbers.CallsignAirline(f.Callsign) is { } al && airlineIcaos.Contains(al);
 
     /// <summary>
     /// The flights to an arrival candidate that fit the time: first seen from 30 minutes before
@@ -70,11 +85,14 @@ public static class FlightMatch
     /// scheduled time, a flight whose landing no receiver saw (no estimated arrival, common
     /// on long flights) fits too when it is the number's airline's.
     /// </summary>
+    /// <param name="callsignNumbers">adsbdb's numbers: a flight that is another real flight number (all digits) does not fit</param>
+    /// <param name="number">The flight number looked for</param>
     public static List<OpenSkyFlight> RouteFits(IReadOnlyList<OpenSkyFlight> flights, IReadOnlySet<string> arrivals, DateTime? sched, DateTime start, DateTime end,
-        IReadOnlyCollection<string>? airlineIcaos = null) =>
-        flights.Where(f => (f.Arrival != null && arrivals.Contains(f.Arrival))
-                || (f.Arrival == null && sched != null && airlineIcaos != null
-                    && FlightNumbers.CallsignAirline(f.Callsign) is { } al && airlineIcaos.Contains(al)))
+        IReadOnlyCollection<string>? airlineIcaos = null, IReadOnlyDictionary<string, string?>? callsignNumbers = null, FlightNo? number = null) =>
+        flights.Where(f => (f.Arrival != null && arrivals.Contains(f.Arrival)) || OpenOfAirline(f, sched, airlineIcaos))
+            // adsbdb's "EY5SM" for ETD5SM is not a flight number and rules nothing out
+            .Where(f => number == null || callsignNumbers == null || !callsignNumbers.TryGetValue(f.Callsign, out var n)
+                || FlightNumbers.Parse(n) is not { } other || other.ToString() == number.ToString())
             .Where(f => sched != null
                 ? f.FirstSeen >= sched.Value.AddMinutes(-30) && f.FirstSeen <= sched.Value.AddHours(3)
                 : Math.Abs((f.FirstSeen - start).TotalMinutes) <= 60 && Math.Abs((f.LastSeen - end).TotalMinutes) <= 90)
