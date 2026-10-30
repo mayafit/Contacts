@@ -22,7 +22,7 @@ public class BatchDeleteRequest
 }
 
 /// <summary>
-/// Request to add contacts to, and remove them from, one label
+/// Request to create or rename a label
 /// </summary>
 public class LabelNameRequest
 {

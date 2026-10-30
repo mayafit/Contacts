@@ -107,6 +107,8 @@ describe('segments (AD-45)', () => {
         { kind: 'phoneCountry', value: '1' },
       ]),
     ).toEqual(['dana', 'רון']);
+    // An empty text rule matches no one (as an empty organization does)
+    expect(seg('any', [{ kind: 'text', value: '  ' }])).toEqual([]);
     // No rule: all is everyone, any is no one
     expect(seg('all', [])).toHaveLength(2);
     expect(seg('any', [])).toHaveLength(0);

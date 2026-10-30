@@ -28,7 +28,7 @@ public static class LabelNames
             return ("INVALID_LABEL", $"A label's name is 1 to {MaxLength} characters");
         }
 
-        if (name == ContactsController.TrashLabelName)
+        if (string.Equals(name, ContactsController.TrashLabelName, StringComparison.OrdinalIgnoreCase))
         {
             return ("INVALID_LABEL", "That name is Echo's Trash");
         }

@@ -1,10 +1,14 @@
 import type { Contact } from '../../../types/Contact';
-import { changeMembership, reconcileMembers, STARRED } from '../labelThunks';
+import { changeMembership, checkLabels, reconcileMembers, STARRED } from '../labelThunks';
 import { backendApiClient } from '../../../../../services/api/BackendApiClient';
 import { GoogleContactsService } from '../../../services/GoogleContactsService';
 
 jest.mock('../../../../../services/api/BackendApiClient', () => ({
-  backendApiClient: { modifyLabel: jest.fn(), fetchContactGroups: jest.fn() },
+  backendApiClient: {
+    modifyLabel: jest.fn(),
+    fetchContactGroups: jest.fn(),
+    groupMembers: jest.fn(),
+  },
 }));
 jest.mock('../../../services/GoogleContactsService', () => ({
   GoogleContactsService: { getContact: jest.fn() },
@@ -57,5 +61,30 @@ describe('changing a membership (AD-44 rule 2)', () => {
     expect(await changeMembership(dispatch, ['p/1'], STARRED, true)).toBeNull();
     expect(client.modifyLabel).toHaveBeenCalledWith({ labelResourceName: STARRED, add: ['p/1'] });
     expect(google.getContact).toHaveBeenCalledWith('p/1');
+  });
+});
+
+describe('the check and a change at the same time (AD-44 rule 3)', () => {
+  beforeEach(() => jest.resetAllMocks());
+
+  it('drops an answer that Google read before a change finished', async () => {
+    const dispatch = jest.fn((a: unknown) => Promise.resolve(a)) as never;
+    let answer: (m: Record<string, string[]>) => void = () => undefined;
+    client.groupMembers.mockReturnValue(new Promise((r) => (answer = r)));
+    client.modifyLabel.mockResolvedValue('contactGroups/starred');
+    google.getContact.mockResolvedValue({ success: false } as never);
+    const check = checkLabels(dispatch, [c('p/1', [])]);
+    // The star is set and saved while Google reads the members
+    await changeMembership(dispatch, ['p/1'], STARRED, true);
+    answer({ [STARRED]: [] });
+    expect(await check).toBe(0);
+  });
+
+  it('does not start while a change is in flight', async () => {
+    const dispatch = jest.fn((a: unknown) => Promise.resolve(a)) as never;
+    client.modifyLabel.mockReturnValue(new Promise(() => undefined));
+    void changeMembership(dispatch, ['p/2'], STARRED, true);
+    expect(await checkLabels(dispatch, [c('p/2', [])])).toBe(0);
+    expect(client.groupMembers).not.toHaveBeenCalled();
   });
 });

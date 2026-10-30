@@ -184,7 +184,7 @@ const RuleRow: React.FC<{
       return (
         <>
           <Pick
-            label=""
+            label="How"
             value={r.op}
             onChange={(v) => onChange({ ...r, op: v as 'is' })}
             width={120}
@@ -241,7 +241,7 @@ const RuleRow: React.FC<{
       return (
         <>
           <Pick
-            label=""
+            label="How"
             value={r.op}
             onChange={(v) => onChange({ ...r, op: v as 'has' })}
             width={120}
@@ -276,7 +276,7 @@ const RuleRow: React.FC<{
       return (
         <>
           <Pick
-            label=""
+            label="When"
             value={r.op}
             onChange={(v) => onChange({ ...r, op: v as 'within' })}
             width={150}
@@ -377,7 +377,8 @@ const SegmentEditor: React.FC<SegmentEditorProps> = ({
   if (!draft) {
     return null;
   }
-  const exists = !!segment && !!onDelete && segment.name !== '';
+  // A duplicate (a new id) is a new segment until saved
+  const exists = !!segment && !!onDelete && segment.name !== '' && segment.id === draft.id;
   const set = (patch: Partial<Segment>) => setDraft({ ...draft, ...patch });
 
   const save = async () => {

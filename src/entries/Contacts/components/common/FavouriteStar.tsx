@@ -3,7 +3,7 @@
  * @module Contacts/components/common/FavouriteStar
  */
 
-import React from 'react';
+import React, { useState } from 'react';
 import { IconButton, Tooltip } from '@mui/material';
 import { Star, StarBorder } from '@mui/icons-material';
 import type { Contact } from '../../types/Contact';
@@ -30,6 +30,8 @@ const FavouriteStar: React.FC<{
   quiet?: boolean;
 }> = ({ contact, size = 'small', quiet = false }) => {
   const dispatch = useAppDispatch();
+  // One change at a time: a second click would race the first in Google
+  const [busy, setBusy] = useState(false);
   const on = isFavourite(contact);
   const label = on ? 'Remove from favourites' : 'Add to favourites';
   return (
@@ -38,11 +40,15 @@ const FavouriteStar: React.FC<{
         size={size}
         aria-label={label}
         aria-pressed={on}
+        aria-busy={busy}
+        disabled={busy}
         className={on ? undefined : 'favourite-off'}
         // The row's click opens the card or starts editing: the star only toggles
         onClick={async (e) => {
           e.stopPropagation();
+          setBusy(true);
           const refused = await changeMembership(dispatch, [contact.resourceName], STARRED, !on);
+          setBusy(false);
           if (refused) {
             notify(
               `Could not ${on ? 'remove' : 'add'} ${getDisplayName(contact)} ${on ? 'from' : 'to'} favourites: ${refused}`,

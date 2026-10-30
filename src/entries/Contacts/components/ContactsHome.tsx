@@ -228,28 +228,6 @@ const SignedInHome: React.FC = () => {
   const [editingSegment, setEditingSegment] = useState<Segment | null>(null);
   const [labelsOpen, setLabelsOpen] = useState(false);
   const [updateFor, setUpdateFor] = useState<Segment | null>(null);
-  const mainCountry = useMemo(() => mainCountryOf(contacts), [contacts]);
-  const segmentCtx = useMemo<SegmentContext>(
-    () => ({ activity: activityIndex ?? null, mainCountry, now: new Date() }),
-    [activityIndex, mainCountry],
-  );
-  const segmentMembers = useMemo(
-    () => new Map(segments.map((s) => [s.id, membersOf(contacts, s, segmentCtx)])),
-    [segments, contacts, segmentCtx],
-  );
-  const segmentFigures = useMemo(() => {
-    const figures = new Map<string, SegmentFigures>();
-    segments.forEach((s) => {
-      const members = segmentMembers.get(s.id) ?? [];
-      const diff = s.label ? labelDiff(members, contacts, s.label) : null;
-      figures.set(s.id, {
-        count: members.length,
-        diff: diff ? { add: diff.add.length, remove: diff.remove.length } : undefined,
-      });
-    });
-    return figures;
-  }, [segments, segmentMembers, contacts]);
-  const activeSegment = segments.find((s) => s.id === segmentId) ?? null;
 
   useEffect(() => {
     backendApiClient
@@ -343,6 +321,29 @@ const SignedInHome: React.FC = () => {
     () => new Map(contacts.map((c) => [c.resourceName, searchTextOf(c)])),
     [contacts],
   );
+  const mainCountry = useMemo(() => mainCountryOf(contacts), [contacts]);
+  const segmentCtx = useMemo<SegmentContext>(
+    () => ({ activity: activityIndex ?? null, mainCountry, now: new Date(), searchIndex }),
+    [activityIndex, mainCountry, searchIndex],
+  );
+  const segmentMembers = useMemo(
+    () => new Map(segments.map((s) => [s.id, membersOf(contacts, s, segmentCtx)])),
+    [segments, contacts, segmentCtx],
+  );
+  const segmentFigures = useMemo(() => {
+    const figures = new Map<string, SegmentFigures>();
+    segments.forEach((s) => {
+      const members = segmentMembers.get(s.id) ?? [];
+      // A label deleted since is no link
+      const diff = s.label && groups[s.label] ? labelDiff(members, contacts, s.label) : null;
+      figures.set(s.id, {
+        count: members.length,
+        diff: diff ? { add: diff.add.length, remove: diff.remove.length } : undefined,
+      });
+    });
+    return figures;
+  }, [segments, segmentMembers, contacts, groups]);
+  const activeSegment = segments.find((s) => s.id === segmentId) ?? null;
 
   const predicates = useMemo<Record<ContactFilter, (c: Contact) => boolean>>(
     () => ({
@@ -1289,7 +1290,7 @@ const SignedInHome: React.FC = () => {
         onClose={() => setEditingSegment(null)}
       />
       <LabelsManager open={labelsOpen} groups={groups} onClose={() => setLabelsOpen(false)} />
-      {updateFor?.label && (
+      {updateFor?.label && groups[updateFor.label] && (
         <UpdateLabelDialog
           open
           label={updateFor.label}

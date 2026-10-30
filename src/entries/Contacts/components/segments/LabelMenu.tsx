@@ -5,7 +5,7 @@
  */
 
 import React, { useState } from 'react';
-import { Button, Divider, ListSubheader, Menu, MenuItem, TextField } from '@mui/material';
+import { Box, Button, Divider, ListSubheader, Menu, MenuItem, TextField } from '@mui/material';
 import { Label as LabelIcon } from '@mui/icons-material';
 import type { Contact, ContactGroup } from '../../types/Contact';
 import { useAppDispatch } from '../../types/hooks';
@@ -70,24 +70,23 @@ const LabelMenu: React.FC<{
             {g.name}
           </MenuItem>
         ))}
-        <MenuItem
-          disableRipple
-          // Typing in the box must not jump to an item starting with that letter
+        <Box
+          // Not a menu item: arrow keys move between labels, typing stays in the box
           onKeyDown={(e) => e.stopPropagation()}
-          sx={{ '&:hover': { bgcolor: 'transparent' } }}
+          sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 2, py: 1 }}
         >
           <TextField
             size="small"
             placeholder="New label"
+            inputProps={{ 'aria-label': 'New label name', dir: 'auto', maxLength: 100 }}
             value={name}
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && name.trim() && void create()}
-            inputProps={{ dir: 'auto', maxLength: 100 }}
           />
           <Button size="small" disabled={!name.trim()} onClick={() => void create()}>
             Create
           </Button>
-        </MenuItem>
+        </Box>
         {held.length > 0 && <Divider />}
         {held.length > 0 && <ListSubheader>Remove from</ListSubheader>}
         {held.map((g) => (

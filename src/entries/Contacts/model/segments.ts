@@ -86,6 +86,8 @@ export interface SegmentContext {
   /** The Owner's main calling code (rule 4) */
   mainCountry: string;
   now: Date;
+  /** Each contact's search text (searchTextOf), so a text rule does not build it again */
+  searchIndex?: Map<string, string>;
 }
 
 const DAY = 86_400_000;
@@ -282,7 +284,8 @@ export const matchesRule = (c: Contact, r: SegmentRule, ctx: SegmentContext): bo
     case 'tier':
       return !!ctx.activity && tierOf(ctx.activity.get(c.resourceName), ctx.now) === r.value;
     case 'text':
-      return matchesQuery(c, r.value);
+      // Empty, it matches no one, as the other empty rules
+      return !!clean(r.value) && matchesQuery(c, r.value, ctx.searchIndex?.get(c.resourceName));
     default:
       return false;
   }
@@ -436,7 +439,12 @@ export const suggestSegments = (contacts: Contact[], ctx: SegmentContext): Sugge
     contacts.forEach((c) =>
       new Set(keysOf(c)).forEach((k) => {
         if (k) {
-          by.set(k, [...(by.get(k) ?? []), c]);
+          const list = by.get(k);
+          if (list) {
+            list.push(c);
+          } else {
+            by.set(k, [c]);
+          }
         }
       }),
     );

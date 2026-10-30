@@ -21,6 +21,32 @@ export const STARRED = 'contactGroups/starred';
 /** Above this many contacts a label change reloads everything instead of each contact */
 export const REFETCH_LIMIT = 25;
 
+// A change in flight: the check against Google waits (rule 3)
+let changesInFlight = 0;
+// Bumped by each change: a check whose answer predates one drops it
+let changeVersion = 0;
+// The whole list being fetched again: a change re-reads its contacts after it lands
+let reloading: Promise<unknown> | null = null;
+
+/** Whether a membership change is being written */
+export const membershipChanging = (): boolean => changesInFlight > 0;
+
+/**
+ * Fetches the whole list again; a change made meanwhile re-reads its contacts after it.
+ * @param dispatch - Store dispatch
+ */
+const reloadAll = async (dispatch: AppDispatch): Promise<void> => {
+  const run = dispatch(fetchContacts());
+  reloading = run;
+  try {
+    await run;
+  } finally {
+    if (reloading === run) {
+      reloading = null;
+    }
+  }
+};
+
 /**
  * Re-reads contacts whose labels changed, so their etags stay current.
  * @param dispatch - Store dispatch
@@ -32,7 +58,7 @@ export const refreshContacts = async (
 ): Promise<void> => {
   dispatch(fetchContactGroups());
   if (resourceNames.length > REFETCH_LIMIT) {
-    await dispatch(fetchContacts());
+    await reloadAll(dispatch);
     return;
   }
   await Promise.all(
@@ -44,12 +70,6 @@ export const refreshContacts = async (
     }),
   );
 };
-
-// A change in flight: the check against Google waits (rule 3)
-let changesInFlight = 0;
-
-/** Whether a membership change is being written */
-export const membershipChanging = (): boolean => changesInFlight > 0;
 
 /**
  * Adds contacts to a label or removes them (AD-44 rule 2): the store first, then
@@ -71,19 +91,30 @@ export const changeMembership = async (
     return null;
   }
   changesInFlight += 1;
+  changeVersion += 1;
   dispatch(membershipChanged({ resourceNames, label, on }));
+  let saved = 0;
   try {
-    for (let i = 0; i < resourceNames.length; i += 1000) {
-      const chunk = resourceNames.slice(i, i + 1000);
+    for (; saved < resourceNames.length; saved += 1000) {
+      const chunk = resourceNames.slice(saved, saved + 1000);
       await backendApiClient.modifyLabel(
         on ? { labelResourceName: label, add: chunk } : { labelResourceName: label, remove: chunk },
       );
     }
   } catch (e) {
-    dispatch(membershipChanged({ resourceNames, label, on: !on }));
+    // The chunks Google saved stay; only the rest is undone
+    dispatch(membershipChanged({ resourceNames: resourceNames.slice(saved), label, on: !on }));
+    if (saved > 0) {
+      await refreshContacts(dispatch, resourceNames.slice(0, saved));
+    }
     return (e as Error).message || 'Google refused the change';
   } finally {
     changesInFlight -= 1;
+    changeVersion += 1;
+  }
+  // A reload that started before this change would land with the old labels
+  if (reloading) {
+    await reloading;
   }
   await refreshContacts(dispatch, resourceNames);
   return null;
@@ -142,15 +173,19 @@ export const reconcileMembers = (
  * @returns How many contacts changed
  */
 export const checkLabels = async (dispatch: AppDispatch, contacts: Contact[]): Promise<number> => {
+  // No check while a change is in flight; an answer read across a change is older than it
+  if (membershipChanging()) {
+    return 0;
+  }
+  const version = changeVersion;
   dispatch(fetchContactGroups());
   const members = await backendApiClient.groupMembers();
-  // A change made while Google answered is newer than the answer
-  if (membershipChanging()) {
+  if (membershipChanging() || version !== changeVersion) {
     return 0;
   }
   const { changed, unknown } = reconcileMembers(contacts, members);
   if (unknown) {
-    await dispatch(fetchContacts());
+    await reloadAll(dispatch);
     return changed.length;
   }
   if (changed.length) {
