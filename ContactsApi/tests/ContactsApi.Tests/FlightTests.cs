@@ -195,6 +195,12 @@ public class FlightTests
         // Two fit the route and time: none chosen; one alone: by route
         Assert.Null(FlightMatch.ByNumber(no, new[] { "ETD" }, new[] { a, b }, arrivals, sched, sched, sched, none));
         Assert.Equal(("a", "route"), Pick(FlightMatch.ByNumber(no, new[] { "ETD" }, new[] { a, F("ETD9", "OMDB", a.FirstSeen, a.LastSeen) }, arrivals, sched, sched, sched, none)));
+        // A long flight whose landing no receiver saw: the number's airline's only flight in the window
+        var open = F("ETD434", null, sched.AddMinutes(10), sched.AddHours(1), "o");
+        var otherAirline = F("UAE1", null, sched.AddMinutes(12), sched.AddHours(1), "u");
+        Assert.Equal(("o", "route"), Pick(FlightMatch.ByNumber(no, new[] { "ETD" }, new[] { open, otherAirline }, arrivals, sched, sched, sched, none)));
+        // Without a schedule it is not enough
+        Assert.Empty(FlightMatch.RouteFits(new[] { open }, arrivals, null, sched, sched, new[] { "ETD" }));
         // Too late after the schedule
         Assert.Empty(FlightMatch.RouteFits(new[] { F("X", "LLBG", sched.AddHours(4), sched.AddHours(6)) }, arrivals, sched, sched, sched));
 

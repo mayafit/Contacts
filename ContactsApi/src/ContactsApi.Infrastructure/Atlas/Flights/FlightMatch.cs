@@ -53,7 +53,7 @@ public static class FlightMatch
             return new PublicMatch(byLookup, "callsign");
         }
 
-        var fits = RouteFits(flights, arrivals, sched, start, end);
+        var fits = RouteFits(flights, arrivals, sched, start, end, airlineIcaos);
         return fits.Count == 1 ? new PublicMatch(fits[0], "route") : null;
     }
 
@@ -66,10 +66,15 @@ public static class FlightMatch
     /// <summary>
     /// The flights to an arrival candidate that fit the time: first seen from 30 minutes before
     /// to 3 hours after the scheduled departure; without one, within 60 minutes of the
-    /// recorded take-off and last seen within 90 minutes of the recorded landing
+    /// recorded take-off and last seen within 90 minutes of the recorded landing. With a
+    /// scheduled time, a flight whose landing no receiver saw (no estimated arrival, common
+    /// on long flights) fits too when it is the number's airline's.
     /// </summary>
-    public static List<OpenSkyFlight> RouteFits(IReadOnlyList<OpenSkyFlight> flights, IReadOnlySet<string> arrivals, DateTime? sched, DateTime start, DateTime end) =>
-        flights.Where(f => f.Arrival != null && arrivals.Contains(f.Arrival))
+    public static List<OpenSkyFlight> RouteFits(IReadOnlyList<OpenSkyFlight> flights, IReadOnlySet<string> arrivals, DateTime? sched, DateTime start, DateTime end,
+        IReadOnlyCollection<string>? airlineIcaos = null) =>
+        flights.Where(f => (f.Arrival != null && arrivals.Contains(f.Arrival))
+                || (f.Arrival == null && sched != null && airlineIcaos != null
+                    && FlightNumbers.CallsignAirline(f.Callsign) is { } al && airlineIcaos.Contains(al)))
             .Where(f => sched != null
                 ? f.FirstSeen >= sched.Value.AddMinutes(-30) && f.FirstSeen <= sched.Value.AddHours(3)
                 : Math.Abs((f.FirstSeen - start).TotalMinutes) <= 60 && Math.Abs((f.LastSeen - end).TotalMinutes) <= 90)
