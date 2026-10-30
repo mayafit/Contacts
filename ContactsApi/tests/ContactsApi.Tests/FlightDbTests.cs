@@ -14,10 +14,21 @@ public class FlightDbTests
         public readonly List<FlightMailMessage> Messages = new();
         public readonly List<string> Queries = new();
         public int Reads;
+        public bool Refuse;
 
         public Task<List<string>> SearchAsync(string query, int max, CancellationToken ct)
         {
-            Queries.Add(query);
+            if (Refuse)
+            {
+                throw new MailRefusedException("refused");
+            }
+
+            // The round's probe is not a flight's search
+            if (query != "in:anywhere")
+            {
+                Queries.Add(query);
+            }
+
             return Task.FromResult(Messages.Select(m => m.Id).Take(max).ToList());
         }
 
@@ -175,7 +186,7 @@ public class FlightDbTests
         Assert.Equal(new[] { "OMAA" }, sky.Asked);
 
         // The Owner types another number: theirs wins, the mail is not searched
-        await svc.SetNumberAsync(owner, id, "ey 607", null, default);
+        await svc.SetNumberAsync(owner, id, "ey 607", default);
         await svc.CheckAsync(owner, default);
         row = await RowAsync(db, id);
         Assert.Equal((FlightStatus.Found, "EY607", "user", "ETD607"), (row.Status, row.FlightNumber, row.Source, row.Details.Callsign));
@@ -186,7 +197,7 @@ public class FlightDbTests
         await svc.ClearAsync(owner, id, default);
         await svc.CheckAsync(owner, default);
         Assert.Equal(("EY593", "mail"), ((await RowAsync(db, id)).FlightNumber, (await RowAsync(db, id)).Source));
-        await Assert.ThrowsAsync<ArgumentException>(() => svc.SetNumberAsync(owner, id, "hello", null, default));
+        await Assert.ThrowsAsync<ArgumentException>(() => svc.SetNumberAsync(owner, id, "hello", default));
     }
 
     [Fact]
@@ -223,8 +234,9 @@ public class FlightDbTests
         Assert.Equal(new[] { ("ETD5SM", "EY593", "Etihad Airways", 2), ("ETD607", "EY607", "Etihad Airways", 40) },
             row.Details.Candidates.Select(c => (c.Callsign, c.FlightNumber!, c.Airline!, c.Score)));
 
-        await Assert.ThrowsAsync<ArgumentException>(() => svc.ConfirmAsync(owner, id, 5, default));
-        await svc.ConfirmAsync(owner, id, 0, default);
+        // Named by aircraft and take-off, not by position: an unknown one is refused
+        await Assert.ThrowsAsync<ArgumentException>(() => svc.ConfirmAsync(owner, id, "896125", start.AddMinutes(5), default));
+        await svc.ConfirmAsync(owner, id, "896123", start.AddMinutes(1).AddSeconds(20), default);
         await svc.CheckAsync(owner, default);
         row = await RowAsync(db, id);
         Assert.Equal((FlightStatus.Found, "EY593", "confirmed", "confirmed"), (row.Status, row.FlightNumber, row.Source, row.Details.Match));
@@ -263,20 +275,37 @@ public class FlightDbTests
         Assert.Equal(FlightStatus.NoAirports, (await RowAsync(db, nowhere)).Status);
         Assert.Equal((FlightStatus.NotFound, MailStates.Searched), ((await RowAsync(db, real)).Status, (await RowAsync(db, real)).MailState));
 
+        // Gmail refuses the sign-in although its scopes say yes: noted, the mail not searched
+        var refusing = new Box { Refuse = true };
+        var (svc2, _) = Service(db, new Mail(refusing), sky);
+        await svc2.SearchAsync(owner, real, default);
+        await svc2.CheckAsync(owner, default);
+        Assert.Equal(MailStates.SignIn, (await RowAsync(db, real)).MailState);
+        Assert.Empty(refusing.Queries);
+
+        // Landed a few hours ago: public data comes the day after, so again within the hour
+        var recent = await FlightAsync(db, owner, DateTime.UtcNow.AddHours(-6), DateTime.UtcNow.AddHours(-3), NearTlv, NearAuh);
+        await svc.CheckAsync(owner, default);
+        var later = await RowAsync(db, recent);
+        Assert.Equal((FlightStatus.Error, 0), (later.Status, later.Attempts));
+        Assert.Contains("the day after", later.Note);
+
         // OpenSky's allowance used: the flight stays pending, unclaimed, no attempt counted
         sky.Limited = true;
         await svc.SearchAsync(owner, real, default);
         await svc.CheckAsync(owner, default);
         var pending = await RowAsync(db, real);
         Assert.Equal((FlightStatus.Pending, 0, (DateTime?)null), (pending.Status, pending.Attempts, pending.ClaimedAt));
-        Assert.Equal(3, await db.Flights.CountAsync(f => f.OwnerId == owner));
+        Assert.Equal(4, await db.Flights.CountAsync(f => f.OwnerId == owner));
 
         // A fusion run makes another member the primary: the row follows it
+        await svc.SetNumberAsync(owner, real, "LY 1", default);
         var other = await FlightAsync(db, owner, t.AddDays(2), t.AddDays(2).AddHours(3), NearTlv, NearAuh);
         await db.Activities.Where(a => a.Id == real).ExecuteUpdateAsync(s => s.SetProperty(a => a.ClusterId, other));
         await db.Activities.Where(a => a.Id == other).ExecuteUpdateAsync(s => s.SetProperty(a => a.ClusterId, other));
-        await svc.SetNumberAsync(owner, real, "LY 1", null, default);
         await svc.EnsureRowsAsync(owner, default);
+        // A member is not shown a flight of its own
+        Assert.Null(await svc.GetAsync(owner, real, default));
         Assert.Equal(("LY1", "user"), ((await RowAsync(db, other)).FlightNumber, (await RowAsync(db, other)).Source));
         Assert.False(await db.Flights.AnyAsync(f => f.ActivityId == real));
     }

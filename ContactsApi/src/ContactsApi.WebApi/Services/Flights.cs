@@ -105,6 +105,9 @@ public class FlightService
     /// <summary>A claim older than this is free again</summary>
     public static readonly TimeSpan ClaimTimeout = TimeSpan.FromMinutes(15);
 
+    /// <summary>OpenSky publishes a day's flights the night after: a flight that landed since is looked up again</summary>
+    public static readonly TimeSpan RecentlyLanded = TimeSpan.FromHours(36);
+
     /// <summary>OpenSky keeps tracks this long (29 days, a day short of its 30)</summary>
     public static readonly TimeSpan TrackKept = TimeSpan.FromDays(29);
 
@@ -133,13 +136,12 @@ public class FlightService
         return row == null ? null : Dto(row);
     }
 
-    /// <summary>The Owner types the flight number (FR-74)</summary>
+    /// <summary>The Owner types the flight number (FR-74); the day is the flight's recorded day</summary>
     /// <exception cref="ArgumentException">Not a flight number</exception>
-    public async Task<FlightDto?> SetNumberAsync(string owner, Guid activityId, string? text, DateOnly? date, CancellationToken ct)
+    public async Task<FlightDto?> SetNumberAsync(string owner, Guid activityId, string? text, CancellationToken ct)
     {
         var no = FlightNumbers.Parse(text) ?? throw new ArgumentException("Not a flight number (for example EY593)");
-        var row = await RowAsync(owner, activityId, ct);
-        if (row == null)
+        if (await RowAsync(owner, activityId, ct) == null)
         {
             return null;
         }
@@ -147,46 +149,41 @@ public class FlightService
         if (no.IsIcao)
         {
             // Kept in the IATA form when adsbdb knows the airline
-            try
+            var iata = (await AirlinesAsync(no.Airline, ct)).Select(a => a.Iata).FirstOrDefault(i => i is { Length: 2 });
+            if (iata != null)
             {
-                var iata = (await _adsbdb.AirlinesAsync(no.Airline, ct)).Select(a => a.Iata).FirstOrDefault(i => i is { Length: 2 });
-                if (iata != null)
-                {
-                    no = no with { Airline = iata };
-                }
-            }
-            catch (FlightSourceException)
-            {
-                // Kept as typed
+                no = no with { Airline = iata };
             }
         }
 
-        row.FlightNumber = no.ToString();
-        row.FlightDate = date ?? row.FlightDate ?? await LocalDateAsync(activityId, ct);
-        row.Source = "user";
-        await ReopenAsync(row, ct);
-        return Dto(row);
+        var date = await LocalDateAsync(activityId, ct);
+        return await ChangeAsync(owner, activityId, row =>
+        {
+            row.FlightNumber = no.ToString();
+            row.FlightDate = date;
+            row.Source = "user";
+        }, ct);
     }
 
     /// <summary>Clears the Owner's flight number: looked up again by itself</summary>
-    public async Task<FlightDto?> ClearAsync(string owner, Guid activityId, CancellationToken ct)
-    {
-        var row = await RowAsync(owner, activityId, ct);
-        if (row == null)
-        {
-            return null;
-        }
-
-        row.FlightNumber = null;
-        row.FlightDate = null;
-        row.Source = null;
-        row.Details = new FlightDetails();
-        await ReopenAsync(row, ct);
-        return Dto(row);
-    }
+    public async Task<FlightDto?> ClearAsync(string owner, Guid activityId, CancellationToken ct) =>
+        await RowAsync(owner, activityId, ct) == null
+            ? null
+            : await ChangeAsync(owner, activityId, row =>
+            {
+                row.FlightNumber = null;
+                row.FlightDate = null;
+                row.Source = null;
+                row.Details = new FlightDetails();
+            }, ct);
 
     /// <summary>Looks the flight up again</summary>
-    public async Task<FlightDto?> SearchAsync(string owner, Guid activityId, CancellationToken ct)
+    public async Task<FlightDto?> SearchAsync(string owner, Guid activityId, CancellationToken ct) =>
+        await RowAsync(owner, activityId, ct) == null ? null : await ChangeAsync(owner, activityId, _ => { }, ct);
+
+    /// <summary>The Owner confirms a suggestion, named by its aircraft and take-off (AD-42 rule 7)</summary>
+    /// <exception cref="ArgumentException">Not one of the suggestions (any more)</exception>
+    public async Task<FlightDto?> ConfirmAsync(string owner, Guid activityId, string? icao24, DateTime firstSeen, CancellationToken ct)
     {
         var row = await RowAsync(owner, activityId, ct);
         if (row == null)
@@ -194,53 +191,33 @@ public class FlightService
             return null;
         }
 
-        await ReopenAsync(row, ct);
-        return Dto(row);
-    }
-
-    /// <summary>The Owner confirms a suggestion (AD-42 rule 7)</summary>
-    /// <exception cref="ArgumentException">No such suggestion</exception>
-    public async Task<FlightDto?> ConfirmAsync(string owner, Guid activityId, int index, CancellationToken ct)
-    {
-        var row = await RowAsync(owner, activityId, ct);
-        if (row == null)
-        {
-            return null;
-        }
-
-        if (index < 0 || index >= row.Details.Candidates.Count)
-        {
-            throw new ArgumentException("No such suggestion");
-        }
-
-        var c = row.Details.Candidates[index];
+        var c = Candidate(row, icao24, firstSeen)
+            ?? throw new ArgumentException("That flight is no longer suggested. Look at the flight again.");
         var no = FlightNumbers.Parse(c.FlightNumber);
-        if (no == null && c.Airline != null && FlightNumbers.CallsignDigits(c.Callsign) is { } digits)
+        if (no == null && FlightNumbers.CallsignDigits(c.Callsign) is { } digits && FlightNumbers.CallsignAirline(c.Callsign) is { } code)
         {
-            try
-            {
-                var iata = (await _adsbdb.AirlinesAsync(FlightNumbers.CallsignAirline(c.Callsign)!, ct)).Select(a => a.Iata).FirstOrDefault(i => i is { Length: 2 });
-                no = iata == null ? null : FlightNumbers.Parse(iata + digits);
-            }
-            catch (FlightSourceException)
-            {
-                // The call sign stands for it
-            }
+            var iata = (await AirlinesAsync(code, ct)).Select(a => a.Iata).FirstOrDefault(i => i is { Length: 2 });
+            no = iata == null ? null : FlightNumbers.Parse(iata + digits);
         }
 
-        var details = row.Details;
-        row.FlightNumber = no?.ToString();
-        row.Source = "confirmed";
         var dep = Airports.ByIcao(c.Departure);
-        row.FlightDate = DateOnly.FromDateTime(dep == null ? c.FirstSeen : TimeZoneInfo.ConvertTimeFromUtc(c.FirstSeen, dep.Zone));
-        details.Callsign = c.Callsign;
-        details.Icao24 = c.Icao24;
-        details.Takeoff = c.FirstSeen;
-        details.Landing = c.LastSeen;
-        row.Details = details;
-        await ReopenAsync(row, ct);
-        return Dto(row);
+        var date = DateOnly.FromDateTime(dep == null ? c.FirstSeen : TimeZoneInfo.ConvertTimeFromUtc(c.FirstSeen, dep.Zone));
+        return await ChangeAsync(owner, activityId, r =>
+        {
+            r.FlightNumber = no?.ToString();
+            r.Source = "confirmed";
+            r.FlightDate = date;
+            var details = r.Details;
+            (details.Callsign, details.Icao24, details.Takeoff, details.Landing) = (c.Callsign, c.Icao24, c.FirstSeen, c.LastSeen);
+            r.Details = details;
+        }, ct);
     }
+
+    /// <summary>A suggestion by its aircraft and take-off (within a minute)</summary>
+    private static FlightCandidate? Candidate(AtlasFlight row, string? icao24, DateTime firstSeen) =>
+        row.Details.Candidates.FirstOrDefault(c =>
+            string.Equals(c.Icao24, icao24, StringComparison.OrdinalIgnoreCase)
+            && Math.Abs((c.FirstSeen - firstSeen.ToUniversalTime()).TotalMinutes) < 1);
 
     /// <summary>Makes rows for new flights and moves rows to a new fusion primary (AD-42 rule 1)</summary>
     public async Task EnsureRowsAsync(string owner, CancellationToken ct)
@@ -290,8 +267,10 @@ public class FlightService
                          where f.OwnerId == owner && a.Type == "flight" && (a.ClusterId == null || a.ClusterId == a.Id)
                                && (f.Status == FlightStatus.Pending
                                    || (f.Status == FlightStatus.Error && f.Attempts < MaxAttempts && (f.CheckedAt == null || f.CheckedAt < retryBefore))
-                                   || ((f.MailState == MailStates.NotAllowed || f.MailState == MailStates.SignIn) && (f.Source == null || f.Source == "mail")))
-                         orderby a.StartTime descending
+                                   || ((f.MailState == MailStates.NotAllowed || f.MailState == MailStates.SignIn || f.MailState == MailStates.Failed)
+                                       && (f.Source == null || f.Source == "mail")))
+                         // What the Owner just changed first, then the newest flights
+                         orderby (f.CheckedAt == null || f.UpdatedAt > f.CheckedAt) descending, a.StartTime descending
                          select new { f.Id, f.Status, f.MailState }).ToListAsync(ct);
         if (due.Count == 0)
         {
@@ -307,6 +286,7 @@ public class FlightService
 
         var ids = due.Where(d => d.Status is FlightStatus.Pending or FlightStatus.Error || round.State == MailStates.Searched)
             .Select(d => d.Id).Take(PerRound).ToList();
+        var done = 0;
         foreach (var id in ids)
         {
             var stale = DateTime.UtcNow - ClaimTimeout;
@@ -320,10 +300,21 @@ public class FlightService
 
             _db.ChangeTracker.Clear();
             var row = await _db.Flights.FirstAsync(f => f.Id == id, ct);
+            done++;
             try
             {
+                round.Later = false;
                 await LookUpAsync(row, round, ct);
-                row.Attempts = row.Status == FlightStatus.Error ? row.Attempts + 1 : 0;
+                if (round.Later)
+                {
+                    // Public data of the last day is published the day after: again in an hour, no attempt counted
+                    row.Status = FlightStatus.Error;
+                    row.Note = "Public flight data is published the day after a flight; it is looked up again within the hour.";
+                }
+                else
+                {
+                    row.Attempts = row.Status == FlightStatus.Error ? row.Attempts + 1 : 0;
+                }
             }
             catch (OpenSkyLimitException ex)
             {
@@ -340,9 +331,10 @@ public class FlightService
                 row.Attempts++;
             }
 
-            row.CheckedAt = DateTime.UtcNow;
+            var written = DateTime.UtcNow;
+            row.CheckedAt = written;
             row.ClaimedAt = null;
-            row.UpdatedAt = DateTime.UtcNow;
+            row.UpdatedAt = written;
             try
             {
                 await _db.SaveChangesAsync(ct);
@@ -354,6 +346,12 @@ public class FlightService
                 await ReleaseAsync(id, ct);
             }
         }
+
+        // More are due than a round takes: another round at once
+        if (done == PerRound && due.Count > PerRound)
+        {
+            _queue.Enqueue(owner);
+        }
     }
 
     /// <summary>A round's mailbox and parsed mails (each mail read once per round)</summary>
@@ -361,13 +359,40 @@ public class FlightService
     {
         public IFlightMailbox? Box;
         public string? State;
+
+        /// <summary>The flight is too recent for public data: again within the hour</summary>
+        public bool Later;
+
         public readonly Dictionary<string, List<MailSegment>> Parsed = new(StringComparer.Ordinal);
 
+        /// <summary>
+        /// The mailbox, once per round, tried with one small search: a sign-in whose scopes say
+        /// "email content" but that Gmail refuses, or a quota, is not taken for a working one
+        /// </summary>
         public async Task MailboxAsync(IFlightMail mail, string owner, CancellationToken ct)
         {
-            if (State == null)
+            if (State != null)
             {
-                (Box, State) = await mail.OpenAsync(owner, ct);
+                return;
+            }
+
+            (Box, State) = await mail.OpenAsync(owner, ct);
+            if (Box == null)
+            {
+                return;
+            }
+
+            try
+            {
+                await Box.SearchAsync("in:anywhere", 1, ct);
+            }
+            catch (MailRefusedException)
+            {
+                (Box, State) = (null, MailStates.SignIn);
+            }
+            catch (FlightSourceException)
+            {
+                (Box, State) = (null, MailStates.Failed);
             }
         }
     }
@@ -436,8 +461,8 @@ public class FlightService
                 }
                 catch (FlightSourceException)
                 {
-                    row.MailState = MailStates.Failed;
-                    throw;
+                    // Gmail busy: the public data still, the mail at a round where it answers
+                    (round.Box, round.State, row.MailState) = (null, MailStates.Failed, MailStates.Failed);
                 }
             }
 
@@ -498,7 +523,7 @@ public class FlightService
             return;
         }
 
-        await PublicAsync(row, details, deps, arrs, number, start, end, ct);
+        await PublicAsync(row, details, deps, arrs, number, start, end, round, ct);
     }
 
     /// <summary>The best mail segment for the flight, over the newest 20 mails naming both airports</summary>
@@ -523,7 +548,7 @@ public class FlightService
 
     /// <summary>The public record of the flight, or suggestions (AD-42 rules 5 to 8)</summary>
     private async Task PublicAsync(AtlasFlight row, FlightDetails details, List<Airport> deps, List<Airport> arrs, FlightNo? number,
-        DateTime start, DateTime end, CancellationToken ct)
+        DateTime start, DateTime end, Round round, CancellationToken ct)
     {
         var sched = details.ScheduledDeparture;
         var anchor = sched ?? start;
@@ -566,6 +591,12 @@ public class FlightService
             }
 
             match = FlightMatch.ByNumber(number, icaos, flights, arrivals, sched, start, end, lookups);
+            if (match == null && end > DateTime.UtcNow - RecentlyLanded)
+            {
+                round.Later = true;
+                return;
+            }
+
             if (match == null)
             {
                 details.Candidates = await CandidatesAsync(FlightMatch.RouteFits(flights, arrivals, sched, start, end).Take(FlightMatch.SuggestionCount)
@@ -577,6 +608,12 @@ public class FlightService
                 details.TrackNote = null;
                 return;
             }
+        }
+
+        if (match == null && end > DateTime.UtcNow - RecentlyLanded)
+        {
+            round.Later = true;
+            return;
         }
 
         if (match == null)
@@ -705,21 +742,45 @@ public class FlightService
     private Task ReleaseAsync(Guid id, CancellationToken ct) =>
         _db.Flights.Where(f => f.Id == id).ExecuteUpdateAsync(s => s.SetProperty(f => f.ClaimedAt, (DateTime?)null), ct);
 
-    /// <summary>Back to pending, tried afresh, queued</summary>
-    private async Task ReopenAsync(AtlasFlight row, CancellationToken ct)
+    /// <summary>
+    /// The Owner's change, then back to pending, tried afresh, queued. The change wins over
+    /// the worker's write: on a conflict it is made again on the row as it now is.
+    /// </summary>
+    private async Task<FlightDto?> ChangeAsync(string owner, Guid activityId, Action<AtlasFlight> change, CancellationToken ct)
     {
-        row.Status = FlightStatus.Pending;
-        row.Note = null;
-        row.Attempts = 0;
-        row.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync(ct);
-        _queue.Enqueue(row.OwnerId);
+        for (var attempt = 1; ; attempt++)
+        {
+            _db.ChangeTracker.Clear();
+            var row = await _db.Flights.FirstOrDefaultAsync(f => f.OwnerId == owner && f.ActivityId == activityId, ct);
+            if (row == null)
+            {
+                return null;
+            }
+
+            change(row);
+            row.Status = FlightStatus.Pending;
+            row.Note = null;
+            row.Attempts = 0;
+            row.UpdatedAt = DateTime.UtcNow;
+            try
+            {
+                await _db.SaveChangesAsync(ct);
+                _queue.Enqueue(owner);
+                return Dto(row);
+            }
+            catch (DbUpdateConcurrencyException) when (attempt < 3)
+            {
+                // The worker wrote meanwhile: again, on its row
+            }
+        }
     }
 
     /// <summary>The Owner's flight row of an activity (made when missing); null when not their flight</summary>
     private async Task<AtlasFlight?> RowAsync(string owner, Guid activityId, CancellationToken ct)
     {
-        var isFlight = await _db.Activities.AsNoTracking().AnyAsync(a => a.Id == activityId && a.OwnerId == owner && a.Type == "flight", ct);
+        // A flight the worker looks up: the primary of its cluster, with points (AD-42 rule 1)
+        var isFlight = await _db.Activities.AsNoTracking().AnyAsync(a => a.Id == activityId && a.OwnerId == owner && a.Type == "flight"
+            && a.PointCount >= 2 && (a.ClusterId == null || a.ClusterId == a.Id), ct);
         if (!isFlight)
         {
             return null;

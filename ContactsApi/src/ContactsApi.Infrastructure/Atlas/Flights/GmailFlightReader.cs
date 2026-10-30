@@ -137,6 +137,12 @@ public class GmailFlightReader : IFlightMailbox
         {
             return await call();
         }
+        catch (global::Google.GoogleApiException ex) when (ex.HttpStatusCode == System.Net.HttpStatusCode.Forbidden
+            && ex.Error?.Errors?.Any(e => e.Reason is "rateLimitExceeded" or "userRateLimitExceeded" or "quotaExceeded") == true)
+        {
+            // A quota, not a refusal: passing
+            throw new FlightSourceException("Gmail is busy", ex);
+        }
         catch (global::Google.GoogleApiException ex) when (ex.HttpStatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
         {
             throw new MailRefusedException("Gmail refused the sign-in", ex);

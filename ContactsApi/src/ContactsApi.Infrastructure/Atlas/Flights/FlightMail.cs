@@ -24,8 +24,12 @@ public record MailSegment(
     string? ArrIata = null,
     DateTime? DepLocal = null,
     bool DepHasTime = false,
-    DateTime? ArrLocal = null)
+    DateTime? ArrLocal = null,
+    bool TimesUtc = false,
+    bool RouteBefore = false)
 {
+    // TimesUtc: the reservation's times carried an offset, so they are UTC, not local.
+    // RouteBefore: the mail writes each flight's route and times before its number.
     /// <summary>From a schema.org FlightReservation</summary>
     public bool Structured => DepIata != null;
 }
@@ -104,6 +108,17 @@ public static class FlightMail
             }
         }
 
+        // A mail whose text before its first number already names an airport, a date and a
+        // time writes each flight's route before its number: then the text before each number
+        // is that flight's, and the text after it the next one's
+        var routeBefore = false;
+        if (tokens.Count > 0)
+        {
+            var lead = text.Substring(Math.Max(0, tokens[0].m.Index - BackMax), Math.Min(BackMax, tokens[0].m.Index));
+            routeBefore = Word3.Matches(lead).Any(w => Airports.IsIata(w.Value)) && Time.IsMatch(lead)
+                && (DayMonth.IsMatch(lead) || MonthDay.IsMatch(lead) || IsoDate.IsMatch(lead) || NumDate.IsMatch(lead) || HebDate.IsMatch(lead));
+        }
+
         for (var i = 0; i < tokens.Count; i++)
         {
             var (m, no) = tokens[i];
@@ -113,7 +128,7 @@ public static class FlightMail
             var prev = i > 0 ? tokens[i - 1].m.Index + tokens[i - 1].m.Length : 0;
             var backStart = Math.Max(prev, m.Index - BackMax);
             var back = text.Substring(backStart, m.Index - backStart);
-            segments.Add(new MailSegment(no, mail, forward, back));
+            segments.Add(new MailSegment(no, mail, forward, back, RouteBefore: routeBefore));
         }
 
         return segments;
@@ -157,19 +172,20 @@ public static class FlightMail
         }
 
         var target = Local(f.Start, dep.Zone).Date;
-        var date = s.DepLocal.Value.Date;
+        var date = s.TimesUtc ? Local(s.DepLocal.Value, dep.Zone).Date : s.DepLocal.Value.Date;
         if (!s.DepHasTime)
         {
             return date == target ? new MailMatch(s.Number, s.Mail, dep, arr, null, null, DateOnlyScore) : null;
         }
 
-        var sched = Utc(s.DepLocal.Value, dep.Zone);
+        var sched = s.TimesUtc ? DateTime.SpecifyKind(s.DepLocal.Value, DateTimeKind.Utc) : Utc(s.DepLocal.Value, dep.Zone);
         if (!InWindow(sched, f.Start))
         {
             return null;
         }
 
-        DateTime? arrival = s.ArrLocal == null ? null : Utc(s.ArrLocal.Value, arr.Zone);
+        DateTime? arrival = s.ArrLocal == null ? null
+            : s.TimesUtc ? DateTime.SpecifyKind(s.ArrLocal.Value, DateTimeKind.Utc) : Utc(s.ArrLocal.Value, arr.Zone);
         if (arrival != null && !ArrivalFits(sched, arrival.Value))
         {
             arrival = null;
@@ -180,10 +196,13 @@ public static class FlightMail
 
     private static MailMatch? MatchText(MailSegment s, FlightContext f)
     {
-        // The text before the number only when the text after it names no airport: otherwise
-        // the text before is the previous flight's
-        var route = Route(s.Forward, f)
-            ?? (Word3.Matches(s.Forward).Any(w => Airports.IsIata(w.Value)) ? null : Route(s.Back, f));
+        // The flight's own text: before the number in a mail that writes routes first; else
+        // after it, and before it only when the text after names no airport (otherwise the
+        // text before is the previous flight's)
+        var (first, second) = s.RouteBefore ? (s.Back, s.Forward) : (s.Forward, s.Back);
+        var route = s.RouteBefore
+            ? Route(s.Back, f)
+            : Route(s.Forward, f) ?? (Word3.Matches(s.Forward).Any(w => Airports.IsIata(w.Value)) ? null : Route(s.Back, f));
         if (route == null)
         {
             return null;
@@ -191,12 +210,12 @@ public static class FlightMail
 
         var (dep, arr) = route.Value;
         var target = Local(f.Start, dep.Zone).Date;
-        // Dates and times in the forward window; the back window when the forward has no date
-        var window = s.Forward;
+        // Dates and times in the flight's own text; the other window when it has no date
+        var window = first;
         var dates = Dates(window, target);
         if (dates.Count == 0)
         {
-            window = s.Back;
+            window = second;
             dates = Dates(window, target);
         }
 
@@ -432,30 +451,40 @@ public static class FlightMail
         var no = FlightNumbers.Parse(number != null && airline != null && !number.StartsWith(airline, StringComparison.OrdinalIgnoreCase) ? airline + number : number);
         var dep = f.TryGetProperty("departureAirport", out var da) ? Str(da, "iataCode") : null;
         var arr = f.TryGetProperty("arrivalAirport", out var aa) ? Str(aa, "iataCode") : null;
-        var (depLocal, hasTime) = LocalTime(Str(f, "departureTime"));
-        var (arrLocal, _) = LocalTime(Str(f, "arrivalTime"));
-        if (no != null && dep != null && arr != null && depLocal != null)
+        var (depTime, hasTime, depUtc) = ReservationTime(Str(f, "departureTime"));
+        var (arrTime, _, arrUtc) = ReservationTime(Str(f, "arrivalTime"));
+        if (no != null && dep != null && arr != null && depTime != null)
         {
-            list.Add(new MailSegment(no, mail, string.Empty, string.Empty, dep.ToUpperInvariant(), arr.ToUpperInvariant(), depLocal, hasTime, arrLocal));
+            // Both times in one kind: an arrival of the other kind is dropped
+            list.Add(new MailSegment(no, mail, string.Empty, string.Empty, dep.ToUpperInvariant(), arr.ToUpperInvariant(),
+                depTime, hasTime, arrUtc == depUtc ? arrTime : null, depUtc));
         }
     }
 
-    /// <summary>An ISO time as the airport's local time (an offset is dropped: the time is local)</summary>
-    private static (DateTime? local, bool hasTime) LocalTime(string? iso)
+    private static readonly Regex Offset = new(@"(Z|[+\-]\d{2}:?\d{2})$", Opts | RegexOptions.IgnoreCase);
+
+    /// <summary>
+    /// A reservation's ISO time: with an offset or Z, the UTC time it names; without one, the
+    /// airport's local time
+    /// </summary>
+    private static (DateTime? time, bool hasTime, bool utc) ReservationTime(string? iso)
     {
         if (iso == null)
         {
-            return (null, false);
+            return (null, false, false);
         }
 
-        if (DateTimeOffset.TryParse(iso, CultureInfo.InvariantCulture, DateTimeStyles.None, out var dto) && iso.Contains('T'))
+        iso = iso.Trim();
+        var hasTime = iso.Contains('T') || iso.Contains(':');
+        if (hasTime && Offset.IsMatch(iso)
+            && DateTimeOffset.TryParse(iso, CultureInfo.InvariantCulture, DateTimeStyles.None, out var dto))
         {
-            return (dto.DateTime, true);
+            return (dto.UtcDateTime, true, true);
         }
 
         return DateTime.TryParse(iso, CultureInfo.InvariantCulture, DateTimeStyles.None, out var d)
-            ? (d, iso.Contains('T') || iso.Contains(':'))
-            : (null, false);
+            ? (DateTime.SpecifyKind(d, DateTimeKind.Unspecified), hasTime, false)
+            : (null, false, false);
     }
 
     private static string? Str(JsonElement e, string name) =>

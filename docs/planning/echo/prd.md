@@ -817,7 +817,7 @@ Each flight activity can carry a **flight number** (airline code and number, as 
 3. nothing: Echo then **suggests** the public flights that fit the recorded flight, for the Owner to confirm, and never sets one by itself.
 
 - **Airports.** Echo finds the departure and arrival airports from the flight's first and last recorded points: the airports with scheduled flights within **50 km**, nearest first (up to 3 each). A flight with no such airport at one end says so. A "flight" that starts and ends at the same airport, less than 100 km apart, is marked **probably not a flight** (the Timeline sometimes calls a fast drive a flight); the Owner can still type a flight number.
-- **When.** Echo looks for every flight by itself, the newest first, within the hour after the flight is imported, and again when the Owner types a number, clears it, confirms a suggestion, or asks **Search again**. A search that failed for a passing reason (a service busy or unreachable) is tried again the next hour, up to 5 times.
+- **When.** Echo looks for every flight by itself, the newest first, within the hour after the flight is imported, and again when the Owner types a number, clears it, confirms a suggestion, or asks **Search again** (what the Owner asked for goes first). A search that failed for a passing reason (a service busy or unreachable) is tried again the next hour, up to 5 times. A flight that landed less than 36 hours ago is looked up again every hour until then: public flight data is published the day after.
 - **Fused flights.** A flight recorded by two sources is one flight (FR-40); its details follow the fused activity.
 
 #### FR-73: Find the flight in my mail — Proposed
@@ -829,7 +829,7 @@ With **email content** allowed (tier T2, §5.1), Echo searches the Owner's Gmail
 - **Not allowed.** Without email content allowed, the flight panel says the mail was not searched and offers **Allow reading email content**, the same permission as the signatures of Contacts (T2). Once allowed, the flights that were not searched in mail are searched.
 
 #### FR-74: Type the flight number — Proposed
-In the flight's panel, the Owner can type the flight number, and change the date (by default the flight's day in the departure airport's time).
+In the flight's panel, the Owner can type the flight number. Its day is the flight's recorded day (in the departure airport's time): the flight is the activity, whose day is known.
 - Accepted as written on a ticket or a board: an airline's two-character code and a number ("EY593", "EY 593", "ey0593"), or its three-letter code ("ETD593"). Echo stores it in the two-character form, without leading zeros.
 - Echo looks it up at once and shows the result within a minute; the panel waits for it.
 - **Clear** removes the Owner's number; Echo then looks for the flight again by itself (mail, then suggestions).
@@ -842,7 +842,7 @@ For a flight with a number, Echo finds the actual flight in public data and show
 - **Aircraft**: type and registration (for example "Airbus A321neo · A6-AEA"), and the call sign it flew under;
 - **Distance**: great-circle distance between the airports.
 - **How it is matched.** The aircraft that left the departure airport around the scheduled time (or the recorded take-off) under the flight's call sign; or, when airlines fly under a call sign that is not the flight number (Etihad's EY593 flew as `ETD5SM`), the only flight that left that airport for the arrival airport within the scheduled window. When public data has no such flight (coverage is thinner before 2018 and at some airports), the panel shows what the mail said and says that no public record matched.
-- **Suggestions.** A flight without a number shows the public flights that fit it (left the airport near the recorded take-off and landed at the arrival airport near the recorded landing), at most 3, best first, each with its airline, call sign and times, and **This one**. Confirming one makes it the flight (FR-72).
+- **Suggestions.** A flight without a number shows the public flights that fit it (left the airport near the recorded take-off and landed at the arrival airport near the recorded landing), at most 3, best first, each with its airline, call sign and times, and **This one**. Confirming one makes it the flight (FR-72). The choice names the flight itself (its aircraft and take-off), so a list that changed meanwhile never confirms another flight.
 - **Sources.** The panel names the sources ("Flight data: The OpenSky Network · Airlines and aircraft: adsbdb · Airports: OurAirports, mwgg/Airports") and when they were read.
 
 #### FR-76: The route it flew — Proposed

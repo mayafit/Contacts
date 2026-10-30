@@ -118,6 +118,29 @@ public class FlightTests
     }
 
     [Fact]
+    public void A_mail_that_writes_each_route_before_its_number_gives_each_flight_its_own()
+    {
+        var plain = "Your trip\nDeparture 7 Aug 2026 10:05 TLV, Arrival 15:20 AUH, Flight EY598\n"
+            + "Departure 14 Aug 2026 09:00 AUH, Arrival 11:30 TLV, Flight EY599\n";
+        var segments = FlightMail.Parse(Mail("m7", "Itinerary", plain: plain));
+        // TLV 10:05 (UTC+3 in August) is 07:05 UTC; AUH 09:00 (UTC+4) is 05:00 UTC
+        Assert.Equal("EY598", FlightMail.Match(segments, Ctx("TLV", "AUH", Utc(2026, 8, 7, 7, 25)))!.Number.ToString());
+        Assert.Equal("EY599", FlightMail.Match(segments, Ctx("AUH", "TLV", Utc(2026, 8, 14, 5, 20)))!.Number.ToString());
+    }
+
+    [Fact]
+    public void A_reservation_time_with_an_offset_or_Z_is_UTC()
+    {
+        var html = """
+            <script type="application/ld+json">{"@type":"FlightReservation","reservationFor":{"flightNumber":"LY5",
+              "airline":{"iataCode":"LY"},"departureAirport":{"iataCode":"TLV"},"arrivalAirport":{"iataCode":"AUH"},
+              "departureTime":"2026-08-07T07:05:00Z","arrivalTime":"2026-08-07T10:15:00Z"}}</script>
+            """;
+        var m = FlightMail.Match(FlightMail.Parse(Mail("m8", "x", html)), Ctx("TLV", "AUH", Utc(2026, 8, 7, 7, 20)))!;
+        Assert.Equal((Utc(2026, 8, 7, 7, 5), Utc(2026, 8, 7, 10, 15)), (m.ScheduledDeparture!.Value, m.ScheduledArrival!.Value));
+    }
+
+    [Fact]
     public void The_route_may_come_before_the_number_and_dates_may_be_numeric_or_Hebrew()
     {
         var plain = "טיסה תל אביב - אתונה TLV ATH\nטיסה LY 543 בתאריך 05/03/2026 בשעה 10:30";

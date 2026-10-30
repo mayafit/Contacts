@@ -1273,16 +1273,12 @@ export class BackendApiClient {
     );
   }
 
-  /** The Owner types the flight number (and, optionally, the departure's local date) */
-  async atlasSetFlightNumber(
-    activityId: string,
-    flightNumber: string,
-    date?: string,
-  ): Promise<Flight> {
+  /** The Owner types the flight number (the day is the flight's recorded day) */
+  async atlasSetFlightNumber(activityId: string, flightNumber: string): Promise<Flight> {
     return unwrap(
       await this.request<Flight>(`/atlas/flights/${activityId}`, {
         method: 'PUT',
-        body: JSON.stringify({ flightNumber, date: date || null }),
+        body: JSON.stringify({ flightNumber }),
       }),
       'Saving the flight number failed',
     );
@@ -1304,12 +1300,12 @@ export class BackendApiClient {
     );
   }
 
-  /** Confirms a suggested public flight */
-  async atlasConfirmFlight(activityId: string, index: number): Promise<Flight> {
+  /** Confirms a suggested public flight, named by its aircraft and take-off */
+  async atlasConfirmFlight(activityId: string, icao24: string, firstSeen: string): Promise<Flight> {
     return unwrap(
       await this.request<Flight>(`/atlas/flights/${activityId}/confirm`, {
         method: 'POST',
-        body: JSON.stringify({ index }),
+        body: JSON.stringify({ icao24, firstSeen }),
       }),
       'Confirming the flight failed',
     );

@@ -75,12 +75,22 @@ const FlightSection: React.FC<FlightSectionProps> = ({ activityId, onPath }) => 
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
   const [number, setNumber] = useState('');
-  const [date, setDate] = useState('');
   const pollUntil = useRef(0);
+  // An answer that arrives after the panel closed changes nothing (not the map's path)
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const onPathRef = useRef(onPath);
   onPathRef.current = onPath;
 
   const show = useCallback((f: Flight) => {
+    if (!mounted.current) {
+      return;
+    }
     setFlight(f);
     onPathRef.current?.(flightPath(f));
   }, []);
@@ -131,13 +141,21 @@ const FlightSection: React.FC<FlightSectionProps> = ({ activityId, onPath }) => 
     setBusy(true);
     setError(null);
     try {
-      show(await call());
+      const f = await call();
+      if (!mounted.current) {
+        return;
+      }
+      show(f);
       setEditing(false);
       setPollKey((k) => k + 1);
     } catch (e) {
-      setError((e as Error).message);
+      if (mounted.current) {
+        setError((e as Error).message);
+      }
     } finally {
-      setBusy(false);
+      if (mounted.current) {
+        setBusy(false);
+      }
     }
   };
 
@@ -267,7 +285,7 @@ const FlightSection: React.FC<FlightSectionProps> = ({ activityId, onPath }) => 
       (flight.status === 'mail_only' && d.candidates.length > 0) ? (
         <Box sx={{ mt: 0.75 }}>
           <Typography variant="body2">Which flight was it?</Typography>
-          {d.candidates.map((c, i) => (
+          {d.candidates.map((c) => (
             <Box
               key={`${c.icao24}-${c.firstSeen}`}
               sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}
@@ -285,7 +303,11 @@ const FlightSection: React.FC<FlightSectionProps> = ({ activityId, onPath }) => 
                 size="small"
                 variant="outlined"
                 disabled={busy}
-                onClick={() => void act(() => backendApiClient.atlasConfirmFlight(activityId, i))}
+                onClick={() =>
+                  void act(() =>
+                    backendApiClient.atlasConfirmFlight(activityId, c.icao24, c.firstSeen),
+                  )
+                }
               >
                 This one
               </Button>
@@ -332,7 +354,7 @@ const FlightSection: React.FC<FlightSectionProps> = ({ activityId, onPath }) => 
           sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap', alignItems: 'flex-start' }}
           onSubmit={(e) => {
             e.preventDefault();
-            void act(() => backendApiClient.atlasSetFlightNumber(activityId, number, date));
+            void act(() => backendApiClient.atlasSetFlightNumber(activityId, number));
           }}
         >
           <TextField
@@ -343,15 +365,6 @@ const FlightSection: React.FC<FlightSectionProps> = ({ activityId, onPath }) => 
             onChange={(e) => setNumber(e.target.value)}
             sx={{ width: 140 }}
             inputProps={{ 'aria-label': 'Flight number', maxLength: 10 }}
-          />
-          <TextField
-            size="small"
-            type="date"
-            label="Date"
-            value={date || flight.flightDate || ''}
-            onChange={(e) => setDate(e.target.value)}
-            InputLabelProps={{ shrink: true }}
-            sx={{ width: 160 }}
           />
           <Button type="submit" size="small" variant="contained" disabled={busy || !number.trim()}>
             Look up

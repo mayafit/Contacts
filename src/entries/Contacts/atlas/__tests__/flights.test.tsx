@@ -173,13 +173,18 @@ describe('FlightSection', () => {
         },
       ),
     );
-    client.atlasConfirmFlight.mockResolvedValue(flight({ source: 'confirmed', status: 'pending' }));
+    // Confirmed, the flight is looked up again; here the answer still shows the choice
+    client.atlasConfirmFlight.mockImplementation(() => client.atlasFlight());
     client.atlasSetFlightNumber.mockResolvedValue(flight({ source: 'user', status: 'pending' }));
     render(<FlightSection activityId="a1" />);
 
     expect(await screen.findByText('Which flight was it?')).toBeInTheDocument();
     expect(screen.getByText('Etihad Airways · EY593')).toBeInTheDocument();
     expect(screen.getByText('took off 09:12 · landed 09:31')).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'This one' }));
+    });
+    expect(client.atlasConfirmFlight).toHaveBeenCalledWith('a1', '896123', '2026-03-17T05:12:00Z');
     fireEvent.click(screen.getByRole('button', { name: 'Allow reading email content' }));
     expect(client.connectMailForFlights).toHaveBeenCalled();
 
@@ -187,8 +192,7 @@ describe('FlightSection', () => {
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Look up' }));
     });
-    expect(client.atlasSetFlightNumber).toHaveBeenCalledWith('a1', 'ey 593', '');
-    fireEvent.click(await screen.findByRole('button', { name: 'This one' }));
+    expect(client.atlasSetFlightNumber).toHaveBeenCalledWith('a1', 'ey 593');
   });
 
   it('says it is looking the flight up, and what went wrong', async () => {
