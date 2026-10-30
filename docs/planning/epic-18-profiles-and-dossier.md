@@ -25,22 +25,22 @@ Checked on 2026-10-31:
 
 ### 18.1 Profiles on file and the dossier — Phase 1
 
-- [ ] `classifyUrl` and `profilesOf` (AD-46 rules 1, 2), with tests of every network
+- [x] `classifyUrl` and `profilesOf` (AD-46 rules 1, 2), with tests of every network
   and the exclusions.
-- [ ] `model/dossier.ts` (rule 6): colleagues, segments, relationship, with tests.
-- [ ] `Dossier.tsx` at the top of the card; **Add to contact** into the draft.
+- [x] `model/dossier.ts` (rule 6): colleagues, segments, relationship, with tests.
+- [x] `Dossier.tsx` at the top of the card; **Add to contact** into the draft.
 
 ### 18.2 Gravatar — Phase 1
 
-- [ ] `GravatarClient` (the call, the profile's fields, the rate-limit headers),
+- [x] `GravatarClient` (the call, the profile's fields, the rate-limit headers),
   `ProfileStore`, `ProfileQueue`, `ProfileWorker` (rule 3), with tests of the parse,
   the queue (30 days, no duplicates) and the pacing.
-- [ ] `ProfilesController`: enable, hashes, read, turn off and forget.
-- [ ] The Profiles card and **Review links** (rules 5, 7).
+- [x] `ProfilesController`: enable, hashes, read, turn off and forget.
+- [x] The Profiles card and **Review links** (rules 5, 7).
 
 ### 18.3 Signatures — Phase 1
 
-- [ ] `POST /api/profiles/signatures` and `SignatureLinks` (rule 4), with tests of
+- [x] `POST /api/profiles/signatures` and `SignatureLinks` (rule 4), with tests of
   the extraction and of the website filter.
 
 ### 18.4 Deployment — Phase 1

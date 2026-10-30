@@ -37,6 +37,7 @@ import { selectContactEntities } from '../../redux/slices/contacts/selectors';
 import ContactAvatar from '../common/ContactAvatar';
 import FavouriteStar from '../common/FavouriteStar';
 import LabelEditor from './LabelEditor';
+import Dossier, { type DossierData } from './Dossier';
 import ContactForm from './ContactForm';
 import { buildPatch, changedGroups, createDraft, validateDraft } from './cardModel';
 import {
@@ -70,6 +71,8 @@ export interface ContactCardDrawerProps {
   activity?: ActivityIndex;
   /** Read this contact's email signature for details */
   onReadSignature?: (contact: Contact) => void;
+  /** What the dossier shows beyond the contact (AD-46 rule 6) */
+  dossier?: DossierData;
 }
 
 /**
@@ -152,6 +155,7 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({
   onDelete,
   activity,
   onReadSignature,
+  dossier,
 }) => {
   const dispatch = useAppDispatch();
   const entities = useAppSelector(selectContactEntities);
@@ -160,6 +164,8 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({
   const [draft, setDraft] = useState<Contact | null>(null);
   const [saveState, setSaveState] = useState<SaveState>({ kind: 'idle' });
   const [confirmClose, setConfirmClose] = useState(false);
+  // A colleague opened from the dossier while the draft has edits: asked first
+  const [switchTo, setSwitchTo] = useState<string | null>(null);
 
   // Load a fresh draft whenever a different contact is opened
   useEffect(() => {
@@ -423,6 +429,20 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({
                   {invalid}
                 </Alert>
               )}
+              {dossier && (
+                <Dossier
+                  key={draft.resourceName}
+                  contact={contact ?? original}
+                  draft={draft}
+                  onDraftChange={setDraft}
+                  groups={groups}
+                  data={{
+                    ...dossier,
+                    onOpenCard: (rn) => (dirty ? setSwitchTo(rn) : dossier.onOpenCard(rn)),
+                  }}
+                  disabled={saving}
+                />
+              )}
               <ContactForm
                 key={draft.resourceName}
                 draft={draft}
@@ -490,7 +510,13 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({
         )}
       </Drawer>
 
-      <Dialog open={confirmClose} onClose={() => setConfirmClose(false)}>
+      <Dialog
+        open={confirmClose || !!switchTo}
+        onClose={() => {
+          setConfirmClose(false);
+          setSwitchTo(null);
+        }}
+      >
         <DialogTitle>Discard unsaved changes?</DialogTitle>
         <DialogContent>
           <Typography variant="body2" sx={{ color: tokens.textSecondary }}>
@@ -499,7 +525,13 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({
           </Typography>
         </DialogContent>
         <DialogActions>
-          <Button color="inherit" onClick={() => setConfirmClose(false)}>
+          <Button
+            color="inherit"
+            onClick={() => {
+              setConfirmClose(false);
+              setSwitchTo(null);
+            }}
+          >
             Keep editing
           </Button>
           <Button
@@ -507,7 +539,13 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({
             variant="contained"
             onClick={() => {
               setConfirmClose(false);
-              onClose();
+              const next = switchTo;
+              setSwitchTo(null);
+              if (next && dossier) {
+                dossier.onOpenCard(next);
+              } else {
+                onClose();
+              }
             }}
           >
             Discard

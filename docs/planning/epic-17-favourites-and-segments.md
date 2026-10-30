@@ -50,4 +50,4 @@ What Echo had:
 
 ### 17.4 Deployment — Phase 1
 
-- [ ] Merged, images built for arm64, rolled out; checked on the Owner's Contacts.
+- [x] Merged (PR #137), images built for arm64, rolled out 2026-10-31.
