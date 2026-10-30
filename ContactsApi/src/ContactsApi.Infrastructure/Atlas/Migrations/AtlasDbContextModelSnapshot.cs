@@ -685,6 +685,28 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                     b.ToTable("imports", "atlas");
                 });
 
+            modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.OwnerSetting", b =>
+                {
+                    b.Property<string>("OwnerId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Kind")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("Json")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("OwnerId", "Kind");
+
+                    b.ToTable("owner_settings", "atlas");
+                });
+
             modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.PlaceReview", b =>
                 {
                     b.Property<Guid>("Id")

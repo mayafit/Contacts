@@ -54,6 +54,7 @@ import {
 } from '../../model/activity';
 import { logger } from '../../../../shared/logger';
 import type { AppError } from '../../types';
+import { fs } from '../../settings/uiSettings';
 
 /** Props for ContactCardDrawer */
 export interface ContactCardDrawerProps {
@@ -338,9 +339,14 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({
                     target="_blank"
                     rel="noopener noreferrer"
                     underline="hover"
-                    sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, fontSize: 14 }}
+                    sx={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 0.5,
+                      fontSize: fs(14),
+                    }}
                   >
-                    Open in Google Contacts <OpenInNew sx={{ fontSize: 15 }} />
+                    Open in Google Contacts <OpenInNew sx={{ fontSize: fs(15) }} />
                   </Link>
                 </Box>
                 <Box
@@ -356,7 +362,7 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({
                       target="_blank"
                       rel="noopener noreferrer"
                       underline="hover"
-                      sx={{ fontSize: 14 }}
+                      sx={{ fontSize: fs(14) }}
                     >
                       {l.label}
                     </Link>

@@ -26,6 +26,7 @@ import {
   getPhoneticName,
 } from '../../model/contactView';
 import { tokens } from '../../theme/contactsTheme';
+import { fs } from '../../settings/uiSettings';
 
 /** Props for DuplicatesView */
 export interface DuplicatesViewProps {
@@ -42,9 +43,9 @@ export interface DuplicatesViewProps {
 const PAGE = 40;
 
 const REASON_META: Record<DuplicateReason, { label: string; icon: React.ReactElement }> = {
-  phone: { label: 'Same phone', icon: <Phone sx={{ fontSize: 16 }} /> },
-  email: { label: 'Same email', icon: <Email sx={{ fontSize: 16 }} /> },
-  name: { label: 'Same name', icon: <Person sx={{ fontSize: 16 }} /> },
+  phone: { label: 'Same phone', icon: <Phone sx={{ fontSize: fs(16) }} /> },
+  email: { label: 'Same email', icon: <Email sx={{ fontSize: fs(16) }} /> },
+  name: { label: 'Same name', icon: <Person sx={{ fontSize: fs(16) }} /> },
 };
 
 /**
@@ -172,9 +173,9 @@ const DuplicatesView: React.FC<DuplicatesViewProps> = ({
           target="_blank"
           rel="noopener noreferrer"
           underline="hover"
-          sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, fontSize: 15, mt: 0.5 }}
+          sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, fontSize: fs(15), mt: 0.5 }}
         >
-          Merge in Google Contacts <OpenInNew sx={{ fontSize: 16 }} />
+          Merge in Google Contacts <OpenInNew sx={{ fontSize: fs(16) }} />
         </Link>
       </Box>
 
@@ -221,7 +222,7 @@ const DuplicatesView: React.FC<DuplicatesViewProps> = ({
                 <Tooltip title="Merging keeps the Hebrew name and stores the English one as its phonetic name">
                   <Chip
                     size="small"
-                    icon={<Translate sx={{ fontSize: 16 }} />}
+                    icon={<Translate sx={{ fontSize: fs(16) }} />}
                     label="Hebrew + English"
                     sx={{ bgcolor: 'rgba(57,135,229,0.15)', color: tokens.accent }}
                   />

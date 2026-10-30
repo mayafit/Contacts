@@ -33,6 +33,7 @@ import { getDisplayName } from '../../model/contactView';
 import ContactAvatar from '../common/ContactAvatar';
 import ContactActions from '../device/ContactActions';
 import { tokens } from '../../theme/contactsTheme';
+import { fs } from '../../settings/uiSettings';
 
 /** Props for ReachOutSection */
 export interface ReachOutSectionProps {
@@ -57,11 +58,11 @@ export interface ReachOutSectionProps {
 }
 
 const ICONS: Record<ReasonKind, React.ReactNode> = {
-  oweReply: <MarkEmailUnread sx={{ fontSize: 16 }} />,
-  waiting: <HourglassBottom sx={{ fontSize: 16 }} />,
-  birthday: <Cake sx={{ fontSize: 16 }} />,
-  meetingSoon: <Event sx={{ fontSize: 16 }} />,
-  overdue: <Schedule sx={{ fontSize: 16 }} />,
+  oweReply: <MarkEmailUnread sx={{ fontSize: fs(16) }} />,
+  waiting: <HourglassBottom sx={{ fontSize: fs(16) }} />,
+  birthday: <Cake sx={{ fontSize: fs(16) }} />,
+  meetingSoon: <Event sx={{ fontSize: fs(16) }} />,
+  overdue: <Schedule sx={{ fontSize: fs(16) }} />,
 };
 
 const DISMISS_KEY = 'contacts.reachOutDismissed';
@@ -227,7 +228,7 @@ const ReachOutSection: React.FC<ReachOutSectionProps> = ({
                       )}
                       target="_blank"
                       rel="noopener noreferrer"
-                      startIcon={<OpenInNew sx={{ fontSize: 16 }} />}
+                      startIcon={<OpenInNew sx={{ fontSize: fs(16) }} />}
                     >
                       Gmail
                     </Button>
@@ -236,7 +237,7 @@ const ReachOutSection: React.FC<ReachOutSectionProps> = ({
                 <Tooltip title="Have the assistant draft a message">
                   <Button
                     size="small"
-                    startIcon={<AutoAwesome sx={{ fontSize: 16 }} />}
+                    startIcon={<AutoAwesome sx={{ fontSize: fs(16) }} />}
                     onClick={() => onDraft(draftPrompt(item))}
                   >
                     Draft
@@ -246,7 +247,7 @@ const ReachOutSection: React.FC<ReachOutSectionProps> = ({
                   <Button
                     size="small"
                     color="inherit"
-                    startIcon={<Check sx={{ fontSize: 16 }} />}
+                    startIcon={<Check sx={{ fontSize: fs(16) }} />}
                     onClick={() => done(item)}
                   >
                     Done
@@ -313,7 +314,7 @@ const ReachOutSection: React.FC<ReachOutSectionProps> = ({
                       <Tooltip title="This is me: mail between my own addresses is not a conversation">
                         <Button
                           size="small"
-                          sx={{ minWidth: 0, fontSize: 13, flexShrink: 0 }}
+                          sx={{ minWidth: 0, fontSize: fs(13), flexShrink: 0 }}
                           onClick={() =>
                             onMarkOwn(
                               a.contact?.emailAddresses?.length
@@ -332,7 +333,7 @@ const ReachOutSection: React.FC<ReachOutSectionProps> = ({
                       href={gmailThreadUrl(a.thread.threadId, account)}
                       target="_blank"
                       rel="noopener noreferrer"
-                      sx={{ fontSize: 14, flexShrink: 0 }}
+                      sx={{ fontSize: fs(14), flexShrink: 0 }}
                     >
                       Open
                     </Link>

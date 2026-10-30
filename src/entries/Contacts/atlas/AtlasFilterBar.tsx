@@ -26,6 +26,7 @@ import {
   formatTypesFilter,
 } from './filters';
 import { tokens } from '../theme/contactsTheme';
+import { fs } from '../settings/uiSettings';
 
 /** Props for AtlasFilterBar */
 export interface AtlasFilterBarProps {
@@ -65,8 +66,8 @@ const chipSx = {
   border: `1px solid ${FILTER_COLOR}`,
   color: tokens.text,
   fontWeight: 500,
-  '& .MuiChip-icon': { color: FILTER_COLOR, fontSize: 16 },
-  '& .MuiChip-deleteIcon': { color: tokens.textSecondary, fontSize: 16 },
+  '& .MuiChip-icon': { color: FILTER_COLOR, fontSize: fs(16) },
+  '& .MuiChip-deleteIcon': { color: tokens.textSecondary, fontSize: fs(16) },
   '& .MuiChip-deleteIcon:hover': { color: tokens.text },
   '&.MuiChip-clickable:hover': { bgcolor: 'rgba(57, 135, 229, 0.28)' },
 } as const;
@@ -117,7 +118,7 @@ const AtlasFilterBar: React.FC<AtlasFilterBarProps> = ({
         bgcolor: active ? 'rgba(57, 135, 229, 0.06)' : tokens.surface,
       }}
     >
-      <FilterAlt sx={{ fontSize: 18, color: active ? FILTER_COLOR : tokens.textMuted }} />
+      <FilterAlt sx={{ fontSize: fs(18), color: active ? FILTER_COLOR : tokens.textMuted }} />
       {active ? (
         <>
           {selection && (

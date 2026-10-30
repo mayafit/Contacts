@@ -61,6 +61,7 @@ import { formatSignedPct } from './analysis';
 import HrZonesBar from './HrZonesBar';
 import ReviewsSection from './ReviewsSection';
 import { tokens } from '../theme/contactsTheme';
+import { fs } from '../settings/uiSettings';
 
 /** A filter a proposal or a link applies */
 export interface InsightsFilter {
@@ -350,7 +351,7 @@ const TrendChart: React.FC<{ series: InsightsSeries; metric: TrendMetric }> = ({
             key={bars[i].t}
             x={i * slot + 1}
             y={TREND_H + LABEL_ROW - 3}
-            fontSize={11}
+            style={{ fontSize: fs.chart(11) }}
             fill={tokens.textMuted}
           >
             {l.label}
@@ -362,7 +363,7 @@ const TrendChart: React.FC<{ series: InsightsSeries; metric: TrendMetric }> = ({
           key={y.year}
           x={y.x + 1}
           y={height - 2}
-          fontSize={11}
+          style={{ fontSize: fs.chart(11) }}
           fontWeight={600}
           fill={tokens.textSecondary}
         >
@@ -415,7 +416,7 @@ const CountBars: React.FC<{
               <text
                 x={i * slot + slot / 2}
                 y={COUNT_H + LABEL_ROW - 3}
-                fontSize={11}
+                style={{ fontSize: fs.chart(11) }}
                 textAnchor="middle"
                 fill={tokens.textMuted}
               >
@@ -496,7 +497,7 @@ const LoadChart: React.FC<{ weekly: WeekLoad[] }> = ({ weekly }) => {
             x={i * slot > TREND_W * 0.85 ? TREND_W - 1 : i * slot + 1}
             textAnchor={i * slot > TREND_W * 0.85 ? 'end' : 'start'}
             y={LOAD_H + LABEL_ROW - 3}
-            fontSize={11}
+            style={{ fontSize: fs.chart(11) }}
             fill={tokens.textMuted}
           >
             {l.label}
@@ -839,7 +840,9 @@ const InsightsPanel: React.FC<InsightsPanelProps> = ({
                   value={metric}
                   onChange={(_, v: TrendMetric | null) => v && setMetric(v)}
                   aria-label="Trend measure"
-                  sx={{ '& .MuiToggleButton-root': { py: 0, px: 0.75, fontSize: 12, height: 22 } }}
+                  sx={{
+                    '& .MuiToggleButton-root': { py: 0, px: 0.75, fontSize: fs(12), height: 22 },
+                  }}
                 >
                   <ToggleButton value="distance">km</ToggleButton>
                   <ToggleButton value="time">hours</ToggleButton>
@@ -953,7 +956,7 @@ const InsightsPanel: React.FC<InsightsPanelProps> = ({
                   onClick={() => onShowPlace(p.lat, p.lon)}
                   sx={rowSx}
                 >
-                  <Place sx={{ fontSize: 16, mt: 0.25, color: VISIT_COLOR }} />
+                  <Place sx={{ fontSize: fs(16), mt: 0.25, color: VISIT_COLOR }} />
                   <Box sx={{ minWidth: 0, flex: 1 }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0 }}>
                       <Typography
@@ -972,7 +975,7 @@ const InsightsPanel: React.FC<InsightsPanelProps> = ({
                         <Chip
                           size="small"
                           label="new"
-                          sx={{ height: 18, fontSize: 12, flexShrink: 0 }}
+                          sx={{ height: 18, fontSize: fs(12), flexShrink: 0 }}
                           color="primary"
                           variant="outlined"
                         />

@@ -310,6 +310,17 @@ public class FusionSetting
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
 
+/// <summary>A settings document of an Owner, per kind (AD-41): "ui" is the appearance; the browser owns its schema</summary>
+public class OwnerSetting
+{
+    public string OwnerId { get; set; } = string.Empty;
+    /// <summary>The kind of settings: ui</summary>
+    public string Kind { get; set; } = "ui";
+    /// <summary>The document (a JSON object)</summary>
+    public string Json { get; set; } = "{}";
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
 /// <summary>A user's decision about two records: always together, or never together</summary>
 public class FusionDecision
 {

@@ -8,6 +8,7 @@ import React, { useId, useState } from 'react';
 import { Box, ButtonBase, Collapse, Typography } from '@mui/material';
 import { ExpandMore } from '@mui/icons-material';
 import { tokens } from '../theme/contactsTheme';
+import { fs } from '../settings/uiSettings';
 
 /** Props for PanelSection */
 export interface PanelSectionProps {
@@ -54,7 +55,7 @@ const PanelSection: React.FC<PanelSectionProps> = ({
         >
           <ExpandMore
             sx={{
-              fontSize: 18,
+              fontSize: fs(18),
               color: tokens.textMuted,
               transform: open ? 'none' : 'rotate(-90deg)',
               transition: 'transform 150ms',

@@ -1185,6 +1185,43 @@ export class BackendApiClient {
     );
   }
 
+  /**
+   * The Owner's settings document of a kind (AD-41): an empty object when none was saved.
+   * @param kind - ui
+   */
+  async settings(kind: 'ui'): Promise<{ json: unknown; updatedAt: string | null }> {
+    return unwrap(
+      await this.request<{ json: unknown; updatedAt: string | null }>(`/settings/${kind}`),
+      'Loading the settings failed',
+    );
+  }
+
+  /**
+   * Saves the Owner's settings document of a kind.
+   * @param kind - ui
+   * @param json - The document
+   */
+  async saveSettings(kind: 'ui', json: unknown): Promise<void> {
+    unwrap(
+      await this.request<unknown>(`/settings/${kind}`, {
+        method: 'PUT',
+        body: JSON.stringify(json),
+      }),
+      'Saving the settings failed',
+    );
+  }
+
+  /**
+   * Forgets the Owner's settings document of a kind (the defaults apply).
+   * @param kind - ui
+   */
+  async resetSettings(kind: 'ui'): Promise<void> {
+    unwrap(
+      await this.request<unknown>(`/settings/${kind}`, { method: 'DELETE' }),
+      'Resetting the settings failed',
+    );
+  }
+
   /** The Google Drive connection for scheduled Takeout exports (AD-40) */
   async atlasTakeoutDrive(): Promise<TakeoutDriveStatus> {
     return unwrap(

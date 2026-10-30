@@ -221,7 +221,6 @@ const SignatureDialog: React.FC<SignatureDialogProps> = ({
     offset.current = first.length;
     void read(first);
     // Start once per opening, when the data is there
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, connected, ready, includeChecked]);
 
   const more = () => {

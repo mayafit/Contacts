@@ -169,6 +169,9 @@ Architecture §5B, AD-39; plan `docs/planning/epic-13-place-reviews.md`.
 - **From Drive (AD-40).** The `takeout` opt-in adds `drive.readonly` to the Google sign-in; `/api/atlas/connections/google-drive` keeps an `atlas.connections` row (`google-drive-takeout`); `TakeoutDriveWorker` checks connected Drives daily for new `takeout-*.zip` exports (500 MB at most), reads their reviews file on the server (`GoogleReviewsParser`) and imports it like the browser does. The import dialog's **Google Drive** tab explains the Takeout schedule.
 - **Reminders.** `PlaceReviews.Assess` decides at read time; `atlas.review_reminders` keeps Later, Not this one, Not this kind and I reviewed it (`POST /api/atlas/reviews/reminders`).
 
+## 5C. Settings and appearance (Epic 14)
+Architecture §5C, AD-41. `/settings` (the gear at the bottom of the rail) sets text sizes, the pointer, map symbol sizes and the grab distance, colours, route styles and chart colours (`settings/SettingsPage.tsx`). `SettingsProvider` keeps them (`atlas.owner_settings` through `/api/settings/ui`, and the browser's `settings.ui`); Atlas reads them through `useUi()`, the theme, the `--ui-*` CSS variables and `fs()`, and the live colour bindings in `types.ts`, `photos.ts` and `analysis.ts`.
+
 ## 6A. Routes (route quality and road matching, Epic 12 R1)
 Architecture §5A, AD-32 to AD-37; plan `docs/planning/epic-12-route-quality.md`.
 - **Roads travelled (AD-37, rule `routes.v4`).**

@@ -770,13 +770,13 @@ Importing a Takeout by hand every time is a chore. The Owner can instead schedul
 
 The Owner finds some of Echo's text too small, the points on the map too small to grab, and the pointer too small to follow. Enlarging everything would only move the problem. Instead, a **Settings** page lets the Owner set each kind of thing on its own: the size of each kind of text, the size of each kind of symbol on the map and how far from it a click still takes it, the pointer, the colour of each kind of thing, and the style of each kind of route. Every change shows at once, everywhere, so the Owner sees the result before moving on, and every setting can be put back to its default.
 
-- **Per Owner, on every device.** Settings are kept with the Owner's account, so another browser or the phone shows the same Echo. The browser also remembers the last settings, so Echo opens with them without a flash of the defaults.
+- **Per Owner, on every device.** Settings are kept with the Owner's account, so another browser or the phone shows the same Echo. The browser also remembers the last settings, so Echo opens with them without a flash of the defaults; settings made in a browser before the account had any become the account's.
 - **Defaults are today's Echo.** Nothing changes until the Owner changes it.
 - **Bounded.** Every number has a sensible range (text from 9 to 32 px, map symbols up to five times their default), so a slip cannot make Echo unusable; **Reset** puts a section, or everything, back.
 
 #### FR-68: The Settings page — Proposed
 - A **Settings** entry (a gear) at the bottom of the navigation rail opens `/settings`. It is not an Area: Echo never opens on it by itself.
-- Sections: **Text**, **Pointer**, **Map symbols**, **Colours**, **Routes**, **Charts**, and **Other settings** (where the other settings live: fusion, route quality, connected sources, Google permissions).
+- Sections: **Text**, **Pointer**, **Map symbols**, **Colours**, **Routes**, **Charts**, and **Other settings** (where the other settings live: buttons that open Atlas's fusion settings and its imports and connected sources, and a link to the Google Account's third-party connections for Google permissions).
 - Each control shows its value and its default; a section's **Reset** puts the section back, and **Reset everything** all of them. Changes apply at once and are saved by themselves; a line says when they were saved, or that saving failed.
 - Each section has a small **preview**: sample text at each size, map symbols on a dark map background, route lines of each type and piece, chart lines.
 

@@ -29,6 +29,7 @@ import {
   nameCollator,
 } from '../../model/contactView';
 import { tokens } from '../../theme/contactsTheme';
+import { fs } from '../../settings/uiSettings';
 
 /** Row height in px */
 export const ROW_HEIGHT = 52;
@@ -309,11 +310,11 @@ const ContactsTable: React.FC<ContactsTableProps> = ({
               key={l}
               label={l}
               size="small"
-              sx={{ height: 22, fontSize: 13, bgcolor: tokens.raised }}
+              sx={{ height: 22, fontSize: fs(13), bgcolor: tokens.raised }}
             />
           ))}
           {labels.length > 2 && (
-            <Box component="span" sx={{ color: tokens.textMuted, fontSize: 13 }}>
+            <Box component="span" sx={{ color: tokens.textMuted, fontSize: fs(13) }}>
               +{labels.length - 2}
             </Box>
           )}
@@ -407,7 +408,7 @@ const ContactsTable: React.FC<ContactsTableProps> = ({
                     justifyContent: 'flex-start',
                     gap: 0.5,
                     px: 1.5,
-                    fontSize: 13,
+                    fontSize: fs(13),
                     fontWeight: 600,
                     letterSpacing: '0.03em',
                     textTransform: 'uppercase',
@@ -418,9 +419,9 @@ const ContactsTable: React.FC<ContactsTableProps> = ({
                   {column.label}
                   {active &&
                     (sort.desc ? (
-                      <ArrowDownward sx={{ fontSize: 15 }} />
+                      <ArrowDownward sx={{ fontSize: fs(15) }} />
                     ) : (
-                      <ArrowUpward sx={{ fontSize: 15 }} />
+                      <ArrowUpward sx={{ fontSize: fs(15) }} />
                     ))}
                 </ButtonBase>
               );

@@ -103,6 +103,7 @@ import DeviceSyncDialog from './device/DeviceSyncDialog';
 import { platformOf, saveToDevice } from '../device/device';
 import { backendApiClient } from '../../../services/api/BackendApiClient';
 import { selectColumnConfig, setColumnConfig } from '../redux/slices/ui/uiSlice';
+import { fs } from '../settings/uiSettings';
 
 type View = 'contacts' | 'insights' | 'duplicates' | 'trash';
 
@@ -415,7 +416,7 @@ const SignedInHome: React.FC = () => {
         '&:focus-within': { borderColor: tokens.accent },
       }}
     >
-      <Search sx={{ fontSize: 20, color: tokens.textMuted }} />
+      <Search sx={{ fontSize: fs(20), color: tokens.textMuted }} />
       <InputBase
         inputRef={phone ? undefined : searchRef}
         value={query}
@@ -441,7 +442,7 @@ const SignedInHome: React.FC = () => {
         <Box
           component="kbd"
           sx={{
-            fontSize: 12,
+            fontSize: fs(12),
             color: tokens.textMuted,
             border: `1px solid ${tokens.borderStrong}`,
             borderRadius: '5px',
@@ -697,7 +698,7 @@ const SignedInHome: React.FC = () => {
             displayEmpty
             onChange={(e) => setLabel(e.target.value)}
             aria-label="Filter by label"
-            sx={{ minWidth: 150, height: 32, fontSize: 14, borderRadius: '8px' }}
+            sx={{ minWidth: 150, height: 32, fontSize: fs(14), borderRadius: '8px' }}
             renderValue={(v) => (v ? (groups[v]?.name ?? 'Label') : 'All labels')}
           >
             <MenuItem value="">All labels</MenuItem>
@@ -841,7 +842,7 @@ const SignedInHome: React.FC = () => {
               placeItems: 'center',
             }}
           >
-            <ContactPhone sx={{ fontSize: 18, color: '#fff' }} />
+            <ContactPhone sx={{ fontSize: fs(18), color: '#fff' }} />
           </Box>
           <Typography variant="h3" sx={{ display: { xs: 'none', sm: 'block' } }}>
             Contacts
@@ -855,7 +856,12 @@ const SignedInHome: React.FC = () => {
           scrollButtons={false}
           sx={{
             minHeight: 60,
-            '& .MuiTab-root': { minHeight: 60, px: { xs: 1, sm: 1.5 }, minWidth: 0, fontSize: 15 },
+            '& .MuiTab-root': {
+              minHeight: 60,
+              px: { xs: 1, sm: 1.5 },
+              minWidth: 0,
+              fontSize: fs(15),
+            },
           }}
         >
           <Tab value="contacts" label="Contacts" />
@@ -871,7 +877,7 @@ const SignedInHome: React.FC = () => {
                     component="span"
                     aria-label={`${duplicateGroups.length} groups`}
                     sx={{
-                      fontSize: 12,
+                      fontSize: fs(12),
                       fontWeight: 700,
                       lineHeight: '18px',
                       minWidth: 18,
@@ -939,7 +945,7 @@ const SignedInHome: React.FC = () => {
         >
           <Avatar
             src={user?.profilePicture}
-            sx={{ width: 32, height: 32, fontSize: 15, bgcolor: tokens.accent, color: '#fff' }}
+            sx={{ width: 32, height: 32, fontSize: fs(15), bgcolor: tokens.accent, color: '#fff' }}
           >
             {userInitial}
           </Avatar>

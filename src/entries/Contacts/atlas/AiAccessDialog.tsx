@@ -21,6 +21,7 @@ import { ContentCopy, DeleteOutline } from '@mui/icons-material';
 import { backendApiClient } from '../../../services/api/BackendApiClient';
 import type { AccessTokenInfo } from './types';
 import { tokens } from '../theme/contactsTheme';
+import { fs } from '../settings/uiSettings';
 
 /** Props for AiAccessDialog */
 export interface AiAccessDialogProps {
@@ -99,7 +100,7 @@ const AiAccessDialog: React.FC<AiAccessDialogProps> = ({ open, onClose }) => {
               Copy it now: it is not shown again.
             </Typography>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Box component="code" sx={{ wordBreak: 'break-all', fontSize: 14 }}>
+              <Box component="code" sx={{ wordBreak: 'break-all', fontSize: fs(14) }}>
                 {created}
               </Box>
               <IconButton
@@ -114,7 +115,7 @@ const AiAccessDialog: React.FC<AiAccessDialogProps> = ({ open, onClose }) => {
               Claude Code:
             </Typography>
             <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-              <Box component="code" sx={{ wordBreak: 'break-all', fontSize: 13 }}>
+              <Box component="code" sx={{ wordBreak: 'break-all', fontSize: fs(13) }}>
                 {command}
               </Box>
               <IconButton

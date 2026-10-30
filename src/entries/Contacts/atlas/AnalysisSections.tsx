@@ -22,6 +22,7 @@ import {
 } from './analysis';
 import { formatDuration } from './geo';
 import { tokens } from '../theme/contactsTheme';
+import { fs } from '../settings/uiSettings';
 
 /** Faster, better */
 const GOOD_COLOR = '#5fd38d';
@@ -122,7 +123,7 @@ export const SplitsTable: React.FC<SplitsTableProps> = ({ splits, splitM, pace }
     return { s, i, label: splitLabel(end, splitM) };
   });
   const shown = all ? rows : rows.slice(0, SPLITS_SHOWN);
-  const cellSx = { fontSize: 12.5, textAlign: 'right', whiteSpace: 'nowrap' } as const;
+  const cellSx = { fontSize: fs(12.5), textAlign: 'right', whiteSpace: 'nowrap' } as const;
   return (
     <Box role="table" aria-label="Splits">
       <Box
@@ -133,7 +134,7 @@ export const SplitsTable: React.FC<SplitsTableProps> = ({ splits, splitM, pace }
           gap: 0.75,
           pb: 0.25,
           color: tokens.textMuted,
-          fontSize: 11,
+          fontSize: fs(11),
         }}
       >
         <span role="columnheader">{splitM >= 1000 ? 'km' : 'm'}</span>
@@ -165,7 +166,7 @@ export const SplitsTable: React.FC<SplitsTableProps> = ({ splits, splitM, pace }
               fontWeight: fastest ? 600 : 400,
             }}
           >
-            <Box role="cell" sx={{ fontSize: 12.5, color: tokens.textMuted }}>
+            <Box role="cell" sx={{ fontSize: fs(12.5), color: tokens.textMuted }}>
               {label}
             </Box>
             <Box role="cell" sx={{ position: 'relative', height: 18, minWidth: 0 }}>
@@ -185,7 +186,7 @@ export const SplitsTable: React.FC<SplitsTableProps> = ({ splits, splitM, pace }
                 sx={{
                   position: 'relative',
                   px: 0.5,
-                  fontSize: 12.5,
+                  fontSize: fs(12.5),
                   lineHeight: '18px',
                   whiteSpace: 'nowrap',
                 }}
@@ -256,7 +257,7 @@ export const EffortSection: React.FC<EffortSectionProps> = ({
             </Box>
           </Typography>
           <Tooltip title="Speed per heartbeat in the second half against the first half. Under 5% is steady: your heart rate kept pace with your speed. 5–10% is drifting and over 10% fading: the same speed cost more later on (fatigue, heat, too fast a start).">
-            <InfoOutlined sx={{ fontSize: 15, color: tokens.textMuted }} />
+            <InfoOutlined sx={{ fontSize: fs(15), color: tokens.textMuted }} />
           </Tooltip>
         </Box>
         <Typography variant="caption" component="div" sx={{ color: tokens.textMuted }}>
@@ -299,7 +300,7 @@ export const EffortSection: React.FC<EffortSectionProps> = ({
                   label="PB"
                   sx={{
                     height: 18,
-                    fontSize: 12,
+                    fontSize: fs(12),
                     fontWeight: 700,
                     bgcolor: GOOD_COLOR,
                     color: tokens.page,

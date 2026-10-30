@@ -10,6 +10,7 @@ import { backendApiClient } from '../../../services/api/BackendApiClient';
 import type { PhotoSummary } from './types';
 import { PANEL_PHOTOS_MAX, photoCountText, takenText } from './photos';
 import { tokens } from '../theme/contactsTheme';
+import { fs } from '../settings/uiSettings';
 
 /**
  * "📷 12 photos" for a panel's header line; scrolls to the panel's Photos section.
@@ -30,7 +31,7 @@ export const PhotosLink: React.FC<{
     onClick={() => target.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
     sx={{ color: 'inherit', fontSize: 'inherit', verticalAlign: 'baseline', whiteSpace: 'nowrap' }}
   >
-    <PhotoCameraOutlined sx={{ fontSize: 12, verticalAlign: '-2px', mr: 0.25 }} />
+    <PhotoCameraOutlined sx={{ fontSize: fs(12), verticalAlign: '-2px', mr: 0.25 }} />
     {label ?? photoCountText(count, count >= PANEL_PHOTOS_MAX)}
   </Link>
 );
@@ -77,7 +78,7 @@ const PhotoStrip: React.FC<PhotoStripProps> = ({ photos, onOpen }) => {
             />
             {p.isVideo && (
               <PlayCircleOutline
-                sx={{ position: 'absolute', right: 4, bottom: 4, fontSize: 20, color: '#fff' }}
+                sx={{ position: 'absolute', right: 4, bottom: 4, fontSize: fs(20), color: '#fff' }}
               />
             )}
           </ButtonBase>

@@ -19,6 +19,7 @@ import {
 import { GoogleContactsService } from '../services/GoogleContactsService';
 import { logger } from '../../../shared/logger';
 import { tokens } from '../theme/contactsTheme';
+import { fs } from '../settings/uiSettings';
 
 /** Messages for the ?error= codes the backend and the session watcher send */
 export const SIGN_IN_ERRORS: Record<string, string> = {
@@ -109,7 +110,7 @@ const SignedOutHome: React.FC = () => {
               placeItems: 'center',
             }}
           >
-            <ContactPhone sx={{ fontSize: 18, color: '#fff' }} />
+            <ContactPhone sx={{ fontSize: fs(18), color: '#fff' }} />
           </Box>
           <Typography variant="h3">Personal</Typography>
         </Box>
