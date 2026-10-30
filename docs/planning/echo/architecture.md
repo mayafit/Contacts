@@ -1348,7 +1348,7 @@ Image availability was checked on 2026-10-28. Resource figures for the Israel ex
   - **Suggestions** ("Which flight was it?"): up to 3 rows (airline, number or call sign, "took off 12:41 · landed 14:52") with **This one**.
   - **Status lines**: "Looking up the flight…" (the panel polls every 4 s, for 2 minutes at most, while `pending`), "Mail not searched: Echo may not read email content. [Allow reading email content]", "Sign in to Google again to search your mail", "No mail names this flight", "No public record matched EY593", "Probably not a flight", the note of an error with **Search again**.
   - **Sources** line: "Flight data: The OpenSky Network · Airlines and aircraft: adsbdb · read 30 Oct 2026".
-- **Map.** `AtlasMap` takes `flightPath` (the track's positions, or the airports' great circle) for the selected flight and draws it in the flight style instead of the arc between the recorded ends.
+- **Map.** `AtlasMap` takes `flightPath` (the track's positions, or the airports' great circle) for the selected flight and draws it in the flight style instead of the arc between the recorded ends. It **replaces** the flight's own line rather than being drawn over it: the selected flight is one line, in its selected width with the highlight dashes on top, and its two airport dots sit at the path's ends (the real airports), not at the recorded ends. Any other flight keeps its arc.
 - **Back from the permission.** `/atlas?connected=mail` clears the flag and says "Echo may now read email content; your flights are searched within the hour".
 
 ## 6. Consistency Conventions
