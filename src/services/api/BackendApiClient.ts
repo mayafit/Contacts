@@ -189,6 +189,36 @@ export interface FindEmailResponse {
   mail: 'searched' | 'not_allowed' | 'sign_in' | 'failed';
 }
 
+/** A link of a public profile */
+export interface ProfileLink {
+  label: string;
+  url: string;
+}
+
+/** A person's public profile on Gravatar (AD-46 rule 3) */
+export interface GravatarProfile {
+  displayName?: string | null;
+  jobTitle?: string | null;
+  company?: string | null;
+  location?: string | null;
+  description?: string | null;
+  profileUrl?: string | null;
+  verifiedAccounts?: ProfileLink[];
+  links?: ProfileLink[];
+}
+
+/** The public-profile look-up's state */
+export interface ProfilesStatus {
+  enabled: boolean;
+  checked: number;
+  pending: number;
+  found: number;
+  hourlyLimit: number;
+  limitedUntil?: string | null;
+  /** Found profiles by email hash (from GET only) */
+  profiles?: Record<string, GravatarProfile> | null;
+}
+
 /** A recent email thread with a person: who wrote last, and when */
 export interface ThreadState {
   threadId: string;
@@ -656,6 +686,49 @@ export class BackendApiClient {
     return unwrap(response, 'Failed to update the label').label;
   }
 
+  /** Whether the public-profile look-up is on, its progress and the profiles found */
+  async profiles(): Promise<ProfilesStatus> {
+    return unwrap(await this.request<ProfilesStatus>('/profiles'), 'Failed to read profiles');
+  }
+
+  /** Turns the public-profile look-up on (AD-46 rule 3) */
+  async enableProfiles(): Promise<ProfilesStatus> {
+    return unwrap(
+      await this.request<ProfilesStatus>('/profiles/enable', { method: 'POST' }),
+      'Failed to turn on the look-up',
+    );
+  }
+
+  /** Turns it off and deletes what was found */
+  async forgetProfiles(): Promise<ProfilesStatus> {
+    return unwrap(
+      await this.request<ProfilesStatus>('/profiles', { method: 'DELETE' }),
+      'Failed to forget the profiles',
+    );
+  }
+
+  /** Sends the contacts' email hashes; the server queues the ones not checked lately */
+  async sendProfileHashes(hashes: string[], complete = false): Promise<ProfilesStatus> {
+    return unwrap(
+      await this.request<ProfilesStatus>('/profiles/hashes', {
+        method: 'POST',
+        body: JSON.stringify({ hashes, complete }),
+      }),
+      'Failed to send the addresses',
+    );
+  }
+
+  /** The links in the signatures of a contact's last 3 emails (T2) */
+  async signatureLinks(emails: string[]): Promise<{ emails: number; urls: string[] }> {
+    return unwrap(
+      await this.request<{ emails: number; urls: string[] }>('/profiles/signatures', {
+        method: 'POST',
+        body: JSON.stringify({ emails }),
+      }),
+      'Failed to read the signatures',
+    );
+  }
+
   /** The members of the starred group and of every user label (AD-44 rule 3) */
   async groupMembers(): Promise<Record<string, string[]>> {
     return unwrap(
@@ -678,10 +751,13 @@ export class BackendApiClient {
   /** Renames a user label */
   async renameLabel(resourceName: string, name: string): Promise<void> {
     unwrap(
-      await this.request<object>(`/contacts/groups/${resourceName.replace(/^contactGroups\//, '')}`, {
-        method: 'PUT',
-        body: JSON.stringify({ name }),
-      }),
+      await this.request<object>(
+        `/contacts/groups/${resourceName.replace(/^contactGroups\//, '')}`,
+        {
+          method: 'PUT',
+          body: JSON.stringify({ name }),
+        },
+      ),
       'Failed to rename the label',
     );
   }
@@ -689,9 +765,12 @@ export class BackendApiClient {
   /** Deletes a user label, never its contacts */
   async deleteLabel(resourceName: string): Promise<void> {
     unwrap(
-      await this.request<object>(`/contacts/groups/${resourceName.replace(/^contactGroups\//, '')}`, {
-        method: 'DELETE',
-      }),
+      await this.request<object>(
+        `/contacts/groups/${resourceName.replace(/^contactGroups\//, '')}`,
+        {
+          method: 'DELETE',
+        },
+      ),
       'Failed to delete the label',
     );
   }

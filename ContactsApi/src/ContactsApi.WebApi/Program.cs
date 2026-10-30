@@ -47,6 +47,11 @@ builder.Services.Configure<GoogleOAuthOptions>(options =>
 builder.Services.AddHostedService<VaultConfigurationService>();
 builder.Services.AddSingleton<GoogleTokenService>();
 builder.Services.AddSingleton<ActivityStore>();
+// Public profiles by email hash (AD-46 rule 3); Gravatar__ApiKey is optional
+builder.Services.Configure<GravatarOptions>(builder.Configuration.GetSection("Gravatar"));
+builder.Services.AddSingleton<ProfileStore>();
+builder.Services.AddSingleton<ProfileQueue>();
+builder.Services.AddHostedService<ProfileWorker>();
 builder.Services.AddSingleton<ScopePreferences>();
 
 // Assistant: Gemini key from Vault (Gemini__ApiKey); without it the assistant reports itself disabled

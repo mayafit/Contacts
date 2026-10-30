@@ -55,6 +55,9 @@ import { onNotify } from './common/notify';
 import { useLabelSync } from '../hooks/useLabelSync';
 import { changeMembership, STARRED } from '../redux/thunks/labelThunks';
 import { useSegments } from '../hooks/useSegments';
+import { useProfiles } from '../hooks/useProfiles';
+import type { DossierData } from './card/Dossier';
+import ProfilesCard from './insights/ProfilesCard';
 import {
   labelDiff,
   mainCountryOf,
@@ -344,6 +347,29 @@ const SignedInHome: React.FC = () => {
     return figures;
   }, [segments, segmentMembers, contacts, groups]);
   const activeSegment = segments.find((s) => s.id === segmentId) ?? null;
+  // Epic 18: public profiles and the dossier (AD-46)
+  const profiles = useProfiles(contacts);
+  const dossier = useMemo<DossierData>(
+    () => ({
+      contacts,
+      activity: activityIndex ?? null,
+      threads: activity.threads,
+      segments,
+      segmentCtx,
+      gravatar: profiles.byContact,
+      signaturesAllowed: !!activity.status?.connected.signatures,
+      onOpenCard: setCardFor,
+    }),
+    [
+      contacts,
+      activityIndex,
+      activity.threads,
+      activity.status,
+      segments,
+      segmentCtx,
+      profiles.byContact,
+    ],
+  );
 
   const predicates = useMemo<Record<ContactFilter, (c: Contact) => boolean>>(
     () => ({
@@ -1183,6 +1209,7 @@ const SignedInHome: React.FC = () => {
                     onShowContacts={showContacts}
                     onAddContact={addContactForEmail}
                   />
+                  <ProfilesCard contacts={contacts} profiles={profiles} onOpenCard={setCardFor} />
                   <SuggestedSegments
                     contacts={contacts}
                     ctx={segmentCtx}
@@ -1239,6 +1266,7 @@ const SignedInHome: React.FC = () => {
         onDelete={(c) => setDeleteTargets([c])}
         activity={activityIndex}
         onReadSignature={(c) => setSignatureTargets([c])}
+        dossier={dossier}
       />
 
       <OrgSuggestionsDialog
