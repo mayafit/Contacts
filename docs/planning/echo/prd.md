@@ -23,7 +23,7 @@ Echo is not greenfield. Two Areas already run in production at https://contacts.
 
 The rest of this document works as follows:
 - The Glossary (§3) fixes the vocabulary.
-- Features (§4) nest globally numbered requirements, FR-01 to FR-66. FR-51 to FR-54 were added after the Owner's answers of 2026-10-28, so they sit in the section they belong to, not in id order. FR-55 to FR-60 (route quality, §4.12) follow them. FR-61 (roads travelled), FR-62 (rebuild from similar drives) and FR-63 (mark the way) were added to §4.12 on 2026-10-29. FR-64 to FR-66 (place reviews, §4.13) were added on 2026-10-30.
+- Features (§4) nest globally numbered requirements, FR-01 to FR-67. FR-51 to FR-54 were added after the Owner's answers of 2026-10-28, so they sit in the section they belong to, not in id order. FR-55 to FR-60 (route quality, §4.12) follow them. FR-61 (roads travelled), FR-62 (rebuild from similar drives) and FR-63 (mark the way) were added to §4.12 on 2026-10-29. FR-64 to FR-67 (place reviews, §4.13) were added on 2026-10-30.
 - Cross-cutting quality requirements are NFR-01 to NFR-21 (§6).
 - Inferences are tagged `[ASSUMPTION]` and indexed in §13.
 - Technical "how" (mechanisms, storage, pipelines, remediation steps, and implementation details of Built behaviour such as error codes, scope names and thresholds) is in [prd-addendum.md](prd-addendum.md) for the architect.
@@ -754,6 +754,17 @@ Echo reminds the Owner of places they went to and have not reviewed.
 
   Each choice is a decision of the Owner (P-5), kept across imports and undone from the place panel ("Remind me again").
 - In the first Owner's data on 2026-10-30, 393 of 4,403 places have a real identity, and 43 of them had a visit of 10 minutes or more in the last 180 days; the reminders are meant to be a short list.
+
+#### FR-67: Reviews from a scheduled Takeout on Drive — Proposed
+Importing a Takeout by hand every time is a chore. The Owner can instead schedule Takeout to export "Maps (your places)" **every 2 months for a year** and **add it to Google Drive**, and connect Echo to their Drive once. Echo then picks up each new export by itself and imports its reviews (FR-64), so new reviews appear within two months without the Owner doing anything.
+- **Why Drive.** Google offers no API for a person's own reviews: the Business Profile API serves the reviews a business receives, the Places API a few public reviews of a place, and the Data Portability API (the programmatic Takeout) is offered only in the EU, the EEA, Switzerland and the UK, not to an account in Israel (checked 2026-10-30). A scheduled Takeout delivered to Drive is the automatic route left.
+- **Connecting.** In the import dialog, a **Google Drive** tab explains how to schedule the export and has **Connect Google Drive**. It asks Google for one more permission on the Owner's existing Echo sign-in: reading files in their Drive (read only). Echo is the Owner's own app and not reviewed by Google for this permission, so Google shows its "unverified app" warning once; the Owner continues past it. Declining leaves everything as it was.
+- **What Echo reads.** Only files named like Takeout exports (`takeout-….zip`), never anything else in the Drive. From each it reads only the reviews file; the rest of the zip is not opened. An export larger than 500 MB is skipped with a note: the Owner should choose only "Maps (your places)" for this schedule (a Timeline or Photos export goes in a separate, manual Takeout).
+- **When.** Once a day, and on **Check now**. Each export is imported once; a review already imported is updated, never duplicated (FR-64).
+- **Status.** The tab shows when Drive was last checked, the last export found and how many reviews it brought, and any problem in words (for example "Sign in to Google again", "takeout-….zip is larger than 500 MB").
+- **Disconnecting** stops the checks and forgets which exports were seen; the imported reviews stay (they are deleted with their import). The Drive permission itself is removed at the Google Account's "Third-party connections" page, which the tab links to.
+- **Renewal.** Google ends a Takeout schedule after a year (6 exports); the tab reminds the Owner when no new export has arrived for 70 days.
+- **Privacy.** The zip is downloaded to the backend's temporary disk only for as long as the reviews file is read, then deleted. Nothing leaves Echo; only Google's Drive API is called, with the Owner's own permission.
 
 ## 5. Privacy Model
 
