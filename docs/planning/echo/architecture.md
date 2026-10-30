@@ -1096,6 +1096,65 @@ Image availability was checked on 2026-10-28. Resource figures for the Israel ex
   - **Similar drives.** It runs a `rebuild` job and draws the result on the map as the selected route, in the suggestion colour. The panel shows the basis ("From 14 similar drives (6 take this way), the closest on 3 Sep at 08:12, the other way": the agreeing count, the same-way count when it is smaller, the basis's start, and whether it was reversed; a basis stored before ways were counted leaves the way out), the confidence against the current one, **Use this route** and **Discard**.
   - **Mark the way.** It puts the map in a marking mode, like the Area tool: each click adds a numbered point, and a click on a point removes it. A bar shows the count, **Rebuild** and **Cancel**.
 
+## 5B. Place Reviews (FR-64 to FR-66)
+
+### AD-39 — The Owner's Google Maps reviews are imported source data, linked to places by position and name; reminders are computed at read time
+
+- **Binds:** the importer (`importers/google.ts`, `parseGoogleReviews`), `IngestRequest.Reviews`, the new tables `atlas.place_reviews` and `atlas.review_reminders`, `AtlasService.Reviews.cs` (`PlaceReviews`: linking, eligibility), `GET /api/atlas/reviews`, `POST /api/atlas/reviews/reminders`, `PlaceDetail.Review` and `PlaceDetail.ReviewState`, `PlacePanel.tsx`, `InsightsPanel.tsx`; FR-64 to FR-66; P-1, P-5; FR-17, FR-24, FR-27.
+- **Prevents:**
+  - a call to Google for the Owner's reviews, or a review leaving Echo;
+  - a review attached to the wrong shop in a mall;
+  - a place the Owner named renamed by a review;
+  - reminders for errands, private places and daily routine;
+  - a dismissed reminder coming back after an import.
+- **Rule:**
+  1. **Source.** Google has no API for a person's own reviews (the Places API returns the most relevant public reviews of a place, and the Business Profile API serves a business owner). The source is the Takeout export of "Maps (your places)": `Reviews.json`, a GeoJSON `FeatureCollection`. Each `Feature` has `geometry.coordinates` `[lon, lat]` and `properties`: `date` (ISO instant, created or last changed), `five_star_rating_published` and `five_star_rating_draft` (1 to 5), `review_text_published` and `review_text_draft`, `google_maps_url`, `location` (`name`, `address`, `country_code`; an object, or a one-element array), and `questions` (`question`, and one of `selected_option`, `selected_options`, `text_answer`, `rating`). Field names are those of Google's Data Portability schema `maps.reviews` (checked 2026-10-30). The browser parses the file, like every import (FR-17).
+     - **Recognised** by name: `Reviews.json` at any depth of a zip or folder (in Takeout, `Takeout/Maps (your places)/Reviews.json`), or any JSON file whose content is a `FeatureCollection` whose features carry `five_star_rating_published`, `five_star_rating_draft`, `review_text_published` or `review_text_draft`. `Saved Places.json` is not read (it is the same format without ratings).
+     - **Kept per review:** the published values when present, otherwise the draft ones with `Published = false`. A feature with neither stars nor text is skipped. The text is kept as written (no trimming beyond 10,000 characters). The answers become `[{question, answer}]`, the answer being the option, the options joined by ", ", the text answer, or "n/5".
+  2. **Storage: `atlas.place_reviews`** (source data, P-1): `Id`, `OwnerId`, `Source` (`google-maps`), `ExternalId`, `ImportId`, `PlaceId` (nullable, FK to `atlas.places` with `ON DELETE SET NULL`), `LinkedBy` (`name`, `only`, `nearest`; null when unlinked), `Name`, `Address`, `CountryCode`, `Lat`, `Lon`, `Rating` (1 to 5, nullable), `Text`, `Published`, `ReviewedAt` (the `date`), `MapsUrl`, `Answers` (jsonb), `CreatedAt`, `UpdatedAt`. Indexes: unique `(OwnerId, Source, ExternalId)`, `(OwnerId, PlaceId)`, `(OwnerId, ReviewedAt)`.
+     - **Key.** `ExternalId` is the `cid` of the `google_maps_url` (`…?cid=123…`, Google's stable id of the place); without one, the URL itself; without a URL, `name|lat|lon` rounded to 5 decimals. One review per place per Owner, as on Google Maps.
+     - **Upsert.** A review already stored with the same key is updated (stars, text, answers, date, published, name, address, position); a new one is added and counted in the import's `Reviews`. Nothing is deleted by an import; deleting an import deletes its reviews (as it does activities, places and visits).
+  3. **Linking** (`PlaceReviews.Link`, pure). For each review, the Owner's places within **75 m** are the candidates (an equirectangular distance; the review's and the place's positions are both Google's position of the place, so the same place is usually within metres).
+     - *Words* of a name: lower-cased (invariant), split on anything that is not a letter or a digit, keeping words of **3** characters or more. Hebrew and Latin words are compared as they are; there is no transliteration.
+     - **name**: the nearest candidate whose name shares a word with the review's name;
+     - **only**: otherwise, the only candidate within **30 m**;
+     - **nearest**: otherwise, the nearest candidate when it is within **10 m** and no other candidate is within **25 m**;
+     - otherwise unlinked.
+     - The thresholds keep a review off a neighbouring shop: in a mall several places lie within 30 m, and only a shared word or a clear nearest place links them.
+     - **When.** After a batch that brought reviews, all of the Owner's reviews that are not linked are linked; after a batch that brought places, the same. A linked review is not re-linked (a later place closer by does not steal it). Deleting a place unlinks its review, which is linked again on the next pass.
+     - **Naming a place.** A review linked by `only` or `nearest` to a place whose name is unnamed (`Place`, `Saved place`, `Searched place`, or empty) and not `UserEdited` gives the place its name and, when the place has none, its address; the place's `IdentifyState` becomes `user` and `IdentifiedFrom` becomes `review`, so the background identification (FR-24) leaves it alone. A name linked by `name` already matches. Home and Work are never renamed.
+  4. **Reading a place.** `GET /api/atlas/places/{id}` adds `review` (stars, text, answers, date, published, link, name) and `reviewState`: `reviewed`; `to_review`; `later` (with `until`); `never` (the place, or its category with `category: true`); `done`; or `not_reviewable` with why (`no_identity`, `category`, `no_recent_visit`, `routine`). It carries `writeUrl` for every identified place.
+     - **Write link.** `https://www.google.com/maps/search/?api=1&query=<name>&query_place_id=<GooglePlaceId>` (the Maps URLs API; it opens the place, where "Write a review" is). Without a Google place id, the query is the name and the position.
+  5. **To review** (`PlaceReviews.Due`, computed at read time from places, visits, reviews and decisions; nothing is stored). A place is due when:
+     - its `IdentifyState` is `auto` or `user`, and its name is not generic (`Place`, `Home`, `Work`, `Saved place`, `Searched place`, empty);
+     - its `Category` (compared case-insensitively) is not one of: `Fuel`, `Building`, `Company`, `Office`, `Works`, `Industrial`, `Construction`, `Building materials`, `Bank`, `Post office`, `Townhall`, `Courthouse`, `Police`, `Diplomatic`, `Public building`, `Public`, `Social facility`, `Bus station`, `Bus stop`, `Transportation`, `Clinic`, `Doctors`, `Hospital`, `Pharmacy`, `Veterinary`, `School`, `Place of worship`, `Church`, `Car repair`, `Bridge`, `Slipway`, `Thermometer`, `Amenity`, `Convenience`, `home`, `work`, `inferred_home`, `inferred_work` (the categories of the first Owner's identified places on 2026-10-30 that are errands, private, health care or not a place one reviews); a place with no category is kept;
+     - one of its visits lasted at least **10 minutes** and ended within the last **180 days**;
+     - its visits fall on **30** distinct UTC days or fewer, ever (more is routine: home, work, the gym);
+     - no review is linked to it;
+     - no decision sets it aside.
+     - **Order:** the most recent qualifying visit first; the list returns the first **30** and the total.
+     - *Why at read time:* the inputs change with every import, identification and decision, and a stored list would need invalidation on each; one Owner has a few thousand places, so the query (places with a qualifying visit, then the checks) takes milliseconds.
+  6. **Decisions: `atlas.review_reminders`** (Owner decisions, P-5): `Id`, `OwnerId`, `PlaceId` (nullable, FK `ON DELETE CASCADE`), `Category` (nullable), `Kind` (`later`, `never`, `done`), `Until` (for `later`), `CreatedAt`. Exactly one of `PlaceId` and `Category` is set; unique `(OwnerId, PlaceId)` and `(OwnerId, Category)`; `Category` decisions are `never` only.
+     - `POST /api/atlas/reviews/reminders {placeId, action}`: `later` (30 days), `never`, `done`, `never_kind` (a `never` on the place's category, case-insensitive), or `clear` (removes the place's decision and, with `kind: true`, its category's). A new decision on a place replaces the old one.
+     - Decisions stay across imports (they key on the place's id, and a re-import updates the same place row, found by its `ExternalId`), and go with the place when it is deleted.
+  7. **Overview.** `GET /api/atlas/reviews` returns `{written, average, linked, unlinked, recent: the 20 latest reviews (with their place id, or none), due: the first 30 places to review, dueTotal}`. Unfiltered (all time, all places): the section is about the Owner's reviews, not the current map view.
+  8. **Tiers and erasure.** `place_reviews` is source data (backed up; exported and erased with the Owner when FR-48 and FR-49 are built, like the rest of `atlas`); `review_reminders` is a decision table. Neither is sent to any service; the Assistant and MCP tools do not read them in this phase.
+  9. **Cost.** A review import is one upsert per batch; linking reads the Owner's places once (ids, names, positions; about 4,400 rows) and compares in memory (reviews × places, a few million distance checks at most). The overview and a place read add one query each over one Owner's rows, through the indexes above.
+- *Alternatives:*
+  - the Places API or a scraper for the Owner's reviews (rejected: neither serves a person's own reviews, and a scraper would send the Owner's identity out);
+  - linking by Google place id (rejected: `Reviews.json` carries a `cid`, not the `ChIJ…` place id the Timeline gives, and Google offers no offline mapping);
+  - linking by position alone (rejected: in a mall or on a busy street several places lie within 30 m);
+  - reminders for every unreviewed place (rejected: 4,000 Timeline places, most unnamed or routine; the rules leave a list of tens);
+  - storing the reminder list (rejected: see rule 5);
+  - a category list the Owner edits in settings (deferred: "Not this kind" covers it per category);
+  - importing review photos (deferred: not in the documented export; FR-64).
+
+### 5B.1 UI (no AD; it follows the conventions of §6)
+
+- **Import.** The import dialog accepts `Reviews.json`, alone or in the Takeout zip, and reports "N reviews" with the other counts.
+- **Place panel.** A **Your review** block: the stars (★), the date ("Reviewed 3 Sep 2025"; "Draft" when unpublished), the text (clamped to 6 lines, "more" expands), the answers as small "question: answer" lines, and **Open on Google Maps**. A place to review shows instead "You have not reviewed this place" with **Write a review** and the four choices; a set-aside place shows why ("Hidden until 3 Dec", "Not reminded") with **Remind me again**.
+- **Insights.** A **Reviews** section after **Places**: "12 reviews, ★ 4.3 on average, 9 at places you visited"; **To review (43)** with up to 30 rows (name, category, last visit, visits, Write a review, and a menu with the four choices); then **Latest reviews** (stars, name, date). A row click selects the place on the map; an unlinked review opens Google Maps.
+
 ## 6. Consistency Conventions
 
 | Concern | Convention |
@@ -1248,6 +1307,9 @@ routing/regions.txt                  # Geofabrik regions built into the tiles im
 | FR-61 Roads travelled | Proposed | `matched_routes.Roads` and `RoadNames`, `IRouteGeometryReader.OnRoadAsync`, `AtlasQuery.Road`, `RouteRoads.tsx`, Assistant and MCP `road` | AD-37, AD-34, AD-35 | R1 |
 | FR-62 Rebuild from similar drives | Proposed | the `rebuild` job, `SimilarRoutes`, `jobs.Result`, `/internal/v1/rebuild` and `/apply`, `/api/routes/activities/{id}/rebuild` and `/apply`, `RouteRebuild.tsx` | AD-38, AD-34, AD-35, AD-36 | R1 |
 | FR-63 Mark the way | Proposed | `route_waypoints`, `Waypoints`, the map's marking mode | AD-38, AD-34 | R1 |
+| FR-64 Import my reviews | Proposed | `parseGoogleReviews`, `IngestRequest.Reviews`, `atlas.place_reviews` | AD-39 | 1 |
+| FR-65 My review on each place | Proposed | `PlaceReviews.Link`, `PlaceDetail.Review`, `GET /api/atlas/reviews`, the place panel and Insights | AD-39 | 1 |
+| FR-66 Reminders to review | Proposed | `PlaceReviews.Due`, `atlas.review_reminders`, `POST /api/atlas/reviews/reminders` | AD-39 | 1 |
 | FR-60 Routes abroad | Proposed | `routing/regions.txt`, region outlines, per-region counts | AD-32 | R3 |
 
 ### 9.2 Non-Functional Requirements

@@ -1,0 +1,90 @@
+# Epic 13 — Atlas place reviews: what I wrote about the places I went to
+
+> Vision: every place in Atlas says whether the Owner reviewed it on Google Maps,
+> with the stars and the words they wrote, and Atlas reminds them, briefly, of the
+> places worth a review that they have not reviewed yet.
+
+Builds on Epic 10 (`epic-10-personal-atlas.md`: import, places, the place panel,
+Insights). Requirements: PRD FR-64 to FR-66 (`echo/prd.md` §4.13). Architecture:
+AD-39 (`echo/architecture.md` §5B).
+
+## The data (first Owner, 2026-10-30)
+
+| | Count |
+| --- | --- |
+| Places | 4,403 (all from the Timeline, all with a Google place id) |
+| With a real identity (auto or by the Owner) | 393 |
+| Of those, with a visit of 10 minutes or more in the last 180 days | 43 |
+| Visited on more than 30 days (routine) | 18 |
+
+Google has no API for a person's own reviews; the Takeout export
+`Maps (your places)/Reviews.json` is the source. Its fields follow Google's Data
+Portability schema `maps.reviews`; it holds no photos.
+
+## Stories
+
+### 13.1 Import my reviews — Phase 1
+
+As the Owner, I want my Google Maps reviews imported from Takeout, so that Echo
+knows what I wrote about the places I went to.
+
+Acceptance criteria (FR-64, AD-39 rules 1 and 2):
+- [ ] `parseGoogleReviews` reads `Reviews.json` (by name, or a `FeatureCollection`
+  with review fields), alone or in the Takeout zip: published values first, then
+  drafts; the answers flattened; features with neither stars nor text skipped.
+- [ ] `atlas.place_reviews` (migration `PlaceReviews`), keyed by the `cid` of the
+  review's Google Maps link; a newer import updates, never deletes; deleting the
+  import deletes its reviews.
+- [ ] The import reports the number of reviews.
+
+### 13.2 My review on each place — Phase 1
+
+As the Owner, I want to see on each place whether I reviewed it and what I wrote.
+
+Acceptance criteria (FR-65, AD-39 rules 3, 4 and 7):
+- [ ] Linking: a shared word within 75 m, else the only place within 30 m, else a
+  clear nearest within 10 m (no other within 25 m), else unlinked; run after
+  imports of reviews and of places; links kept until the place goes.
+- [ ] A review linked by position names an unnamed place the Owner did not name.
+- [ ] The place panel shows the review (stars, date, text, answers, draft, Open on
+  Google Maps).
+- [ ] `GET /api/atlas/reviews` and the Insights **Reviews** section (written, average,
+  linked, latest).
+
+### 13.3 Reminders to review — Phase 1
+
+As the Owner, I want to be reminded of the places I went to and have not reviewed,
+and to set reminders aside.
+
+Acceptance criteria (FR-66, AD-39 rules 5 and 6):
+- [ ] Due: identified and named, not an excluded category, a visit of 10 minutes or
+  more in the last 180 days, 30 visit days or fewer, no review, no decision; the most
+  recent first, 30 shown with the total.
+- [ ] `atlas.review_reminders`: Later (30 days), Not this one, Not this kind, I
+  reviewed it, and Remind me again.
+- [ ] The Insights list and the place panel show the reminder with **Write a review**
+  (the Maps URLs link with the Google place id).
+
+### 13.4 Tests — Phase 1
+
+- [ ] Pure: the parser (published, draft, answers, the `location` array form, skips),
+  linking (each rule, the mall case, naming), eligibility (each rule), the keys.
+- [ ] Postgres: the upsert and its key, linking after reviews and after places, the
+  place read, the overview, the decisions, a deleted place, the two-Owner isolation.
+- [ ] Jest: the parser on a Takeout-shaped file, the panel block and its choices, the
+  Insights section.
+
+## Later
+
+- Review photos, if the Owner's export holds them as files (FR-64).
+- The Assistant and MCP tools reading reviews ("what did I think of that place?").
+- Review text in the Atlas search.
+- A star on reviewed places on the map.
+
+## Coverage
+
+| Requirement | Stories |
+| --- | --- |
+| FR-64 Import my reviews | 13.1, 13.4 |
+| FR-65 My review on each place | 13.2, 13.4 |
+| FR-66 Reminders to review | 13.3, 13.4 |
