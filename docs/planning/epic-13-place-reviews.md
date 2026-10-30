@@ -80,16 +80,16 @@ As the Owner, I want my new reviews to arrive by themselves, so I schedule Takeo
 Drive once and Echo picks up each export.
 
 Acceptance criteria (FR-67, AD-40):
-- [ ] The opt-in `takeout` adds `drive.readonly` to the Google sign-in, like the Gmail
+- [x] The opt-in `takeout` adds `drive.readonly` to the Google sign-in, like the Gmail
   and Calendar opt-ins; declining leaves the sign-in as it was.
-- [ ] `atlas.connections` row `google-drive-takeout`: connect (only with the scope
+- [x] `atlas.connections` row `google-drive-takeout`: connect (only with the scope
   granted), status, check now, disconnect.
-- [ ] The daily check: Takeout zips only, new ones oldest first, over 500 MB skipped,
+- [x] The daily check: Takeout zips only, new ones oldest first, over 500 MB skipped,
   streamed to `/tmp` and deleted, only the reviews file read (at most 20 MB), imported
   as its own import, each export once.
-- [ ] Lost access marks the connection expired; a renewal note after 70 days.
-- [ ] The import dialog's Google Drive tab, with the steps to schedule Takeout.
-- [ ] Tests: the parser (C#) on a Takeout-shaped zip; the check against a fake Drive
+- [x] Lost access marks the connection expired; a renewal note after 70 days.
+- [x] The import dialog's Google Drive tab, with the steps to schedule Takeout.
+- [x] Tests: the parser (C#) on a Takeout-shaped zip; the check against a fake Drive
   (new, seen, oversized, no reviews, lost access); the opt-in scopes; the tab (Jest).
 
 ### 13.4 Tests — Phase 1

@@ -59,11 +59,12 @@ public class AuthController : ControllerBase
     [HttpGet("login")]
     /// <param name="consent">Show Google's consent screen (to get a new refresh token)</param>
     /// <param name="activity">Also ask for Gmail metadata and Calendar access (opt-in)</param>
+    /// <param name="takeout">Also ask to read Takeout exports in Google Drive (opt-in, AD-40)</param>
     /// <param name="again">Second step: ask for the scopes the callback found missing</param>
     /// <param name="hint">Account to sign in (second step)</param>
     public async Task<IActionResult> Login(
         [FromQuery] bool consent = false, [FromQuery] bool activity = false, [FromQuery] bool signatures = false,
-        [FromQuery] bool again = false, [FromQuery] string? hint = null)
+        [FromQuery] bool again = false, [FromQuery] string? hint = null, [FromQuery] bool takeout = false)
     {
         try
         {
@@ -96,8 +97,15 @@ public class AuthController : ControllerBase
                 HttpContext.Session.SetString(AfterLoginKey, "/contacts?connected=signatures");
             }
 
+            if (takeout)
+            {
+                optIns.Takeout = true;
+                consent = true;
+                HttpContext.Session.SetString(AfterLoginKey, "/atlas?connected=takeout");
+            }
+
             HttpContext.Session.SetString(RequestedKey, System.Text.Json.JsonSerializer.Serialize(optIns));
-            var scopes = desired != null && !activity && !signatures
+            var scopes = desired != null && !activity && !signatures && !takeout
                 ? desired.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList()
                 : ScopePreferences.ScopesFor(baseScopes, optIns);
             HttpContext.Session.Remove(DesiredScopesKey);
@@ -180,7 +188,7 @@ public class AuthController : ControllerBase
                 // Declining an opt-in (Gmail & Calendar, or email content) leaves the
                 // existing sign-in as it was
                 var optIn = HttpContext.Session.GetString(AfterLoginKey);
-                if (optIn is "/contacts?connected=activity" or "/contacts?connected=signatures"
+                if (optIn is "/contacts?connected=activity" or "/contacts?connected=signatures" or "/atlas?connected=takeout"
                     && HttpContext.Session.GetString(GoogleTokenService.UserIdKey) != null)
                 {
                     HttpContext.Session.Remove(AfterLoginKey);
@@ -307,11 +315,13 @@ public class AuthController : ControllerBase
 
             // What the user ended up granting is their opt-in (they can untick boxes)
             var requested = RequestedOptIns();
-            if (requested.Activity || requested.Signatures || savedOptIns.Activity || savedOptIns.Signatures)
+            if (requested.Activity || requested.Signatures || requested.Takeout || savedOptIns.Activity || savedOptIns.Signatures
+                || savedOptIns.Takeout)
             {
                 await _prefs.SaveAsync(payload.Subject, new OptIns
                 {
                     Signatures = grantedScopes.Contains(ActivityScopes.GmailRead),
+                    Takeout = grantedScopes.Contains(TakeoutScopes.Drive),
                     Activity = grantedScopes.Contains(ActivityScopes.Gmail) || grantedScopes.Contains(ActivityScopes.Calendar)
                         || (grantedScopes.Contains(ActivityScopes.GmailRead) && (requested.Activity || savedOptIns.Activity))
                 });

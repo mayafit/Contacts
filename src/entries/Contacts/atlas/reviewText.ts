@@ -3,7 +3,13 @@
  * @module Contacts/atlas/reviewText
  */
 
-import type { PlaceReview, ReviewState, ReviewsOverview } from './types';
+import type {
+  PlaceReview,
+  ReviewState,
+  ReviewsOverview,
+  SourceConnection,
+  TakeoutSeen,
+} from './types';
 
 /** Day only, e.g. "3 Sep 2025" */
 const day = (iso: string): string =>
@@ -90,3 +96,44 @@ export const dueText = (category: string | null, lastVisit: string, visits: numb
   [category, `last ${day(lastVisit)}`, `${visits} ${visits === 1 ? 'visit' : 'visits'}`]
     .filter(Boolean)
     .join(' · ');
+
+/** "3 hours ago", "2 days ago", "just now" */
+const ago = (iso: string, now = Date.now()): string => {
+  const minutes = Math.max(0, Math.round((now - new Date(iso).getTime()) / 60000));
+  if (minutes < 2) {
+    return 'just now';
+  }
+  if (minutes < 120) {
+    return `${minutes} minutes ago`;
+  }
+  const hours = Math.round(minutes / 60);
+  return hours < 48 ? `${hours} hours ago` : `${Math.round(hours / 24)} days ago`;
+};
+
+/**
+ * When the Drive pickup last looked, and what it brought in all.
+ * @param c - The connection
+ * @param now - The time now (ms)
+ * @returns e.g. "Checked 3 hours ago · 42 reviews imported"
+ */
+export const takeoutStatusText = (c: SourceConnection, now = Date.now()): string =>
+  [
+    c.lastSyncAt ? `Checked ${ago(c.lastSyncAt, now)}` : 'Not checked yet',
+    `${c.itemsImported} ${c.itemsImported === 1 ? 'review' : 'reviews'} imported`,
+  ].join(' · ');
+
+/**
+ * The newest export the pickup handled.
+ * @param e - The export, or none
+ * @returns e.g. "Last export: takeout-….zip, 3 Sep 2026 — 12 reviews"
+ */
+export const takeoutLastText = (e: TakeoutSeen | null): string => {
+  if (!e) {
+    return 'No Takeout export found in Drive yet';
+  }
+  const what =
+    e.reviews === null
+      ? (e.note ?? 'not read')
+      : `${e.reviews} ${e.reviews === 1 ? 'review' : 'reviews'}`;
+  return `Last export: ${e.name}, ${day(e.modified)} — ${what}`;
+};

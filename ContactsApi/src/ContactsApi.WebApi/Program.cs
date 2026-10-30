@@ -106,6 +106,13 @@ builder.Services.AddSingleton<OneDriveTokenCache>();
 builder.Services.AddSingleton<PhotoSyncQueue>();
 builder.Services.AddScoped<OneDrivePhotoService>();
 builder.Services.AddHostedService<PhotoSyncWorker>();
+// Reviews from a scheduled Takeout on Drive (AD-40): the Owner's Google sign-in, with the Drive opt-in
+builder.Services.Configure<TakeoutOptions>(builder.Configuration.GetSection("Takeout"));
+builder.Services.AddHttpClient(ContactsApi.Infrastructure.Atlas.GoogleDriveTakeout.HttpClientName, c => c.Timeout = TimeSpan.FromMinutes(15));
+builder.Services.AddSingleton<TakeoutDriveQueue>();
+builder.Services.AddSingleton<ITakeoutTokens, GoogleTakeoutTokens>();
+builder.Services.AddScoped<TakeoutDriveService>();
+builder.Services.AddHostedService<TakeoutDriveWorker>();
 builder.Services.AddHttpContextAccessor();
 
 // MCP server over the Atlas service (tools in AtlasMcpTools), at /api/mcp

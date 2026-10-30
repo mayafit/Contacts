@@ -31,6 +31,7 @@ import type {
   ReviewAction,
   ReviewState,
   ReviewsOverview,
+  TakeoutDriveStatus,
   PlacePatch,
   SearchResult,
   SeriesPoint,
@@ -1182,6 +1183,45 @@ export class BackendApiClient {
       await this.request<PhotoSummary[]>(`/atlas/visits/${id}/photos`),
       'Loading the photos failed',
     );
+  }
+
+  /** The Google Drive connection for scheduled Takeout exports (AD-40) */
+  async atlasTakeoutDrive(): Promise<TakeoutDriveStatus> {
+    return unwrap(
+      await this.request<TakeoutDriveStatus>('/atlas/connections/google-drive'),
+      'Loading the Google Drive connection failed',
+    );
+  }
+
+  /** Connects Google Drive (the sign-in must allow it) and checks it */
+  async atlasTakeoutDriveConnect(): Promise<TakeoutDriveStatus> {
+    return unwrap(
+      await this.request<TakeoutDriveStatus>('/atlas/connections/google-drive', { method: 'POST' }),
+      'Connecting Google Drive failed',
+    );
+  }
+
+  /** Checks Google Drive for new Takeout exports now */
+  async atlasTakeoutDriveSync(): Promise<TakeoutDriveStatus> {
+    return unwrap(
+      await this.request<TakeoutDriveStatus>('/atlas/connections/google-drive/sync', {
+        method: 'POST',
+      }),
+      'Checking Google Drive failed',
+    );
+  }
+
+  /** Stops checking Google Drive (the imported reviews stay) */
+  async atlasTakeoutDriveDisconnect(): Promise<void> {
+    unwrap(
+      await this.request<unknown>('/atlas/connections/google-drive', { method: 'DELETE' }),
+      'Disconnecting Google Drive failed',
+    );
+  }
+
+  /** Signs in to Google again, allowing Echo to read Drive (comes back to /atlas?connected=takeout) */
+  connectTakeoutDrive(): void {
+    window.location.href = `${this.baseUrl}/auth/login?takeout=true`;
   }
 
   /** The Owner's Google Maps reviews and the places to review (AD-39) */
