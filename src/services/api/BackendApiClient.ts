@@ -167,6 +167,28 @@ export interface DirectoryMatch {
   score?: number;
 }
 
+/** An address found for one contact in the mail (AD-43 rule 7) */
+export interface FoundEmail {
+  email: string;
+  /** Display names seen for it (at most 3) */
+  names: string[];
+  /** 3 the same name, 2 the address spells it, 1 the name plus a word */
+  score: number;
+  /** Mails seen with it */
+  mails: number;
+  lastSeen?: string | null;
+  sources: ('directory' | 'mail')[];
+}
+
+/** Find-email answer: candidates, and what was searched */
+export interface FindEmailResponse {
+  candidates: FoundEmail[];
+  /** The activity scan's names exist */
+  directory: boolean;
+  /** The mailbox search */
+  mail: 'searched' | 'not_allowed' | 'sign_in' | 'failed';
+}
+
 /** A recent email thread with a person: who wrote last, and when */
 export interface ThreadState {
   threadId: string;
@@ -1505,6 +1527,36 @@ export class BackendApiClient {
       ),
       'Failed to look for email addresses',
     );
+  }
+
+  /**
+   * One contact's address from the activity scan's names and the mailbox's senders (FR-78)
+   * @param names - The contact's names (two words or more)
+   * @returns Up to 3 candidates, best first
+   */
+  async findEmail(names: string[]): Promise<FindEmailResponse> {
+    return unwrap(
+      await this.request<FindEmailResponse>('/activity/find-email', {
+        method: 'POST',
+        body: JSON.stringify({ names }),
+      }),
+      'Failed to look for the email',
+    );
+  }
+
+  /**
+   * Latin spellings of Hebrew name words, from Gemini (FR-77)
+   * @param words - Hebrew words (at most 20)
+   * @returns Word → spelling, for the words Gemini spelled
+   */
+  async transliterateNames(words: string[]): Promise<Record<string, string>> {
+    return unwrap(
+      await this.request<{ spellings: Record<string, string> }>('/assistant/transliterate', {
+        method: 'POST',
+        body: JSON.stringify({ words }),
+      }),
+      'Failed to spell the name',
+    ).spellings;
   }
 
   /**

@@ -24,7 +24,8 @@ import { useAppDispatch } from '../../types/hooks';
 import { updateContact } from '../../redux/slices/contacts/contactsSlice';
 import { buildPatch } from '../card/cardModel';
 import { resolveChange } from '../../assistant/changes';
-import { clean, getDisplayName, getName, getPhoneticName } from '../../model/contactView';
+import { clean, getDisplayName, getPhoneticName } from '../../model/contactView';
+import { nameVariants } from '../../model/emailFind';
 import { formatRelative } from '../../model/activity';
 import { tokens } from '../../theme/contactsTheme';
 
@@ -41,24 +42,7 @@ export interface SuggestEmailsDialogProps {
   onApplied: (count: number) => void;
 }
 
-/**
- * Names to look for: the name, the phonetic name, nickname + family name.
- * @param c - Contact
- * @returns Variants
- */
-export const nameVariants = (c: Contact): string[] => {
-  const n = getName(c);
-  return [
-    getDisplayName(c),
-    [n?.givenName, n?.familyName].filter(Boolean).join(' '),
-    [n?.givenName, n?.middleName, n?.familyName].filter(Boolean).join(' '),
-    getPhoneticName(c),
-    ...(c.nicknames ?? []).map((x) => [x.value, n?.familyName].filter(Boolean).join(' ')),
-  ]
-    .map(clean)
-    .filter((v) => v.includes(' '))
-    .filter((v, i, all) => all.indexOf(v) === i);
-};
+export { nameVariants };
 
 /**
  * Suggested emails dialog.

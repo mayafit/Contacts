@@ -302,7 +302,12 @@ const MergeDialog: React.FC<MergeDialogProps> = ({ contacts, groups, onClose, on
                 bgcolor: tokens.page,
               }}
             >
-              <ContactForm draft={edited} onChange={setEdited} disabled={busy} />
+              <ContactForm
+                key={edited.resourceName}
+                draft={edited}
+                onChange={setEdited}
+                disabled={busy}
+              />
             </Box>
           ) : m ? (
             <Box

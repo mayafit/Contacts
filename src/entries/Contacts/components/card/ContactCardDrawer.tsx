@@ -408,7 +408,12 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({
                   {invalid}
                 </Alert>
               )}
-              <ContactForm draft={draft} onChange={setDraft} disabled={saving} />
+              <ContactForm
+                key={draft.resourceName}
+                draft={draft}
+                onChange={setDraft}
+                disabled={saving}
+              />
             </Box>
 
             {/* Footer */}

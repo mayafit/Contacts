@@ -27,6 +27,7 @@
 - **Contact card** (card/ContactCardDrawer.tsx, ContactForm.tsx):
   - edits every field group; only changed groups are saved, checked against the etag;
   - shows the contact's email and meeting activity; look-up links to Google, LinkedIn and Facebook.
+  - auto-fill (AD-43, useCardAutofill.ts, model/phonetic.ts, model/emailFind.ts): an empty phonetic field of a Hebrew name part fills the phonetic name from an English twin, the Owner's own spellings, then Gemini (`/api/assistant/transliterate`); an empty email field, or **Find in mail**, looks the address up in the activity directory and the senders Gmail finds for the name (`/api/activity/find-email`). Both change the draft only.
 - **Clean-up** (cleanup/*, duplicates/DuplicatesView.tsx, model/duplicates.ts, model/merge.ts):
   - multi-select; soft delete to the app's own Trash label; restore; permanent delete (batch up to 500);
   - a duplicate finder (last 9 phone digits, email, normalized name);
