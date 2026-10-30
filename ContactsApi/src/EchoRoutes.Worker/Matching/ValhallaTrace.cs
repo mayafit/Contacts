@@ -1,7 +1,7 @@
 /**
  * @fileoverview The trace_attributes request (AD-32 rule 2, AD-35 rule 4) and the
  * parts of its response that stage B reads: the polyline6 shape, the edges' shape
- * ranges and each input point's label (AD-35 rule 7)
+ * ranges and road names (AD-37), and each input point's label (AD-35 rule 7)
  * @module EchoRoutes.Worker.Matching
  */
 using System.Globalization;
@@ -12,7 +12,8 @@ using ContactsApi.Infrastructure.Routes;
 namespace EchoRoutes.Worker.Matching;
 
 /// <summary>An edge of the matched path: its range of shape vertices</summary>
-public record TraceEdge(int BeginShape, int EndShape);
+/// <param name="Names">Its names: route numbers and street names (AD-37); null when it has none</param>
+public record TraceEdge(int BeginShape, int EndShape, string[]? Names = null);
 
 /// <summary>Valhalla's label for one input point</summary>
 /// <param name="Type">matched, interpolated or unmatched</param>
@@ -37,7 +38,7 @@ public static class ValhallaTrace
     /// <summary>The attributes asked for (everything else is left out of the answer)</summary>
     public static readonly string[] Attributes =
     {
-        "edge.id", "edge.length", "edge.begin_shape_index", "edge.end_shape_index",
+        "edge.id", "edge.length", "edge.begin_shape_index", "edge.end_shape_index", "edge.names",
         "matched.point", "matched.type", "matched.edge_index", "matched.distance_along_edge",
         "matched.distance_from_trace_point", "matched.begin_route_discontinuity", "matched.end_route_discontinuity",
         "shape", "confidence_score"
@@ -109,7 +110,7 @@ public static class ValhallaTrace
         {
             foreach (var e in es.EnumerateArray())
             {
-                edges.Add(new TraceEdge(Int(e, "begin_shape_index") ?? 0, Int(e, "end_shape_index") ?? 0));
+                edges.Add(new TraceEdge(Int(e, "begin_shape_index") ?? 0, Int(e, "end_shape_index") ?? 0, Names(e, "names")));
             }
         }
 
@@ -171,6 +172,19 @@ public static class ValhallaTrace
         while (b >= 0x20);
 
         return (result & 1) != 0 ? ~(result >> 1) : result >> 1;
+    }
+
+    /// <summary>A list of names (edge.names, a maneuver's street_names); null when absent or empty</summary>
+    internal static string[]? Names(JsonElement e, string name)
+    {
+        if (!e.TryGetProperty(name, out var v) || v.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        var names = v.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String)
+            .Select(x => x.GetString()!.Trim()).Where(x => x.Length > 0).Distinct().ToArray();
+        return names.Length > 0 ? names : null;
     }
 
     private static int? Int(JsonElement e, string name) =>

@@ -32,11 +32,19 @@ public enum RouteLine
 /// <summary>One piece of a matched line, in metres along it: observed, inferred or gap</summary>
 public record RouteGeometryPiece(double FromM, double ToM, string Kind);
 
+/// <summary>A road a matched line follows (AD-37)</summary>
+/// <param name="Name">A route number ("431") or a street name, as the map data spells it</param>
+/// <param name="Ref">A route number</param>
+/// <param name="M">Metres of the line on it (observed and inferred pieces only)</param>
+/// <param name="FromM">Where the line first takes it, in metres along the line (travel order)</param>
+public record RouteRoad(string Name, bool Ref, double M, double FromM);
+
 /// <summary>The matched line chosen for a record</summary>
 /// <param name="Polyline">Google encoded at precision 5</param>
 /// <param name="Pieces">Only when asked for (the detail view)</param>
+/// <param name="Roads">The roads it follows, in travel order; only with the pieces (the detail view)</param>
 public record ChosenRoute(Guid RecordId, string Polyline, double? MatchedDistanceM, double? Confidence,
-    IReadOnlyList<RouteGeometryPiece>? Pieces);
+    IReadOnlyList<RouteGeometryPiece>? Pieces, IReadOnlyList<RouteRoad>? Roads = null);
 
 /// <summary>What the panel shows about one record's route (the detail view only)</summary>
 /// <param name="Grade">good, fair, poor; null when not assessed or without a track</param>
@@ -45,8 +53,11 @@ public record ChosenRoute(Guid RecordId, string Polyline, double? MatchedDistanc
 /// <param name="Status">The stored match's status (matched, low_confidence, failed); null without one</param>
 /// <param name="Current">The stored match is for the record as it is now (rule 3's check)</param>
 /// <param name="Decision">reject or accept; null without one</param>
+/// <param name="Method">How the stored match was made (AD-38): auto, similar or waypoints; null without one</param>
+/// <param name="Waypoints">The points the Owner marked for the record, [[lat, lon]…]; null without them</param>
 public record RouteDescription(string? Grade, int? Score, IReadOnlyList<string> Flags, string? Matchable, bool NeedsImprovement,
-    string? Status, double? Confidence, double? MatchedDistanceM, bool Current, string? Decision, string? Reason);
+    string? Status, double? Confidence, double? MatchedDistanceM, bool Current, string? Decision, string? Reason,
+    string? Method = null, IReadOnlyList<double[]>? Waypoints = null);
 
 /// <summary>
 /// Tells the route-quality service that an Owner's tracks or types changed outside an
@@ -78,4 +89,13 @@ public interface IRouteGeometryReader
 
     /// <summary>The quality, the stored match and the Owner's decision of one record; null when unknown</summary>
     Task<RouteDescription?> DescribeAsync(string owner, RouteRecord record, CancellationToken ct = default);
+
+    /// <summary>
+    /// The records whose match follows a road (AD-37): a route number exactly ("431"), or
+    /// a street name containing the text. Only matches the Owner sees as right: shown by
+    /// default or accepted, never rejected. Each comes with the values it was matched for
+    /// (UpdatedAt, point count), so the caller keeps only the records still as they were.
+    /// Empty when route quality is off or unreadable.
+    /// </summary>
+    Task<IReadOnlyList<RouteRecord>> OnRoadAsync(string owner, string road, CancellationToken ct = default);
 }

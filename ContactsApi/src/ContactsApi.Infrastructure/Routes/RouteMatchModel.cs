@@ -5,6 +5,8 @@
  * @module ContactsApi.Infrastructure.Routes
  */
 using System.Text.Json;
+using System.Text.RegularExpressions;
+using ContactsApi.Core.Interfaces;
 
 namespace ContactsApi.Infrastructure.Routes;
 
@@ -41,6 +43,98 @@ public static class RouteStatuses
 
 /// <summary>One piece of a matched line, in metres along the stored (precision 5) line</summary>
 public record RoutePiece(double FromM, double ToM, string Kind);
+
+/// <summary>The roads of a matched line (AD-37): what counts, how they are stored and searched</summary>
+public static class RouteRoads
+{
+    /// <summary>A road the line follows for less than this (metres) is left out: a junction crossed, a snapping slip</summary>
+    public const double MinM = 100;
+
+    /// <summary>Most roads stored per line (the longest are kept)</summary>
+    public const int Max = 40;
+
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    private static readonly Regex RefPattern = new(@"^[0-9]{1,4}[A-Za-z]?$", RegexOptions.Compiled);
+    private static readonly Regex Prefix = new(@"^(road|route|rd|hwy|highway|כביש)\s+", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    /// <summary>A route number ("431", "4"), not a street name</summary>
+    public static bool IsRef(string name) => RefPattern.IsMatch(name);
+
+    /// <summary>
+    /// The roads to store from metres per name: at least <see cref="MinM"/>, at most
+    /// <see cref="Max"/> (the longest), in travel order
+    /// </summary>
+    public static List<RouteRoad> Keep(IEnumerable<(string Name, double M, double FromM)> roads) =>
+        roads.Where(r => r.M >= MinM && !string.IsNullOrWhiteSpace(r.Name))
+            .OrderByDescending(r => r.M).Take(Max)
+            .OrderBy(r => r.FromM)
+            .Select(r => new RouteRoad(r.Name.Trim(), IsRef(r.Name.Trim()), Math.Round(r.M), Math.Round(r.FromM, 1)))
+            .ToList();
+
+    public static string Serialize(IReadOnlyList<RouteRoad> roads) => JsonSerializer.Serialize(roads, Json);
+
+    /// <summary>The stored roads of a row; empty when it has none or they cannot be read</summary>
+    public static List<RouteRoad> Parse(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return new List<RouteRoad>();
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<RouteRoad>>(json, Json) ?? new List<RouteRoad>();
+        }
+        catch (JsonException)
+        {
+            return new List<RouteRoad>();
+        }
+    }
+
+    /// <summary>
+    /// What the Owner typed, as searched: trimmed, without a "road" / "כביש" prefix, a
+    /// route number's letter in capitals; null when nothing is left. "Road 431" and
+    /// "כביש 431" search for 431. "דרך" is kept: it begins many street names.
+    /// </summary>
+    public static string? Normalize(string? road)
+    {
+        var s = road?.Trim();
+        if (string.IsNullOrEmpty(s))
+        {
+            return null;
+        }
+
+        s = Prefix.Replace(s, string.Empty).Trim();
+        if (IsRef(s))
+        {
+            s = s.ToUpperInvariant();
+        }
+
+        return s.Length == 0 ? null : s.Length > 100 ? s[..100] : s;
+    }
+}
+
+/// <summary>The points the Owner marked for a route (route_waypoints.Points, AD-38): [[lat, lon]…]</summary>
+public static class RouteMarks
+{
+    /// <summary>The stored points; empty when unreadable</summary>
+    public static List<(double Lat, double Lon)> Parse(string? json)
+    {
+        try
+        {
+            return (JsonSerializer.Deserialize<double[][]>(json ?? "[]") ?? Array.Empty<double[]>())
+                .Where(p => p.Length >= 2).Select(p => (p[0], p[1])).ToList();
+        }
+        catch (JsonException)
+        {
+            return new List<(double Lat, double Lon)>();
+        }
+    }
+
+    /// <summary>The points as stored (6 decimals)</summary>
+    public static string Serialize(IEnumerable<(double Lat, double Lon)> points) =>
+        JsonSerializer.Serialize(points.Select(p => new[] { Math.Round(p.Lat, 6), Math.Round(p.Lon, 6) }));
+}
 
 /// <summary>Decision kinds (route_decisions.Kind)</summary>
 public static class RouteDecisionKinds
@@ -131,4 +225,72 @@ public static class RouteLines
     /// <summary>A line simplified for the density map</summary>
     public static string Density(IReadOnlyList<(double Lat, double Lon)> points) =>
         Atlas.Geo.EncodePolyline(Atlas.Geo.Simplify(points, DensityVertices, DensityTolerance));
+}
+
+/// <summary>
+/// The corridor cells of a matched line (AD-38 rule 3): the cells of a 0.01° grid that lie
+/// within <see cref="BufferM"/> of it, so the similar-drive pool finds the lines that run
+/// near a drive's points with one indexed overlap
+/// </summary>
+public static class RouteCells
+{
+    /// <summary>A cell's side in degrees (about 1.1 × 0.95 km in Israel)</summary>
+    public const double SizeDeg = 0.01;
+
+    /// <summary>A point this near the line lies in one of its cells (metres)</summary>
+    public const double BufferM = 200;
+
+    /// <summary>The line is sampled at least this often (metres)</summary>
+    public const double SampleM = 100;
+
+    /// <summary>The cell of a point</summary>
+    public static long Of(double lat, double lon) =>
+        (long)Math.Floor((lat + 90) / SizeDeg) * 100_000 + (long)Math.Floor((lon + 180) / SizeDeg);
+
+    /// <summary>The cells of a line, Google encoded at precision 5 (empty for a line of fewer than two points)</summary>
+    public static long[] Line(string polyline) => Line(Atlas.AtlasService.DecodePolyline(polyline));
+
+    /// <summary>
+    /// The cells of a line, sorted: every sample (each vertex, and every <see cref="SampleM"/>
+    /// between) adds every cell that a square of 2 × <see cref="BufferM"/> around it touches
+    /// (in Israel, the cells of its four corners), so a point within <see cref="BufferM"/> −
+    /// <see cref="SampleM"/> / 2 of the line lies in one of them, at any latitude.
+    /// </summary>
+    public static long[] Line(IReadOnlyList<(double Lat, double Lon)> line)
+    {
+        var cells = new HashSet<long>();
+        if (line.Count < 2)
+        {
+            return Array.Empty<long>();
+        }
+
+        void Add(double lat, double lon)
+        {
+            var dLat = BufferM / 110_540;
+            var dLon = BufferM / (111_320 * Math.Max(0.01, Math.Cos(lat * Math.PI / 180)));
+            long lat0 = (long)Math.Floor((lat - dLat + 90) / SizeDeg), lat1 = (long)Math.Floor((lat + dLat + 90) / SizeDeg);
+            long lon0 = (long)Math.Floor((lon - dLon + 180) / SizeDeg), lon1 = (long)Math.Floor((lon + dLon + 180) / SizeDeg);
+            for (var a = lat0; a <= lat1; a++)
+            {
+                for (var o = lon0; o <= lon1; o++)
+                {
+                    cells.Add(a * 100_000 + o);
+                }
+            }
+        }
+
+        Add(line[0].Lat, line[0].Lon);
+        for (var i = 1; i < line.Count; i++)
+        {
+            var (a, b) = (line[i - 1], line[i]);
+            var n = (int)Math.Ceiling(Atlas.Geo.Haversine(a.Lat, a.Lon, b.Lat, b.Lon) / SampleM);
+            for (var k = 1; k <= n; k++)
+            {
+                var t = k / (double)n;
+                Add(a.Lat + t * (b.Lat - a.Lat), a.Lon + t * (b.Lon - a.Lon));
+            }
+        }
+
+        return cells.OrderBy(c => c).ToArray();
+    }
 }

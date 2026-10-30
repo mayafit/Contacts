@@ -85,7 +85,10 @@ public class WakeSignal
 
 /// <summary>A job's scope: ids (the backend resolves any query into ids), a time range, or everything</summary>
 /// <param name="Force">improve only: skip the "needs improvement" gate (never a reject decision)</param>
-public record JobScope(List<Guid>? ActivityIds, bool? All, DateTime? From = null, DateTime? To = null, bool? Force = null);
+/// <param name="Method">rebuild only: similar or waypoints (AD-38)</param>
+/// <param name="Waypoints">rebuild by waypoints only: the marked points, [[lat, lon]…] in the order marked</param>
+public record JobScope(List<Guid>? ActivityIds, bool? All, DateTime? From = null, DateTime? To = null, bool? Force = null,
+    string? Method = null, List<double[]>? Waypoints = null);
 
 /// <summary>What one Owner's turn ran</summary>
 public enum BatchKind
@@ -406,7 +409,8 @@ public class RoutesScheduler : BackgroundService
         var job = await db.Jobs
             .Where(j => j.OwnerId == owner && (j.State == RouteJobStates.Queued || j.State == RouteJobStates.Running) && j.Priority == priority
                         && (j.NextAttemptAt == null || j.NextAttemptAt <= now))
-            .OrderBy(j => j.CreatedAt)
+            // A rebuild first: the Owner is watching the panel for it (AD-38)
+            .OrderBy(j => j.Kind == RouteJobKinds.Rebuild ? 0 : 1).ThenBy(j => j.CreatedAt)
             .FirstOrDefaultAsync(ct);
         if (job == null)
         {
@@ -415,6 +419,11 @@ public class RoutesScheduler : BackgroundService
 
         var jobScope = JsonSerializer.Deserialize<JobScope>(job.Scope, Json) ?? new JobScope(null, null);
         var improve = job.Kind == RouteJobKinds.Improve;
+        if (job.Kind == RouteJobKinds.Rebuild)
+        {
+            return await RunRebuildAsync(scope.ServiceProvider, db, job, jobScope, owner, ct);
+        }
+
         if (improve && jobScope.All != true && !EngineOpen)
         {
             // Matching is paused: the job waits for the breaker, without using an attempt
@@ -494,6 +503,43 @@ public class RoutesScheduler : BackgroundService
 
         await db.SaveChangesAsync(CancellationToken.None);
         return improve ? BatchKind.Match : BatchKind.Job;
+    }
+
+    /// <summary>
+    /// A rebuild (AD-38): one record, its suggestion stored on the job. It waits while the
+    /// breaker is open; an engine failure fails the job at once (the Owner is waiting and
+    /// can try again), and so does anything else that goes wrong.
+    /// </summary>
+    private async Task<BatchKind> RunRebuildAsync(IServiceProvider sp, RoutesDbContext db, RouteJob job, JobScope jobScope, string owner,
+        CancellationToken ct)
+    {
+        if (!EngineOpen)
+        {
+            job.NextAttemptAt = _breaker!.OpenUntil;
+            await db.SaveChangesAsync(CancellationToken.None);
+            return BatchKind.None;
+        }
+
+        job.State = RouteJobStates.Running;
+        job.StartedAt ??= DateTime.UtcNow;
+        try
+        {
+            var id = jobScope.ActivityIds?.FirstOrDefault() ?? Guid.Empty;
+            var marks = jobScope.Waypoints?.Where(p => p.Length >= 2).Select(p => (p[0], p[1])).ToList();
+            var result = await sp.GetRequiredService<RebuildRunner>().RunAsync(owner, id, jobScope.Method ?? RebuildMethods.Similar, marks, ct);
+            job.Result = JsonSerializer.Serialize(result, RebuildRunner.Json);
+            job.Done = 1;
+            Finish(job, RouteJobStates.Done);
+        }
+        catch (Exception ex) when (ex is not BackendBusyException and not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Routes: a rebuild of {Owner} failed", owner);
+            job.LastError = ex.Message.Length > 500 ? ex.Message[..500] : ex.Message;
+            Finish(job, RouteJobStates.Failed);
+        }
+
+        await db.SaveChangesAsync(CancellationToken.None);
+        return BatchKind.Match;
     }
 
     /// <summary>Assesses (and for improve, matches) ids; returns how many of them are done, in their order</summary>
@@ -640,6 +686,7 @@ public class RoutesScheduler : BackgroundService
         await db.MatchedRoutes.Where(x => gone.Contains(x.OwnerId)).ExecuteDeleteAsync(ct);
         await db.Decisions.Where(x => gone.Contains(x.OwnerId)).ExecuteDeleteAsync(ct);
         await db.Settings.Where(x => gone.Contains(x.OwnerId)).ExecuteDeleteAsync(ct);
+        await db.Waypoints.Where(x => gone.Contains(x.OwnerId)).ExecuteDeleteAsync(ct);
         await db.Jobs.Where(x => gone.Contains(x.OwnerId)).ExecuteDeleteAsync(ct);
         await db.Cursors.Where(x => gone.Contains(x.OwnerId)).ExecuteDeleteAsync(ct);
         await tx.CommitAsync(ct);
@@ -693,7 +740,7 @@ public class RoutesScheduler : BackgroundService
     }
 
     /// <summary>
-    /// Matched rows stored before the list and density lines existed get them now, 200
+    /// Matched rows stored before the list and density lines (or the corridor cells) existed get them now, 200
     /// at a time with the batch pause between pages (until then reads fall back to the
     /// full line). A failure is logged and left for the next start.
     /// </summary>
@@ -718,7 +765,7 @@ public class RoutesScheduler : BackgroundService
 
             if (total > 0)
             {
-                _logger.LogInformation("Routes: stored the list and density lines of {Count} matched routes", total);
+                _logger.LogInformation("Routes: stored the list and density lines and corridor cells of {Count} matched routes", total);
             }
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)

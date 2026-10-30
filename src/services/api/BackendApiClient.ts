@@ -28,6 +28,10 @@ import type {
   ParsedData,
   PlaceAssociation,
   PlaceDetail,
+  ReviewAction,
+  ReviewState,
+  ReviewsOverview,
+  TakeoutDriveStatus,
   PlacePatch,
   SearchResult,
   SeriesPoint,
@@ -851,6 +855,56 @@ export class BackendApiClient {
     );
   }
 
+  /**
+   * Rebuilds an activity's route on demand (AD-38): from similar drives, or through points
+   * marked on the map. The job's result is a suggestion (routesApply uses it).
+   * @param activityId - The activity
+   * @param method - similar or waypoints
+   * @param waypoints - waypoints only: [lat, lon] in the order marked
+   * @returns The job to poll with routesJob
+   */
+  async routesRebuild(
+    activityId: string,
+    method: 'similar' | 'waypoints',
+    waypoints?: [number, number][],
+  ): Promise<{ jobId: string }> {
+    return unwrap(
+      await this.request<{ jobId: string }>(`/routes/activities/${activityId}/rebuild`, {
+        method: 'POST',
+        body: JSON.stringify({ method, waypoints }),
+      }),
+      'Queueing the rebuild failed',
+    );
+  }
+
+  /**
+   * Uses a rebuild's suggestion as the activity's route (and keeps it shown).
+   * @param activityId - The activity
+   * @param jobId - The rebuild job
+   */
+  async routesApply(activityId: string, jobId: string): Promise<void> {
+    unwrap(
+      await this.request<unknown>(`/routes/activities/${activityId}/apply`, {
+        method: 'POST',
+        body: JSON.stringify({ jobId }),
+      }),
+      'Using the rebuilt route failed',
+    );
+  }
+
+  /**
+   * Clears the points marked for an activity's route; it is then matched again as usual.
+   * @param activityId - The activity
+   */
+  async routesClearWaypoints(activityId: string): Promise<void> {
+    unwrap(
+      await this.request<unknown>(`/routes/activities/${activityId}/waypoints`, {
+        method: 'DELETE',
+      }),
+      'Clearing the marked points failed',
+    );
+  }
+
   /** A route job's progress */
   async routesJob(id: string): Promise<RouteJob> {
     return unwrap(await this.request<RouteJob>(`/routes/jobs/${id}`), 'Route job failed');
@@ -1128,6 +1182,74 @@ export class BackendApiClient {
     return unwrap(
       await this.request<PhotoSummary[]>(`/atlas/visits/${id}/photos`),
       'Loading the photos failed',
+    );
+  }
+
+  /** The Google Drive connection for scheduled Takeout exports (AD-40) */
+  async atlasTakeoutDrive(): Promise<TakeoutDriveStatus> {
+    return unwrap(
+      await this.request<TakeoutDriveStatus>('/atlas/connections/google-drive'),
+      'Loading the Google Drive connection failed',
+    );
+  }
+
+  /** Connects Google Drive (the sign-in must allow it) and checks it */
+  async atlasTakeoutDriveConnect(): Promise<TakeoutDriveStatus> {
+    return unwrap(
+      await this.request<TakeoutDriveStatus>('/atlas/connections/google-drive', { method: 'POST' }),
+      'Connecting Google Drive failed',
+    );
+  }
+
+  /** Checks Google Drive for new Takeout exports now */
+  async atlasTakeoutDriveSync(): Promise<TakeoutDriveStatus> {
+    return unwrap(
+      await this.request<TakeoutDriveStatus>('/atlas/connections/google-drive/sync', {
+        method: 'POST',
+      }),
+      'Checking Google Drive failed',
+    );
+  }
+
+  /** Stops checking Google Drive (the imported reviews stay) */
+  async atlasTakeoutDriveDisconnect(): Promise<void> {
+    unwrap(
+      await this.request<unknown>('/atlas/connections/google-drive', { method: 'DELETE' }),
+      'Disconnecting Google Drive failed',
+    );
+  }
+
+  /** Signs in to Google again, allowing Echo to read Drive (comes back to /atlas?connected=takeout) */
+  connectTakeoutDrive(): void {
+    window.location.href = `${this.baseUrl}/auth/login?takeout=true`;
+  }
+
+  /** The Owner's Google Maps reviews and the places to review (AD-39) */
+  async atlasReviews(): Promise<ReviewsOverview> {
+    return unwrap(
+      await this.request<ReviewsOverview>('/atlas/reviews'),
+      'Loading the reviews failed',
+    );
+  }
+
+  /**
+   * Sets a place's review reminder aside, or brings it back (AD-39 rule 6).
+   * @param placeId - The place
+   * @param action - later, never, done, never_kind, or clear
+   * @param kind - With clear: its category's decision too
+   * @returns Where the place stands now
+   */
+  async atlasReviewReminder(
+    placeId: string,
+    action: ReviewAction,
+    kind = false,
+  ): Promise<ReviewState> {
+    return unwrap(
+      await this.request<ReviewState>('/atlas/reviews/reminders', {
+        method: 'POST',
+        body: JSON.stringify({ placeId, action, kind }),
+      }),
+      'Saving the choice failed',
     );
   }
 

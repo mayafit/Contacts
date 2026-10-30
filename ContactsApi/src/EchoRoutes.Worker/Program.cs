@@ -69,6 +69,7 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<EngineBreaker>();
 builder.Services.AddScoped<AssessRunner>();
 builder.Services.AddScoped<MatchRunner>();
+builder.Services.AddScoped<RebuildRunner>();
 builder.Services.AddSingleton<WakeSignal>();
 builder.Services.AddSingleton<IPause, TaskPause>();
 builder.Services.AddHostedService<RoutesScheduler>();

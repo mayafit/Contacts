@@ -3,12 +3,20 @@ import {
   inferredCasingStyle,
   jobText,
   noMatchText,
+  noSuggestionText,
   pieceStyle,
+  rebuildText,
   routeCaption,
   routeStatusText,
   splitPieces,
+  suggestionVerdict,
 } from '../routeGeometry';
-import { INFERRED_COLOR, type ActivityRouteInfo, type RouteDescription } from '../types';
+import {
+  INFERRED_COLOR,
+  type ActivityRouteInfo,
+  type RebuildSuggestion,
+  type RouteDescription,
+} from '../types';
 
 /** A straight north-south line of 11 points, ~111 m apart (1,112 m in all) */
 const line: [number, number][] = Array.from({ length: 11 }, (_, i) => [32 + i * 0.001, 34.8]);
@@ -254,5 +262,92 @@ describe('noMatchText', () => {
         }),
       ),
     ).toBe('No confident road match: the engine did not answer within 15 s');
+  });
+});
+
+describe('rebuild texts (AD-38)', () => {
+  const suggestion = (s: Partial<RebuildSuggestion> = {}): RebuildSuggestion => ({
+    method: 'similar',
+    outcome: 'suggested',
+    activityId: 'a1',
+    confidence: 0.85,
+    previousConfidence: 0.52,
+    basis: {
+      activityId: 'b1',
+      start: '2026-09-03T05:12:00Z',
+      reversed: true,
+      fit: 0.9,
+      candidates: 14,
+      agreeing: 14,
+      sameWay: 6,
+      examples: [],
+    },
+    ...s,
+  });
+
+  it('says what a rebuild was based on', () => {
+    expect(rebuildText(suggestion())).toMatch(
+      /^From 14 similar drives \(6 take this way\), the closest on 3 Sept? at \d\d:12, the other way$/,
+    );
+    expect(
+      rebuildText(suggestion({ basis: { ...suggestion().basis!, sameWay: 14, reversed: false } })),
+    ).not.toMatch(/take this way|other way/);
+    expect(
+      rebuildText(suggestion({ basis: { ...suggestion().basis!, sameWay: 1, reversed: false } })),
+    ).toMatch(/\(1 takes this way\)/);
+    // A basis stored before ways were counted
+    expect(
+      rebuildText(suggestion({ basis: { ...suggestion().basis!, agreeing: 1, sameWay: undefined } })),
+    ).toMatch(/^From 1 similar drive, the closest/);
+    expect(rebuildText(suggestion({ method: 'waypoints', waypoints: [[32, 34.8]] }))).toBe(
+      'Through the 1 point you marked',
+    );
+  });
+
+  it('compares the suggestion with the current match', () => {
+    expect(suggestionVerdict(suggestion())).toBe(
+      '85% confidence (now 52%) · shown once you use it',
+    );
+    expect(suggestionVerdict(suggestion({ previousConfidence: null }))).toBe(
+      '85% confidence · shown once you use it',
+    );
+    expect(suggestionVerdict(suggestion({ previousConfidence: 0.9 }))).toBe(
+      '85% confidence: no better than the current match (90%)',
+    );
+    expect(suggestionVerdict(suggestion({ confidence: 0.2, previousConfidence: null }))).toBe(
+      '20% confidence · too weak to show',
+    );
+  });
+
+  it('explains a rebuild without a suggestion', () => {
+    expect(noSuggestionText(suggestion({ outcome: 'no_match', message: null }))).toBe(
+      'The engine placed none of the points on a road',
+    );
+    expect(
+      noSuggestionText(
+        suggestion({ outcome: 'no_similar', message: 'None of the 3 drives follows this one.' }),
+      ),
+    ).toBe('No similar drive found: None of the 3 drives follows this one.');
+    expect(
+      noSuggestionText(
+        suggestion({
+          outcome: 'invalid',
+          message: 'A marked point is more than 5 km from the recorded track.',
+        }),
+      ),
+    ).toBe('A marked point is more than 5 km from the recorded track.');
+  });
+
+  it('names a rebuilt route in the caption', () => {
+    const matched = { geometry: 'matched' as const, pointCount: 12, onRoadsM: null };
+    expect(
+      routeCaption(matched, route({ confidence: 0.8, status: 'matched', method: 'similar' }))!.text,
+    ).toBe('Route: rebuilt from similar drives · 80%');
+    expect(
+      routeCaption(
+        matched,
+        route({ confidence: 0.4, status: 'low_confidence', method: 'waypoints' }),
+      )!.text,
+    ).toBe('Route: through your marked points · 40%');
   });
 });

@@ -7,6 +7,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- the export formats are loosely typed JSON */
 
 import { isSet } from '../types';
+import { safeUrl } from '../reviewText';
 
 import type {
   ActivityInput,
@@ -340,11 +341,98 @@ export const parseFitbitHeartRate = (json: unknown, utcOffsetMinutes?: number): 
   return out;
 };
 
-/** Every visit, activity and health sample of several parsed files */
+/** Every visit, activity, health sample and review of several parsed files */
 export const merge = (parts: ParsedData[], source: string): ParsedData => ({
   source,
   activities: parts.flatMap((p) => p.activities) as ActivityInput[],
   places: parts.flatMap((p) => p.places) as PlaceInput[],
   visits: parts.flatMap((p) => p.visits) as VisitInput[],
   health: parts.flatMap((p) => p.health) as HealthInput[],
+  reviews: parts.flatMap((p) => p.reviews ?? []),
 });
+
+/** The fields that make a GeoJSON feature a review (Data Portability schema maps.reviews) */
+const REVIEW_FIELDS = [
+  'five_star_rating_published',
+  'five_star_rating_draft',
+  'review_text_published',
+  'review_text_draft',
+];
+
+/**
+ * Whether a JSON file is Takeout's Reviews.json: a FeatureCollection whose features carry
+ * review fields (Saved Places.json has the same shape without them).
+ * @param json - Parsed JSON
+ * @returns True for reviews
+ */
+export const isGoogleReviews = (json: unknown): boolean => {
+  const j = json as any;
+  return (
+    !!j &&
+    j.type === 'FeatureCollection' &&
+    Array.isArray(j.features) &&
+    j.features.some((f: any) => REVIEW_FIELDS.some((k) => isSet(f?.properties?.[k])))
+  );
+};
+
+/** One answer to Google's questions, as text */
+const answerText = (q: any): string | null => {
+  if (typeof q?.selected_option === 'string' && q.selected_option.trim()) {
+    return q.selected_option.trim();
+  }
+  if (Array.isArray(q?.selected_options) && q.selected_options.length) {
+    return q.selected_options.filter((x: unknown) => typeof x === 'string').join(', ');
+  }
+  if (typeof q?.text_answer === 'string' && q.text_answer.trim()) {
+    return q.text_answer.trim();
+  }
+  if (typeof q?.rating === 'number') {
+    return `${q.rating}/5`;
+  }
+  return null;
+};
+
+/**
+ * Google Takeout "Maps (your places)/Reviews.json" (AD-39 rule 1): one review per
+ * feature, with the published stars and text, or the draft's when nothing was
+ * published. A feature with neither stars nor text is skipped.
+ * @param json - Parsed JSON
+ * @returns The reviews (source google-maps)
+ */
+export const parseGoogleReviews = (json: unknown): ParsedData => {
+  const out: ParsedData = { ...empty('google-maps'), reviews: [] };
+  ((json as any)?.features ?? []).forEach((f: any) => {
+    const p = f?.properties ?? {};
+    const [lon, lat] = Array.isArray(f?.geometry?.coordinates) ? f.geometry.coordinates : [];
+    // Takeout writes [0, 0] for a place with no position
+    const location = Array.isArray(p.location) ? p.location[0] : p.location;
+    const name = typeof location?.name === 'string' ? location.name.trim() : '';
+    if (typeof lat !== 'number' || typeof lon !== 'number' || (lat === 0 && lon === 0) || !name) {
+      return;
+    }
+    const published = isSet(p.five_star_rating_published) || !!p.review_text_published;
+    const rating = published ? p.five_star_rating_published : p.five_star_rating_draft;
+    const text = published ? p.review_text_published : p.review_text_draft;
+    const stars = typeof rating === 'number' && rating >= 1 && rating <= 5 ? rating : null;
+    const words = typeof text === 'string' && text.trim() ? text : null;
+    if (stars === null && words === null) {
+      return;
+    }
+    out.reviews!.push({
+      name,
+      address: typeof location?.address === 'string' ? location.address : null,
+      countryCode: typeof location?.country_code === 'string' ? location.country_code : null,
+      lat,
+      lon,
+      rating: stars,
+      text: words,
+      published,
+      reviewedAt: iso(p.date),
+      mapsUrl: safeUrl(p.google_maps_url),
+      answers: (Array.isArray(p.questions) ? p.questions : [])
+        .map((q: any) => ({ question: String(q?.question ?? '').trim(), answer: answerText(q) }))
+        .filter((a: { question: string; answer: string | null }) => a.question && a.answer),
+    });
+  });
+  return out;
+};

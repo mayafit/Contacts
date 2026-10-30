@@ -7,6 +7,7 @@
 import type {
   ActivityRouteInfo,
   ActivitySummary,
+  RebuildSuggestion,
   RouteJob,
   RoutePiece,
   RouteStatus,
@@ -199,8 +200,14 @@ export const routeCaption = (
     ]
       .filter(Boolean)
       .join(' · ');
+    const how =
+      d?.method === 'similar'
+        ? 'rebuilt from similar drives'
+        : d?.method === 'waypoints'
+          ? 'through your marked points'
+          : 'matched to roads';
     return {
-      text: `Route: matched to roads${isSet(d?.confidence) ? ` · ${pct(d.confidence)}` : ''}`,
+      text: `Route: ${how}${isSet(d?.confidence) ? ` · ${pct(d.confidence)}` : ''}`,
       hint: hint || undefined,
       matched: true,
       rejected: false,
@@ -315,4 +322,70 @@ export const routeStatusText = (status: RouteStatus | null): string | null => {
     parts.push('up to date');
   }
   return `Route matching: ${parts.filter(Boolean).join(' · ') || 'idle'}`;
+};
+
+/** "3 Sep at 08:12" (local time) */
+const dayAndTime = (iso: string): string => {
+  const d = new Date(iso);
+  const day = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  return `${day} at ${time}`;
+};
+
+/**
+ * What a rebuild was based on, in a line (AD-38).
+ * @param s - The suggestion
+ * @returns e.g. "From 14 similar drives (6 take this way), the closest on 3 Sep at 08:12, the other way"
+ */
+export const rebuildText = (s: RebuildSuggestion): string => {
+  if (s.method === 'waypoints') {
+    const n = s.waypoints?.length ?? 0;
+    return `Through the ${n} point${n === 1 ? '' : 's'} you marked`;
+  }
+  const b = s.basis;
+  if (!b) {
+    return '';
+  }
+  const similar = `${b.agreeing} similar drive${b.agreeing === 1 ? '' : 's'}`;
+  // How many of them take the basis's way (absent on bases stored before ways were counted)
+  const way =
+    typeof b.sameWay === 'number' && b.sameWay < b.agreeing
+      ? ` (${b.sameWay} take${b.sameWay === 1 ? 's' : ''} this way)`
+      : '';
+  return `From ${similar}${way}, the closest on ${dayAndTime(b.start)}${b.reversed ? ', the other way' : ''}`;
+};
+
+/**
+ * How a suggestion compares with what is stored now.
+ * @param s - The suggestion
+ * @returns e.g. "On roads, 85% confidence (now 52%)", or that it is no better
+ */
+export const suggestionVerdict = (s: RebuildSuggestion): string => {
+  if (!isSet(s.confidence)) {
+    return '';
+  }
+  const now = isSet(s.previousConfidence) ? s.previousConfidence : null;
+  const shown = s.confidence >= 0.3 ? 'shown once you use it' : 'too weak to show';
+  if (now !== null && s.confidence <= now) {
+    return `${pct(s.confidence)} confidence: no better than the current match (${pct(now)})`;
+  }
+  return `${pct(s.confidence)} confidence${now !== null ? ` (now ${pct(now)})` : ''} · ${shown}`;
+};
+
+/**
+ * Why a rebuild gave no suggestion.
+ * @param s - The result
+ * @returns A sentence for the panel
+ */
+export const noSuggestionText = (s: RebuildSuggestion): string => {
+  switch (s.outcome) {
+    case 'no_similar':
+      return s.message ? `No similar drive found: ${s.message}` : 'No similar drive found';
+    case 'gone':
+      return 'The activity no longer exists';
+    case 'no_match':
+      return s.message ?? 'The engine placed none of the points on a road';
+    default:
+      return s.message ?? 'The route could not be rebuilt';
+  }
 };

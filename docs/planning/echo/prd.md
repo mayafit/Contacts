@@ -23,7 +23,7 @@ Echo is not greenfield. Two Areas already run in production at https://contacts.
 
 The rest of this document works as follows:
 - The Glossary (§3) fixes the vocabulary.
-- Features (§4) nest globally numbered requirements, FR-01 to FR-60. FR-51 to FR-54 were added after the Owner's answers of 2026-10-28, so they sit in the section they belong to, not in id order. FR-55 to FR-60 (route quality, §4.12) follow them.
+- Features (§4) nest globally numbered requirements, FR-01 to FR-67. FR-51 to FR-54 were added after the Owner's answers of 2026-10-28, so they sit in the section they belong to, not in id order. FR-55 to FR-60 (route quality, §4.12) follow them. FR-61 (roads travelled), FR-62 (rebuild from similar drives) and FR-63 (mark the way) were added to §4.12 on 2026-10-29. FR-64 to FR-67 (place reviews, §4.13) were added on 2026-10-30.
 - Cross-cutting quality requirements are NFR-01 to NFR-21 (§6).
 - Inferences are tagged `[ASSUMPTION]` and indexed in §13.
 - Technical "how" (mechanisms, storage, pipelines, remediation steps, and implementation details of Built behaviour such as error codes, scope names and thresholds) is in [prd-addendum.md](prd-addendum.md) for the architect.
@@ -611,7 +611,7 @@ Details:
 - Assessment never needs a third party.
 
 #### FR-56: Road-matched routes — Proposed
-For an Activity marked "needs improvement", Echo computes a **Matched Route** that follows the real road network, and shows it instead of the straight lines when the match is confident enough.
+For an Activity marked "needs improvement", Echo computes a **Matched Route** that follows the real road network, and shows it instead of the straight lines when the match is confident enough. From 2026-10-29, every matchable Activity of a matched type is matched, including a well-recorded one that does not need improvement, so that its roads are known (FR-61). A well-recorded drive's Matched Route is shown by the same confidence rule, and the Owner can still choose the recorded line.
 - **Types.** Phase R1: drive, and transit on roads (buses). Phase R2: ride, walk, run and hike, each on a bike or foot network. Flight, ski, swim and "other" are **never** matched. A transit trip that turns out to be rail is left as recorded (decision Q-12).
 - **Provenance.** Every piece of a Matched Route is *observed*, *inferred* or a *gap* (§3). On the map, inferred pieces are drawn more faintly (dashed), and gaps stay as recorded.
 - **Confidence.** Each Matched Route has a confidence from 0 to 1. It is shown by default, with no acceptance needed, when its confidence is at or above the Owner's threshold, which starts at **0.7** (decision Q-14). Below it, the original stays in place; from Phase R2 the Owner can view the Matched Route and choose to use it (FR-58).
@@ -649,11 +649,122 @@ The data-quality section of Insights (FR-25) shows, for the current query:
 
 It also offers the batch action "Improve N routes". A rule-based proposal ("62 drives in this period are drawn as straight lines: improve them") links to it. The Owner can set the confidence threshold, the matched types, and whether Matched Routes are shown by default.
 
+#### FR-61: Roads travelled — Proposed (Phase R1)
+When a route is matched to roads, Echo records which roads it followed: route numbers (for example 431) and street names as the map data spells them (Hebrew in Israel), in travel order, with the distance on each. The Owner asked for this on 2026-10-29: "so I could look for things like all routes that passed through road 431".
+- **Shown.** In the Activity panel, under the route line: "Via 4 › 431 › איילון צפון". Route numbers look like small road signs. It is shown only while the Matched Route is drawn. Each road can be clicked.
+- **Searchable.** A **road filter** finds every Activity whose route followed a road. The Owner sets it by:
+  - clicking a road in the panel;
+  - typing "road 431" or "כביש 431" in the search box and pressing Enter;
+  - asking the Assistant, or through MCP (`road`).
+
+  It shows as a chip ("Road 431") beside the other filters and combines with them (time, area, types). The timeline, the density map and Insights count what it finds; visits are left out. A route number matches exactly (431 is not 4313); a street name matches in part ("גבירול" finds "אבן גבירול").
+- **What counts.** Only the observed and inferred pieces of the line: the straight leg of a gap is on no road. A road followed for less than 100 m is left out (a junction crossed, or a slip of the matching). Only matches the Owner sees as right count: confident or accepted, never rejected ("Keep the original"), and never stale.
+- **Coverage.** Every matchable drive and bus or taxi trip is matched for its roads (FR-56). Activities that are not matched (walks and rides until Phase R2, flights, records outside the map data) have no roads, so the filter does not find them.
+- **Derived.** Roads belong to the Matched Route: exported, erased and recomputed with it.
+- English names are not offered in R1: the map data has none for most streets.
+
+#### FR-62: Rebuild a route from similar drives — Proposed (Phase R1)
+Some drives cannot be placed on the roads from their own points: they are too sparse, or the engine breaks on them. In the first Owner's data on 2026-10-29 this was 2,713 of 14,369 matchable drives (2,081 low confidence, 632 failed). But the Owner drives the same trips again and again: **88%** of those drives (2,394) have at least one confidently matched drive whose start and end are both within about 500 m of theirs; 2,290 have three or more, and 2,315 have one that started within two hours of the same time of day. A drive home from work is the **reverse** of the drives to work (37 drives match only reversed).
+
+**On demand,** for one drive the Owner chooses ("Rebuild from similar drives" in the Activity panel), Echo:
+1. **Finds similar drives.** These are the Owner's own confidently matched drives of the same type that run along this drive's own recorded points, in either direction. The **way** decides, not the ends: a recording often starts late or stops early (the phone found its fix only on the road, or the last point is a stray one), so a drive is similar when most of this drive's points lie along it, wherever the two start and end. Among them, Echo prefers:
+   - the way that most of the similar drives take (a common commute beats a one-off detour that happens to pass the same few points);
+   - the same time of day and the same kind of day (a weekday morning commute for a weekday morning drive);
+   - a way that could be driven in this drive's real time, without a long detour;
+   - drives whose start and end are also near this one's.
+
+   Echo tries the best drive of up to three different ways, so a rare way still gets its chance when the common one does not fit.
+2. **Borrows points.** Between two of this drive's real points that both lie along the most similar drive, Echo adds synthetic points taken from that drive's road line. Each synthetic point is timed between the two real points, in proportion to the distance along the line, so the drive never moves faster than its type allows. Where this drive left the similar drive's way, nothing is borrowed.
+3. **Matches again.** The real and borrowed points are placed on the roads as usual (FR-56).
+4. **Suggests.** The result is drawn on the map as a **suggestion**, with what it is based on: "From 14 similar drives (6 agree), the closest on 3 Sep at 08:12, reversed", and its confidence. The Owner chooses **Use this route** or **Discard**. Nothing changes until they choose.
+
+Details:
+- **Results.** Measured on 60 of the first Owner's weak drives, picked at random: a rebuild placed **38** on the roads with confidence, against 6 by the normal matching. 9 had no similar drive that follows them; those are for marking the way.
+- **Why the way, not the ends** (2026-10-30). A morning commute recorded with 11 points over 27 minutes started at home, but its last point lay about 2 km from each of the Owner's usual work ends (the recording stopped early or ended on a poor fix). Only **1** of the Owner's 9,143 confident drives had both ends within 500 m of it, so a search by the ends found nothing. Yet dozens of commutes had 9 of its 11 points within 200 m of their way.
+- **The rules, in the Owner's terms** (the exact algorithm and every number are in architecture AD-38 rule 3):
+  - *Similar* means: the Owner's own drive of the same type, matched on its own with a confidence of at least 0.8 and not reverted, along which at least **60%** of this drive's points lie, each within **150 m** and in the order driven. Either direction counts, and a round trip is read in order.
+  - *Possible* means: the similar drive's way between this drive's first and last points along it can be driven in the time this drive took, at the type's top speed or less.
+  - *Preferred*, in this order of weight: more of this drive's points along it; the same time of day (up to three hours apart); not a long detour (a way more than 1.3 times the drive's own straight legs costs, up to 1.8 times); the same kind of day (Friday, Saturday, or a working day); both ends near this drive's ends (within 500 m). Among the 30 best, drives that take the same way are grouped, and a way more drives take wins a close call.
+  - Echo tries the best drive of up to **three** different ways, each with points borrowed every 200 m and every 600 m, and keeps the most confident result.
+  - The panel says how many drives are similar, and how many of them take the chosen way: "From 14 similar drives (6 take this way), the closest on 3 Sep at 08:12, the other way". When they all take it, the count in brackets is left out.
+  - When no drive is similar, the panel says why ("No confidently matched drive runs along this drive's points", or that none of those nearby follows them closely enough), and, while Echo is still preparing older drives for this search after an update, how many and to try again in a few minutes.
+- **Partial overlap.** Points are borrowed only between this drive's own first and last points along the similar drive: a route is never extended to where the recording did not go (the place it "probably" ended is a guess the Owner can make by marking the way).
+- **Stray points.** A point (other than the first or last) that the drive could only have reached, and left, at more than one and a half times its type's top speed, even allowing a minute's slack on each side (Timeline times are rounded to the minute), is left out of the search; so is a first or last point that could only be reached that fast from the nearest point that is not stray. It stays in the recording and in the match. This catches teleports of kilometres, not a merely poor last fix: that one point costs the resemblance little, as most of the points still follow the way.
+- **Provenance.** Borrowed stretches are *inferred* pieces (dashed), never *observed*. The confidence counts only the drive's real points. It also counts the share of them that lie along the similar drive, so a weak resemblance gives a weak suggestion.
+- **Lasting.** A route the Owner used is kept as it is when Echo's matching rule changes. It is rebuilt automatically only when the drive's own points change, and "Revert to recorded" still applies.
+- **No similar drives.** When no similar drive is found, or the resemblance is too weak, the panel says so and offers marking the way (FR-63).
+- Only the Owner's own drives are ever borrowed from (§2.2, NFR-07). Nothing leaves Echo's infrastructure (NFR-20).
+
+#### FR-63: Mark the way — Proposed (Phase R1)
+When even similar drives are not enough, the Owner can tell Echo where they drove. They choose **Mark the way** in the Activity panel, click points on the map in the order they drove through them, and choose **Rebuild**.
+- **Placement.** Each marked point is placed in time between the drive's real points, by where it lies along the drive and in the order the Owner marked it. Echo then matches the drive through the real and marked points (FR-56), and the result is offered as a suggestion, as in FR-62. Up to 50 points can be marked; a point can be removed by clicking it.
+- **Owner's input.** The marked points are a **decision**, like "Keep the original" (P-5). They are stored when the Owner uses the route, and every later match of that drive goes through them, including after a rule change or a re-import. The Owner can clear them ("clear them" in the panel), and the drive is then matched as usual again. They are exported and erased with the Owner's route data, and backed up.
+- **Provenance.** Stretches through marked points are *inferred* pieces. A route the Owner used is shown whatever its confidence, as long as it is at least 0.3.
+
 #### FR-60: Routes abroad — Proposed (Phase R3)
 Activities outside the map data that Echo holds are flagged "outside map coverage" and left as recorded. At MVP, Echo holds Israel only (decision Q-13).
 - Each Owner sees which regions hold the most of their own such Activities.
 - Regions are added **on demand**: the operator adds regions from the "outside coverage" list, ranked by activity count. The admin sees only per-region counts summed over all Owners, never whose Activities they are, like the usage counters (FR-51).
 - Map data for a region is added as a published artifact (AD-32), never fetched by the cluster at run time, and Activities there are then matched like the rest.
+
+### 4.13 Atlas: Place Reviews (Proposed)
+
+The Owner writes reviews of places on Google Maps. Echo shows, for each place they have been to, whether they reviewed it, what they wrote and how many stars they gave, and it reminds them of the places they went to and have not reviewed yet. Google offers no API for a person's own reviews, so the reviews come from the Owner's **Google Takeout** export ("Maps (your places)" → `Reviews.json`), imported like the Timeline (FR-17).
+
+- The reviews are the Owner's own **source data** (P-1): kept as imported, never edited by Echo, removed with the import that brought them, and erased with the Owner (FR-49).
+- Nothing leaves Echo: no Google API is called for a review. The links Echo shows open Google Maps in the Owner's browser.
+- **Per Owner**, like the rest of Atlas (§2.2, NFR-07).
+
+#### FR-64: Import my reviews — Proposed
+The Owner imports the Takeout export as they import the Timeline: the zip, or the `Reviews.json` file on its own.
+- **What is kept**, for each review: the place's name, address, country and position as Google gives them; the stars (1 to 5); the text; the answers to Google's questions about the place ("Price per person", "Service: dine in"); the date the review was written or last changed (when the export has one); whether it is published or only a draft; and the review's link on Google Maps (only a web link is kept). A review with neither stars nor text, or without a position, is skipped.
+- **Any language.** Takeout names its files in the account's language; Echo reads the reviews file from the Maps folder whatever it is called, and recognises it by its content.
+- **Again and again.** Importing a newer export updates each review (matched by its Google Maps link) and adds new ones; a review missing from a newer export is kept (an import never deletes), and deleting an import removes what it brought (FR-17).
+- **Photos.** Google's documented export of reviews holds no photos (the Data Portability schema `maps.reviews` lists none). Echo therefore shows the Owner's **own photos taken at the place** (FR-27), and the review's link opens it on Google Maps, where the photos added to the review are. If the Owner's export turns out to include the review photos as files, a later story imports them.
+
+#### FR-65: My review on each place — Proposed
+- **Linked to the place.** Each review is linked to the place in Atlas that it is about, when one is clear:
+  1. a place within 75 m whose name shares a word with the review's place name (a word of 3 letters or more, in any script, ignoring case and punctuation): the nearest such;
+  2. otherwise the only place within 30 m;
+  3. otherwise the nearest place within 10 m, when no other place is within 25 m;
+  4. otherwise the review stays unlinked; it is still listed with the Owner's reviews.
+
+  A place takes one review (Google keeps one review per place per person). Linking runs after every import of reviews, and again after every import of places, for the reviews not linked yet. A link stays until the place is deleted.
+- **Never home or work.** A review is never linked to the Owner's home or work, so the café downstairs does not become the home.
+- **A review names its place.** Many Timeline places have no name ("Place"). When a review is linked to such a place by position (rules 2 and 3), the place takes the review's name, and its address when it has none, unless the Owner named the place themselves.
+- **Names first.** Reviews that a place's name matches are linked before those linked by position, so a review merely near a place never takes the place another review names.
+- **In the place panel.** A reviewed place shows the review: the stars, the date, the text, the answers, "Draft" when it was never published, and **Open on Google Maps** (the review's link). The Owner's own photos at the place are shown as before.
+- **In Insights.** A **Reviews** section shows how many reviews the Owner has written, their average stars, how many are linked to visited places, and the latest reviews; a click opens the place, or Google Maps for an unlinked review. It covers all reviews, whatever the current filters.
+
+#### FR-66: Reminders to review — Proposed
+Echo reminds the Owner of places they went to and have not reviewed.
+- **Which places.** A place is *to review* when all of these hold:
+  - it has a real identity: a name that is not generic ("Place", "Home", "Work", "Saved place", "Searched place"), identified automatically or by the Owner (FR-24);
+  - its category is not an errand or a private place: fuel stations, buildings, offices and companies, works and industry, banks, post offices, public offices (town hall, court, police, embassy), stops and stations, health care (clinics, doctors, hospitals, pharmacies), schools, places of worship, car repair, homes and workplaces (the full list is in the architecture, AD-39);
+  - the Owner stayed there **at least 10 minutes** on a visit that ended within the last **180 days**;
+  - it is not a routine place: visited on **30 days or fewer** in all;
+  - no review is linked to it;
+  - the Owner has not set it aside (below).
+- **Where.** The Insights **Reviews** section lists the places to review, the most recently visited first (up to 30, with the total), each with the last visit, the number of visits, and **Write a review**, which opens the place on Google Maps, where the review is written. The place panel of a place to review says "You have not reviewed this place" with the same link.
+- **Setting aside.** For each reminder, the Owner can choose:
+  - **Later**: hidden for 30 days;
+  - **Not this one**: never again for this place;
+  - **Not this kind**: never again for places of this category;
+  - **I reviewed it**: hidden; the next import brings the review itself.
+
+  Each choice is a decision of the Owner (P-5), kept across imports and undone from the place panel ("Remind me again").
+- In the first Owner's data on 2026-10-30, 393 of 4,403 places have a real identity, and 43 of them had a visit of 10 minutes or more in the last 180 days; the reminders are meant to be a short list.
+
+#### FR-67: Reviews from a scheduled Takeout on Drive — Proposed
+Importing a Takeout by hand every time is a chore. The Owner can instead schedule Takeout to export "Maps (your places)" **every 2 months for a year** and **add it to Google Drive**, and connect Echo to their Drive once. Echo then picks up each new export by itself and imports its reviews (FR-64), so new reviews appear within two months without the Owner doing anything.
+- **Why Drive.** Google offers no API for a person's own reviews: the Business Profile API serves the reviews a business receives, the Places API a few public reviews of a place, and the Data Portability API (the programmatic Takeout) is offered only in the EU, the EEA, Switzerland and the UK, not to an account in Israel (checked 2026-10-30). A scheduled Takeout delivered to Drive is the automatic route left.
+- **Connecting.** In the import dialog, a **Google Drive** tab explains how to schedule the export and has **Connect Google Drive**. It asks Google for one more permission on the Owner's existing Echo sign-in: reading files in their Drive (read only). Echo is the Owner's own app and not reviewed by Google for this permission, so Google shows its "unverified app" warning once; the Owner continues past it. Declining leaves everything as it was.
+- **What Echo reads.** Only the Owner's own files named like Takeout exports (`takeout-….zip`), never anything else in the Drive, and never a file someone else shared with them. From each it reads only the reviews file; the rest of the zip is not opened. An export larger than 500 MB is skipped with a note: the Owner should choose only "Maps (your places)" for this schedule (a Timeline or Photos export goes in a separate, manual Takeout).
+- **When.** Once a day, and on **Check now**. Each export is imported once; a review already imported is updated, never duplicated (FR-64). The first check after connecting takes only the newest export (each export holds all the reviews). An export that failed for a passing reason (Google busy, the connection broke) is tried again at the next check; one that can never be read is noted and left.
+- **Status.** The tab shows when Drive was last checked, how many new reviews the pickup has brought in all, the last export found and how many reviews it held, and any problem of the last check in words (for example "Sign in to Google again", "takeout-….zip is larger than 500 MB").
+- **Disconnecting** stops the checks and forgets which exports were seen; the imported reviews stay (they are deleted with their import). The Drive permission itself is removed at the Google Account's "Third-party connections" page, which the tab links to.
+- **Renewal.** Google ends a Takeout schedule after a year (6 exports); the tab reminds the Owner when no new export has arrived for 70 days.
+- **Privacy.** The zip is downloaded to the backend's temporary disk only for as long as the reviews file is read, then deleted. Nothing leaves Echo; only Google's Drive API is called, with the Owner's own permission.
 
 ## 5. Privacy Model
 
@@ -750,7 +861,7 @@ Privacy is a product pillar, not a compliance appendix. The requirements in §4.
 | **1: Connect** | Contacts ↔ Atlas | FR-31 to FR-42, FR-47, FR-48, FR-49, FR-52; NFR-09, NFR-12 to NFR-14 for Connect data; NFR-10 test (b); NFR-11 token budget; NFR-15 for the Unified Timeline, Privacy Center and Person views; NFR-16 token scopes; NFR-18 worker fairness | UJ-3 and UJ-4 work on the first Owner's real data; SM-1 to SM-3 are measured; NFR-10 (b), the NFR-11 budget and the NFR-18 fairness test pass; any Owner can export and erase their own data |
 | **2: People in Photos** | Opt-in faces | FR-43 to FR-45; NFR-14 and NFR-15 for the face views | UJ-5 works; revocation is proven to delete all face data; unnamed clusters are proven discarded after review; no face data is reachable across Owners |
 | **3+: More of me** | Breadth | FR-54 LinkedIn first (Q-7), then FR-04, FR-11, FR-16, FR-21, FR-26, FR-30 and the other §4.11 sources | Chosen per phase; LinkedIn connections link to Contacts |
-| **R1: Routes MVP** (an Atlas track parallel to Phase 1) | Car trips on the roads | FR-55 (all types assessed); FR-56 and FR-57 for drive and bus or taxi transit, Israel map data only, without the MCP and Assistant tools or re-matching on a new map data version; FR-58 without accepting a Matched Route below the threshold; NFR-20, NFR-21 | It needs the `EchoService` scheme and CI image builds of Phase 0 (architecture AD-3, AD-22); if Phase 0 has not delivered them when R1 starts, R1 builds them itself (decided, architecture §12). Exit: the first Owner's drives in Israel are drawn on roads; the spike on the Pi confirms the AD-36 budget; NFR-20 and NFR-21 pass; the two-Owner isolation gate (NFR-07) and the round-robin fairness test (NFR-18) cover the route service |
+| **R1: Routes MVP** (an Atlas track parallel to Phase 1) | Car trips on the roads | FR-55 (all types assessed); FR-61 (roads travelled and the road filter); FR-62 and FR-63 (rebuild from similar drives, mark the way); FR-56 and FR-57 for drive and bus or taxi transit, Israel map data only, without the MCP and Assistant tools or re-matching on a new map data version; FR-58 without accepting a Matched Route below the threshold; NFR-20, NFR-21 | It needs the `EchoService` scheme and CI image builds of Phase 0 (architecture AD-3, AD-22); if Phase 0 has not delivered them when R1 starts, R1 builds them itself (decided, architecture §12). Exit: the first Owner's drives in Israel are drawn on roads; the spike on the Pi confirms the AD-36 budget; NFR-20 and NFR-21 pass; the two-Owner isolation gate (NFR-07) and the round-robin fairness test (NFR-18) cover the route service |
 | **R2: Routes on foot and bike** | Every matchable type; insights; the rest of R1's features | FR-56 for ride, walk, run and hike; FR-57's MCP and Assistant tools and re-matching on a new map data version; FR-58's "Use this route" below the threshold; photos placed on the Matched Route; FR-59 | Matched foot and bike routes are rejected by the Owner in ≤ 10% of the cases they review (the SM-3 measure applied to routes) |
 | **R3: Routes abroad** | Coverage | FR-60 | The regions added on demand (Q-13) are matched; the rest are flagged "outside map coverage" |
 | **Gate: beyond the invited circle** | Opening up | NFR-19 Google verification and CASA | Not scheduled. Required before anyone outside the invited circle is admitted, or before the user count nears 100 |

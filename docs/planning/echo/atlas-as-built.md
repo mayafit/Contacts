@@ -161,8 +161,25 @@ Built in PRs #56–#110 (from a91a5c7 "Personal site with Atlas" to 1e05abc phot
 - Rendering: canvas (preferCanvas); track photo dots are on the canvas; the density view uses WebGL.
 - Indexes start with OwnerId, plus partial indexes for photos.
 
+## 5B. Place reviews (Epic 13)
+Architecture §5B, AD-39; plan `docs/planning/epic-13-place-reviews.md`.
+- **Import.** `parseGoogleReviews` (`importers/google.ts`) reads Takeout's `Maps (your places)/Reviews.json` (by name, or by a `FeatureCollection` carrying review fields) into `ParsedData.reviews`; the import dialog sends them in batches with the source `google-maps`, and `IngestRequest.Reviews` stores them in `atlas.place_reviews`, keyed by the cid of the review's Google Maps link. Review photos are not in Google's export.
+- **Linking.** `PlaceReviews.Link` (`AtlasPlaceReviews.cs`) links each review to one place (a shared word within 75 m, the only place within 30 m, or a clear nearest within 10 m); `AtlasService.LinkReviewsAsync` runs after every batch with reviews or places, and a review linked by position names an unnamed place (`IdentifiedFrom = review`).
+- **Shown.** `GET /api/atlas/places/{id}` carries `review` and `reviewState`; `PlaceReview.tsx` shows the review or the reminder in the place panel, and `ReviewsSection.tsx` the Insights **Reviews** section from `GET /api/atlas/reviews`.
+- **From Drive (AD-40).** The `takeout` opt-in adds `drive.readonly` to the Google sign-in; `/api/atlas/connections/google-drive` keeps an `atlas.connections` row (`google-drive-takeout`); `TakeoutDriveWorker` checks connected Drives daily for new `takeout-*.zip` exports (500 MB at most), reads their reviews file on the server (`GoogleReviewsParser`) and imports it like the browser does. The import dialog's **Google Drive** tab explains the Takeout schedule.
+- **Reminders.** `PlaceReviews.Assess` decides at read time; `atlas.review_reminders` keeps Later, Not this one, Not this kind and I reviewed it (`POST /api/atlas/reviews/reminders`).
+
 ## 6A. Routes (route quality and road matching, Epic 12 R1)
-Architecture §5A, AD-32 to AD-36; plan `docs/planning/epic-12-route-quality.md`.
+Architecture §5A, AD-32 to AD-37; plan `docs/planning/epic-12-route-quality.md`.
+- **Roads travelled (AD-37, rule `routes.v4`).**
+  - **Stored.** Every matched line stores the roads it follows: `matched_routes.Roads` holds `[{name, ref, m, fromM}]` in travel order, and `RoadNames` holds the names alone for the filter. The names come from Valhalla's `edge.names` and from the gap fills' maneuver `street_names`. Only observed and inferred metres count, and a road needs 100 m.
+  - **Matched.** Every matchable drive is matched, not only the sparse ones.
+  - **Shown.** The panel's "Via" line (`RouteRoads.tsx`) lists the roads.
+  - **Searched.** `AtlasQuery.Road` filters search, density, the histogram and Insights through `IRouteGeometryReader.OnRoadAsync`. It is set from the panel, by "road 431" or "כביש 431" in the search box, or by the Assistant and MCP `road` argument.
+- **Rebuild on demand (AD-38, stories 12.17 to 12.19).**
+  - **Similar drives.** "Rebuild: from similar drives" in the panel (`RouteRebuild.tsx`) queues a `rebuild` job. `RebuildRunner.PoolAsync` finds the Owner's confident `auto` drives whose `matched_routes.Cells` (the 0.01° corridor cells within 200 m of the line, `RouteCells`) cover at least 60% of the drive's non-stray points, or, for rows without cells yet, both ends within 500 m; `SimilarRoutes` scores each line both ways round (fit in travel order, pace, time and kind of day, detour, ends), groups the best 30 into ways, and `Rebuilder` tries the best of up to three ways at 200 m and 600 m. The suggestion waits on `jobs.Result` until the Owner uses or discards it.
+  - **Mark the way.** The map's marking mode sends the Owner's points; `Waypoints` places them on the recorded legs. A used route stores them in `route_waypoints`, and every later match goes through them.
+  - **Cells** are written with every line and filled at the worker's start for older rows (no re-match).
 - **Service.** `EchoRoutes.Worker` (with Valhalla in the same pod, `helm/contacts/charts/routes`) pulls each Owner's change feed through `/internal/routes/*`, assesses every record (rule `routes.v1`, stage A: grade, flags, matchability) and matches drives and bus or taxi transit in Israel (stage B). It writes only the `routes` schema: `route_quality`, `matched_routes` (polyline at precision 5, pieces `[{fromM, toM, kind}]` in metres, status, confidence, the record's `UpdatedAt`, point count and fused type at match time), `route_decisions`, `settings`, `jobs`, `owner_cursors`.
 - **Read-time choice (AD-34 rule 3).** Atlas reads the geometry only through `IRouteGeometryReader` (`Core`), implemented by `Infrastructure/Routes/RouteGeometryReader.cs`:
   - one set-based query per read, by record ids: `matched_routes` by `(OwnerId, ActivityId)`, left-joined to `route_decisions` by `(OwnerId, SourceKey)`, the Owner's settings as a scalar subquery. No points are read and nothing is hashed; existing unique indexes serve it, so no index was added;

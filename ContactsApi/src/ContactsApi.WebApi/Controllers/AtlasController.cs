@@ -255,6 +255,27 @@ public class AtlasController : ControllerBase
     public Task<IActionResult> DisconnectOneDrive() =>
         RunWith<OneDrivePhotoService, object>(async (svc, owner) => new { removed = await svc.DisconnectAsync(owner, HttpContext.RequestAborted) });
 
+    /// <summary>Reviews from a scheduled Takeout on Drive (AD-40): whether Drive is allowed, the connection, the last export</summary>
+    [HttpGet("connections/google-drive")]
+    public Task<IActionResult> TakeoutDrive() =>
+        RunWith<TakeoutDriveService, TakeoutDriveStatus>((svc, owner) => svc.StatusAsync(owner, HttpContext.RequestAborted));
+
+    /// <summary>Connects the Owner's Drive (after the sign-in allowed it) and checks it</summary>
+    [HttpPost("connections/google-drive")]
+    public Task<IActionResult> ConnectTakeoutDrive() =>
+        RunWith<TakeoutDriveService, TakeoutDriveStatus>((svc, owner) =>
+            svc.ConnectAsync(owner, HttpContext.Session.GetString("UserEmail"), HttpContext.RequestAborted));
+
+    /// <summary>Checks the Owner's Drive for new Takeout exports now</summary>
+    [HttpPost("connections/google-drive/sync")]
+    public Task<IActionResult> SyncTakeoutDrive() =>
+        RunWith<TakeoutDriveService, TakeoutDriveStatus>((svc, owner) => svc.SyncAsync(owner, HttpContext.RequestAborted));
+
+    /// <summary>Stops checking the Owner's Drive (the imported reviews stay)</summary>
+    [HttpDelete("connections/google-drive")]
+    public Task<IActionResult> DisconnectTakeoutDrive() =>
+        RunWith<TakeoutDriveService, object>(async (svc, owner) => new { removed = await svc.DisconnectAsync(owner, HttpContext.RequestAborted) });
+
     /// <summary>Photos taken during an activity</summary>
     [HttpGet("activities/{id:guid}/photos")]
     public Task<IActionResult> ActivityPhotos(Guid id) =>
@@ -392,6 +413,16 @@ public class AtlasController : ControllerBase
     [HttpDelete("visits/{id:guid}")]
     public Task<IActionResult> DeleteVisit(Guid id) =>
         Run(async (svc, owner) => { await svc.DeleteVisitAsync(owner, id, HttpContext.RequestAborted); return new { deleted = id }; });
+
+    /// <summary>The Owner's Google Maps reviews and the places to review (AD-39)</summary>
+    [HttpGet("reviews")]
+    public Task<IActionResult> Reviews() =>
+        Run((svc, owner) => svc.ReviewsOverviewAsync(owner, HttpContext.RequestAborted));
+
+    /// <summary>Sets a place's review reminder aside, or brings it back (AD-39 rule 6)</summary>
+    [HttpPost("reviews/reminders")]
+    public Task<IActionResult> ReviewReminder([FromBody] ReviewReminderRequest request) =>
+        Run((svc, owner) => svc.SetReviewReminderAsync(owner, request, HttpContext.RequestAborted));
 
     /// <summary>Deletes an import and what it brought in</summary>
     [HttpDelete("imports/{id:guid}")]

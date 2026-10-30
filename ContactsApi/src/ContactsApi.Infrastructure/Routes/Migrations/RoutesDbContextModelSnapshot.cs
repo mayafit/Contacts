@@ -35,6 +35,12 @@ namespace ContactsApi.Infrastructure.Routes.Migrations
                     b.Property<int>("Attempts")
                         .HasColumnType("integer");
 
+                    b.Property<string>("Basis")
+                        .HasColumnType("jsonb");
+
+                    b.PrimitiveCollection<long[]>("Cells")
+                        .HasColumnType("bigint[]");
+
                     b.Property<DateTime>("ComputedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -47,6 +53,12 @@ namespace ContactsApi.Infrastructure.Routes.Migrations
 
                     b.Property<string>("DensityPolyline")
                         .HasColumnType("text");
+
+                    b.Property<double?>("EndLat")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("EndLon")
+                        .HasColumnType("double precision");
 
                     b.Property<string>("Engine")
                         .IsRequired()
@@ -77,6 +89,13 @@ namespace ContactsApi.Infrastructure.Routes.Migrations
                     b.Property<double?>("MatchedDistanceM")
                         .HasColumnType("double precision");
 
+                    b.Property<string>("Method")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasDefaultValue("auto");
+
                     b.Property<string>("MetricsAfter")
                         .HasColumnType("jsonb");
 
@@ -99,6 +118,12 @@ namespace ContactsApi.Infrastructure.Routes.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
 
+                    b.PrimitiveCollection<string[]>("RoadNames")
+                        .HasColumnType("text[]");
+
+                    b.Property<string>("Roads")
+                        .HasColumnType("jsonb");
+
                     b.Property<string>("RuleVersion")
                         .IsRequired()
                         .HasMaxLength(16)
@@ -113,6 +138,15 @@ namespace ContactsApi.Infrastructure.Routes.Migrations
                         .HasColumnType("integer");
 
                     b.Property<DateTime>("SourceUpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<double?>("StartLat")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("StartLon")
+                        .HasColumnType("double precision");
+
+                    b.Property<DateTime?>("StartedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Status")
@@ -241,6 +275,9 @@ namespace ContactsApi.Infrastructure.Routes.Migrations
                         .HasMaxLength(16)
                         .HasColumnType("character varying(16)");
 
+                    b.Property<string>("Result")
+                        .HasColumnType("jsonb");
+
                     b.Property<string>("Scope")
                         .IsRequired()
                         .HasColumnType("jsonb");
@@ -367,6 +404,37 @@ namespace ContactsApi.Infrastructure.Routes.Migrations
                     b.HasKey("OwnerId");
 
                     b.ToTable("settings", "routes");
+                });
+
+            modelBuilder.Entity("ContactsApi.Infrastructure.Routes.RouteWaypoints", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("OwnerId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Points")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("SourceKey")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OwnerId", "SourceKey")
+                        .IsUnique();
+
+                    b.ToTable("route_waypoints", "routes");
                 });
 #pragma warning restore 612, 618
         }

@@ -38,6 +38,17 @@ public record AssessRequest(string? OwnerId, JobScope? Scope, bool? Interactive,
 /// <summary>New fused data for an Owner</summary>
 public record WakeRequest(string? OwnerId);
 
+/// <summary>Rebuild one record on demand (AD-38)</summary>
+/// <param name="Method">similar or waypoints</param>
+/// <param name="Waypoints">waypoints only: [[lat, lon]…] in the order marked</param>
+public record RebuildRequest(string? OwnerId, Guid? ActivityId, string? Method, List<double[]>? Waypoints);
+
+/// <summary>Use a rebuild's suggestion</summary>
+public record ApplyRequest(string? OwnerId, Guid? JobId, Guid? ActivityId);
+
+/// <summary>Clear the points the Owner marked for a record</summary>
+public record ClearMarksRequest(string? OwnerId, Guid? ActivityId);
+
 /// <summary>The /internal/v1 endpoints and their token check</summary>
 public static class InternalApi
 {
@@ -82,6 +93,73 @@ public static class InternalApi
         // Assessment and matching; force skips the "needs improvement" gate, never a reject
         v1.MapPost("/improve", (AssessRequest request, RoutesDbContext db, WakeSignal wake, CancellationToken ct) =>
             QueueAsync(RouteJobKinds.Improve, request, db, wake, ct));
+        v1.MapPost("/rebuild", async (RebuildRequest request, RoutesDbContext db, WakeSignal wake, CancellationToken ct) =>
+        {
+            if (!ValidOwner(request.OwnerId) || request.ActivityId is not { } id || id == Guid.Empty)
+            {
+                return ApiEnvelope.Fail(StatusCodes.Status400BadRequest, "INVALID_INPUT", "ownerId and activityId are required.");
+            }
+
+            var method = request.Method?.Trim().ToLowerInvariant();
+            if (method is not (RebuildMethods.Similar or RebuildMethods.Waypoints))
+            {
+                return ApiEnvelope.Fail(StatusCodes.Status400BadRequest, "INVALID_INPUT", "method is similar or waypoints.");
+            }
+
+            var marks = request.Waypoints ?? new List<double[]>();
+            if (method == RebuildMethods.Waypoints && (marks.Count == 0 || marks.Count > Waypoints.Max
+                    || marks.Any(p => p.Length != 2 || !double.IsFinite(p[0]) || !double.IsFinite(p[1]) || Math.Abs(p[0]) > 90 || Math.Abs(p[1]) > 180)))
+            {
+                return ApiEnvelope.Fail(StatusCodes.Status400BadRequest, "INVALID_INPUT", $"Mark 1 to {Waypoints.Max} points as [lat, lon].");
+            }
+
+            var job = new RouteJob
+            {
+                OwnerId = request.OwnerId!,
+                Kind = RouteJobKinds.Rebuild,
+                Priority = RouteJobPriorities.Interactive,
+                Scope = JsonSerializer.Serialize(new JobScope(new List<Guid> { id }, null, Method: method,
+                    Waypoints: method == RebuildMethods.Waypoints ? marks : null), new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+                Total = 1
+            };
+            db.Jobs.Add(job);
+            await db.SaveChangesAsync(ct);
+            wake.Interactive();
+            return ApiEnvelope.Ok(new { jobId = job.Id, job.Priority }, StatusCodes.Status202Accepted);
+        });
+        v1.MapPost("/apply", async (ApplyRequest request, RebuildRunner rebuild, CancellationToken ct) =>
+        {
+            if (!ValidOwner(request.OwnerId) || request.JobId is not { } jobId || request.ActivityId is not { } activityId)
+            {
+                return ApiEnvelope.Fail(StatusCodes.Status400BadRequest, "INVALID_INPUT", "ownerId, jobId and activityId are required.");
+            }
+
+            var (suggestion, conflict) = await rebuild.ApplyAsync(request.OwnerId!, jobId, activityId, ct);
+            return conflict switch
+            {
+                null => ApiEnvelope.Ok(new
+                {
+                    suggestion!.ActivityId, suggestion.SourceKey, suggestion.Method, suggestion.Status, suggestion.Confidence
+                }),
+                "not_found" => ApiEnvelope.Fail(StatusCodes.Status404NotFound, "NOT_FOUND", "Rebuild not found."),
+                _ => ApiEnvelope.Fail(StatusCodes.Status409Conflict, "CONFLICT", conflict)
+            };
+        });
+        v1.MapPost("/marks/clear", async (ClearMarksRequest request, RebuildRunner rebuild, WakeSignal wake, CancellationToken ct) =>
+        {
+            if (!ValidOwner(request.OwnerId) || request.ActivityId is not { } activityId)
+            {
+                return ApiEnvelope.Fail(StatusCodes.Status400BadRequest, "INVALID_INPUT", "ownerId and activityId are required.");
+            }
+
+            var cleared = await rebuild.ClearMarksAsync(request.OwnerId!, activityId, ct);
+            if (cleared)
+            {
+                wake.Poke();
+            }
+
+            return ApiEnvelope.Ok(new { cleared });
+        });
         v1.MapPost("/wake", (WakeRequest request, WakeSignal wake) =>
         {
             if (!ValidOwner(request.OwnerId))
@@ -106,7 +184,9 @@ public static class InternalApi
                 : ApiEnvelope.Ok(new
                 {
                     job.Id, job.Kind, job.Priority, job.State, job.Total, job.Done,
-                    Counts = JsonDocument.Parse(job.Counts).RootElement, job.LastError, job.CreatedAt, job.StartedAt, job.FinishedAt
+                    Counts = JsonDocument.Parse(job.Counts).RootElement, job.LastError, job.CreatedAt, job.StartedAt, job.FinishedAt,
+                    // A rebuild's suggestion (AD-38)
+                    Result = job.Result == null ? (JsonElement?)null : JsonDocument.Parse(job.Result).RootElement
                 });
         });
         v1.MapGet("/status", async (string? ownerId, RoutesDbContext db, MatchRunner matcher, GraphInfoSource graph, RegionCoverage coverage,

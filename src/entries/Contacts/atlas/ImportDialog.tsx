@@ -32,6 +32,7 @@ import { SamsungCollector, samsungKind } from './importers/samsung';
 import { tokens } from '../theme/contactsTheme';
 import { thinTrack, trackLength } from './geo';
 import SportsTrackerTab from './SportsTrackerTab';
+import GoogleDriveTab from './GoogleDriveTab';
 import OneDriveTab from './OneDriveTab';
 
 /** Props for ImportDialog */
@@ -42,10 +43,14 @@ export interface ImportDialogProps {
   onChanged: () => void;
   /** The tab shown when it opens (default: files) */
   initialTab?: ImportTab;
+  /** Back from the Google sign-in that allowed Drive (AD-40): the Google Drive tab connects */
+  driveAllowed?: boolean;
+  /** The Google Drive tab connected after the sign-in */
+  onDriveConnected?: () => void;
 }
 
 /** The dialog's tabs */
-export type ImportTab = 'files' | 'sports-tracker' | 'onedrive';
+export type ImportTab = 'files' | 'sports-tracker' | 'onedrive' | 'google-drive';
 
 /** Items per request: keeps each request well under Cloudflare's 100 MB */
 const MAX_POINTS = 25_000;
@@ -71,6 +76,7 @@ const send = async (
     places: [],
     visits: [],
     health: [],
+    reviews: [],
   };
   let points = 0;
   let items = 0;
@@ -79,11 +85,19 @@ const send = async (
       current.activities.length ||
       current.places.length ||
       current.visits.length ||
-      current.health.length
+      current.health.length ||
+      current.reviews?.length
     ) {
       batches.push(current);
     }
-    current = { source: data.source, activities: [], places: [], visits: [], health: [] };
+    current = {
+      source: data.source,
+      activities: [],
+      places: [],
+      visits: [],
+      health: [],
+      reviews: [],
+    };
     points = 0;
     items = 0;
   };
@@ -128,6 +142,13 @@ const send = async (
     current.health.push(h);
     items += 1;
   });
+  (data.reviews ?? []).forEach((r) => {
+    if (items >= MAX_ITEMS) {
+      flush();
+    }
+    current.reviews!.push(r);
+    items += 1;
+  });
   flush();
 
   for (const b of batches) {
@@ -137,7 +158,13 @@ const send = async (
       fileName,
     });
     importIds.set(b.source, r.importId);
-    onSent(b.activities.length + b.places.length + b.visits.length + b.health.length);
+    onSent(
+      b.activities.length +
+        b.places.length +
+        b.visits.length +
+        b.health.length +
+        (b.reviews?.length ?? 0),
+    );
   }
 };
 
@@ -151,6 +178,8 @@ const ImportDialog: React.FC<ImportDialogProps> = ({
   onClose,
   onChanged,
   initialTab = 'files',
+  driveAllowed = false,
+  onDriveConnected,
 }) => {
   const [tab, setTab] = useState<ImportTab>(initialTab);
   useEffect(() => {
@@ -210,13 +239,16 @@ const ImportDialog: React.FC<ImportDialogProps> = ({
         if (!parsed) {
           return;
         }
-        const n = parsed.activities.length + parsed.visits.length + parsed.health.length;
+        const reviews = parsed.reviews?.length ?? 0;
+        const n = parsed.activities.length + parsed.visits.length + parsed.health.length + reviews;
         if (!n) {
           return;
         }
         found += 1;
         note(
-          `${f.path}: ${parsed.activities.length} activities, ${parsed.visits.length} visits, ${parsed.health.length} health values`,
+          reviews
+            ? `${f.path}: ${reviews} reviews`
+            : `${f.path}: ${parsed.activities.length} activities, ${parsed.visits.length} visits, ${parsed.health.length} health values`,
         );
         await send(parsed, importIds, label, (k) => setSent((s) => s + k));
       } catch (e) {
@@ -272,6 +304,7 @@ const ImportDialog: React.FC<ImportDialogProps> = ({
         <Tab value="files" label="Files" disabled={busy} />
         <Tab value="sports-tracker" label="Sports Tracker" disabled={busy} />
         <Tab value="onedrive" label="OneDrive photos" disabled={busy} />
+        <Tab value="google-drive" label="Google Drive" disabled={busy} />
       </Tabs>
       <DialogContent sx={{ pt: '16px !important' }}>
         <Box sx={{ display: tab === 'sports-tracker' ? 'block' : 'none' }}>
@@ -280,6 +313,14 @@ const ImportDialog: React.FC<ImportDialogProps> = ({
         <Box sx={{ display: tab === 'onedrive' ? 'block' : 'none' }}>
           <OneDriveTab open={open} onChanged={onChanged} />
         </Box>
+        {tab === 'google-drive' && (
+          <GoogleDriveTab
+            open={open}
+            onChanged={onChanged}
+            justAllowed={driveAllowed}
+            onConnected={onDriveConnected}
+          />
+        )}
         {tab === 'files' && (
           <>
             <Typography variant="body2" sx={{ color: tokens.textSecondary, mb: 1 }}>

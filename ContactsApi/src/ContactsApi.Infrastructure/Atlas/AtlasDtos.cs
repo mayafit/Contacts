@@ -38,10 +38,44 @@ public class IngestRequest
     public List<PlaceInput> Places { get; set; } = new();
     public List<VisitInput> Visits { get; set; } = new();
     public List<HealthInput> Health { get; set; } = new();
+    /// <summary>The Owner's Google Maps reviews (Takeout Reviews.json, AD-39)</summary>
+    public List<ReviewInput> Reviews { get; set; } = new();
 }
 
 /// <summary>What a batch added or updated</summary>
-public record IngestResult(Guid ImportId, int Activities, int Places, int Visits, int HealthSamples);
+public record IngestResult(Guid ImportId, int Activities, int Places, int Visits, int HealthSamples, int Reviews = 0);
+
+/// <summary>One of Google's questions about a place, and the Owner's answer</summary>
+public record ReviewAnswer(string Question, string Answer);
+
+/// <summary>A review as parsed from Reviews.json (published values, else the draft's)</summary>
+public record ReviewInput(
+    string? ExternalId, string Name, string? Address, string? CountryCode, double Lat, double Lon, int? Rating, string? Text,
+    bool Published, DateTime? ReviewedAt, string? MapsUrl, List<ReviewAnswer>? Answers);
+
+/// <summary>A review as shown</summary>
+/// <param name="PlaceId">The Atlas place it is about, when linked</param>
+/// <param name="Lat">Where to show it: the linked place's position, else the review's</param>
+public record PlaceReviewView(
+    Guid Id, string Name, string? Address, int? Rating, string? Text, bool Published, DateTime? ReviewedAt, string? MapsUrl,
+    List<ReviewAnswer> Answers, Guid? PlaceId, string? LinkedBy, double Lat, double Lon);
+
+/// <summary>
+/// Where a place stands on reviews (AD-39 rule 4): reviewed, to_review, later (Until),
+/// never (Category: set aside by its category), done, not_reviewable (Reason: no_identity,
+/// category, no_recent_visit, routine)
+/// </summary>
+public record ReviewState(string State, DateTime? Until = null, bool Category = false, string? Reason = null, string? WriteUrl = null);
+
+/// <summary>A place to review</summary>
+public record ReviewDue(Guid PlaceId, string Name, string? Category, DateTime LastVisit, int Visits, string WriteUrl, double Lat, double Lon);
+
+/// <summary>The Owner's reviews and the places to review (AD-39 rule 7)</summary>
+public record ReviewsOverview(int Written, double? Average, int Linked, int Unlinked, List<PlaceReviewView> Recent, List<ReviewDue> Due,
+    int DueTotal);
+
+/// <summary>A choice about a review reminder: later, never, done, never_kind, clear (Kind: also the category's)</summary>
+public record ReviewReminderRequest(Guid PlaceId, string Action, bool Kind = false);
 
 /// <summary>Search filters; every one is optional and they combine</summary>
 public class AtlasQuery
@@ -61,6 +95,24 @@ public class AtlasQuery
     public int Limit { get; set; } = 300;
     /// <summary>Only fused activities whose sources disagree</summary>
     public bool ConflictsOnly { get; set; }
+
+    /// <summary>
+    /// Only activities whose matched route follows this road (AD-37): a route number
+    /// ("431", "road 431") or part of a street name. Visits are left out, as with ConflictsOnly.
+    /// </summary>
+    public string? Road { get; set; }
+
+    /// <summary>The road filter resolved to activity ids (set by the service; never read from a request)</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public IReadOnlyCollection<Guid>? RoadActivityIds { get; set; }
+
+    /// <summary>The query filters by road</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool HasRoad => !string.IsNullOrWhiteSpace(Road);
+
+    /// <summary>Only activities: the conflicts or road filter is on (they say nothing about visits)</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool ActivitiesOnly => ConflictsOnly || HasRoad;
 }
 
 /// <summary>An activity without its points</summary>
@@ -147,8 +199,9 @@ public record ActivityDetail(
 /// <param name="Description">The primary record's quality, stored match and decision; null before the service assessed it</param>
 /// <param name="ObservedShare">Share of the matched line along recorded points (0-1); null when not drawn</param>
 /// <param name="InferredShare">Share chosen by routing between sparse points (0-1); null when not drawn</param>
+/// <param name="Roads">The roads the drawn matched line follows, in travel order (AD-37); null when not drawn</param>
 public record ActivityRouteInfo(List<Guid> RecordIds, ContactsApi.Core.Interfaces.RouteDescription? Description,
-    double? ObservedShare, double? InferredShare);
+    double? ObservedShare, double? InferredShare, List<ContactsApi.Core.Interfaces.RouteRoad>? Roads = null);
 
 /// <summary>How a source record matches the fused activity's primary record</summary>
 /// <param name="StartDeltaS">Its start minus the primary's (seconds)</param>
@@ -219,7 +272,8 @@ public record PlaceDetail(
     Guid Id, string Name, string? Address, string? Category, double Lat, double Lon, string? Notes, string Source,
     string? LinkedRef, string? Website, string? Phone, string? OpeningHours, Dictionary<string, string> Details,
     int Visits, DateTime? FirstVisit, DateTime? LastVisit, double HoursSpent,
-    string IdentifyState = "pending", List<LocationCandidate>? Candidates = null, string? IdentifiedFrom = null);
+    string IdentifyState = "pending", List<LocationCandidate>? Candidates = null, string? IdentifiedFrom = null,
+    PlaceReviewView? Review = null, ReviewState? ReviewState = null);
 
 /// <summary>What a visit's place is: a location found by a lookup, or typed by the user</summary>
 public record PlaceAssociation(

@@ -63,6 +63,30 @@ export interface HealthInput {
   unit?: string | null;
 }
 
+/** One of Google's questions about a place, and the Owner's answer */
+export interface ReviewAnswer {
+  question: string;
+  answer: string;
+}
+
+/** A Google Maps review in an import batch (AD-39): the published values, else the draft's */
+export interface ReviewInput {
+  name: string;
+  address?: string | null;
+  countryCode?: string | null;
+  lat: number;
+  lon: number;
+  /** 1 to 5 */
+  rating?: number | null;
+  text?: string | null;
+  /** False: only a draft was saved */
+  published: boolean;
+  /** When it was written or last changed (ISO); null when the export gives no date */
+  reviewedAt: string | null;
+  mapsUrl?: string | null;
+  answers?: ReviewAnswer[];
+}
+
 /** What one parsed file contributes */
 export interface ParsedData {
   source: string;
@@ -70,6 +94,8 @@ export interface ParsedData {
   places: PlaceInput[];
   visits: VisitInput[];
   health: HealthInput[];
+  /** Google Maps reviews (Takeout Reviews.json) */
+  reviews?: ReviewInput[];
 }
 
 /** An activity as listed (no points) */
@@ -137,6 +163,60 @@ export interface RouteDescription {
   current: boolean;
   decision: 'reject' | 'accept' | null;
   reason: string | null;
+  /** How the stored match was made (AD-38); missing from older servers */
+  method?: 'auto' | 'similar' | 'waypoints' | null;
+  /** The points the Owner marked for this route, [lat, lon] in order; null without them */
+  waypoints?: [number, number][] | null;
+}
+
+/** The similar drive a rebuild borrowed from (AD-38) */
+export interface RebuildBasis {
+  activityId: string;
+  start: string;
+  reversed: boolean;
+  /** Share of this drive's own points along the similar one (0-1) */
+  fit: number;
+  /** Drives near this drive's points that were scored */
+  candidates: number;
+  /** Of those, the ones this drive's points follow */
+  agreeing: number;
+  /** Of the best of those, the ones that take the basis's way */
+  sameWay?: number;
+  examples: { activityId: string; start: string; reversed: boolean }[];
+}
+
+/** A rebuild's result: a suggestion to use or discard (AD-38) */
+export interface RebuildSuggestion {
+  method: 'similar' | 'waypoints';
+  outcome: 'suggested' | 'no_similar' | 'no_match' | 'invalid' | 'not_matchable' | 'gone';
+  /** Why there is no suggestion */
+  message?: string | null;
+  activityId: string;
+  status?: 'matched' | 'low_confidence' | 'failed' | null;
+  confidence?: number | null;
+  /** The stored match's confidence before (null without one) */
+  previousConfidence?: number | null;
+  reason?: string | null;
+  polyline?: string | null;
+  pieces?: RoutePiece[] | null;
+  roads?: RouteRoad[] | null;
+  lengthM?: number | null;
+  basis?: RebuildBasis | null;
+  waypoints?: [number, number][] | null;
+  /** Synthetic points added */
+  added?: number;
+}
+
+/** A road a matched route follows (AD-37) */
+export interface RouteRoad {
+  /** A route number ("431") or a street name, as the map data spells it */
+  name: string;
+  /** A route number */
+  ref: boolean;
+  /** Metres of the route on it */
+  m: number;
+  /** Where the route first takes it, in metres along the route */
+  fromM: number;
 }
 
 /** Route quality in the detail view (missing when route quality is off) */
@@ -147,6 +227,8 @@ export interface ActivityRouteInfo {
   description: RouteDescription | null;
   observedShare: number | null;
   inferredShare: number | null;
+  /** The roads the drawn matched route follows, in travel order; missing when it is not drawn */
+  roads?: RouteRoad[] | null;
 }
 
 /** A route job's progress (GET /api/routes/jobs/{id}) */
@@ -158,6 +240,8 @@ export interface RouteJob {
   total: number;
   done: number;
   lastError?: string | null;
+  /** A rebuild's suggestion (AD-38) */
+  result?: RebuildSuggestion | null;
 }
 
 /** What the route service is doing for the Owner (GET /api/routes/status) */
@@ -226,7 +310,7 @@ export interface LinkedPlace {
 
 /** A connected account that Atlas syncs from */
 export interface SourceConnection {
-  provider: 'sports-tracker' | 'onedrive';
+  provider: 'sports-tracker' | 'onedrive' | 'google-drive-takeout';
   /** Username or email as entered */
   account: string | null;
   status: 'idle' | 'syncing' | 'error' | 'expired';
@@ -358,9 +442,96 @@ export interface PlaceDetail {
   identifyState: IdentifyState;
   /** The possible identities when ambiguous (at most 6, nearest first); else empty */
   candidates: LocationCandidate[];
-  /** 'lookup' or 'nearby' (copied from a nearby place the user identified); null otherwise */
+  /** 'lookup', 'nearby' (copied from a nearby place the user identified) or 'review' (named by the Owner's review); null otherwise */
   identifiedFrom: string | null;
+  /** The Owner's Google Maps review of the place (AD-39) */
+  review?: PlaceReview | null;
+  /** Where the place stands on reviews */
+  reviewState?: ReviewState | null;
 }
+
+/** The Owner's Google Maps review of a place (AD-39) */
+export interface PlaceReview {
+  id: string;
+  /** The place as Google names it */
+  name: string;
+  address: string | null;
+  rating: number | null;
+  text: string | null;
+  /** False: a draft never published */
+  published: boolean;
+  reviewedAt: string | null;
+  mapsUrl: string | null;
+  answers: ReviewAnswer[];
+  /** The Atlas place it is about, when linked */
+  placeId: string | null;
+  linkedBy: string | null;
+  /** Where to show it: the linked place's position, else the review's */
+  lat: number;
+  lon: number;
+}
+
+/**
+ * Where a place stands on reviews: reviewed; to_review; set aside (later until a date,
+ * never — for the place, or its category — or done); not_reviewable and why
+ */
+export interface ReviewState {
+  state: 'reviewed' | 'to_review' | 'later' | 'never' | 'done' | 'not_reviewable';
+  until?: string | null;
+  /** Never: set aside by its category */
+  category?: boolean;
+  /** not_reviewable: no_identity, category, no_recent_visit, routine */
+  reason?: string | null;
+  /** Opens the place on Google Maps, where the review is written */
+  writeUrl?: string | null;
+}
+
+/** A place to review */
+export interface ReviewDue {
+  placeId: string;
+  name: string;
+  category: string | null;
+  lastVisit: string;
+  visits: number;
+  writeUrl: string;
+  lat: number;
+  lon: number;
+}
+
+/** The Owner's reviews and the places to review (all time) */
+export interface ReviewsOverview {
+  written: number;
+  average: number | null;
+  linked: number;
+  unlinked: number;
+  recent: PlaceReview[];
+  due: ReviewDue[];
+  dueTotal: number;
+}
+
+/** A Takeout export the Drive pickup handled (AD-40) */
+export interface TakeoutSeen {
+  id: string;
+  name: string;
+  modified: string;
+  /** Reviews read from it; null when none could be (note says why) */
+  reviews: number | null;
+  note: string | null;
+}
+
+/** The Google Drive connection for scheduled Takeout exports (AD-40) */
+export interface TakeoutDriveStatus {
+  /** The Google sign-in allows reading Drive */
+  granted: boolean;
+  connection: SourceConnection | null;
+  /** The newest export handled */
+  lastExport: TakeoutSeen | null;
+  /** No new export for 70 days: the Takeout schedule may have ended */
+  stale: boolean;
+}
+
+/** A choice about a review reminder */
+export type ReviewAction = 'later' | 'never' | 'done' | 'never_kind' | 'clear';
 
 /** A place near an identified one that got (or may get) the same identity */
 export interface NearbyPlace {
@@ -477,6 +648,8 @@ export interface AtlasQuery {
   limit?: number;
   /** Only fused activities whose sources disagree */
   conflictsOnly?: boolean;
+  /** Only activities whose matched route follows this road: a route number (431) or part of a street name */
+  road?: string;
 }
 
 /** One track of the density map */

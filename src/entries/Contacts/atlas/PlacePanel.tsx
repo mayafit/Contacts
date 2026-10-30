@@ -66,6 +66,7 @@ import {
   telUrl,
 } from './placeText';
 import PanelSection from './PanelSection';
+import PlaceReviewBlock from './PlaceReview';
 import PhotoStrip, { PhotosLink } from './PhotoStrip';
 import { PANEL_PHOTOS_MAX, placePhotosText } from './photos';
 import { tokens } from '../theme/contactsTheme';
@@ -974,6 +975,13 @@ const PlacePanel: React.FC<PlacePanelProps> = ({
           Identify this location
         </Button>
       </Box>
+
+      {place && (
+        <PlaceReviewBlock
+          place={place}
+          onState={(s) => setPlace((p) => (p ? { ...p, reviewState: s } : p))}
+        />
+      )}
 
       {photos && photos.length > 0 && onOpenPhoto && (
         <Box ref={photosRef} sx={{ scrollMarginTop: 8 }}>

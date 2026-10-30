@@ -104,29 +104,37 @@ public class MatchRunner
     {
         public RouteQualityRow Q { get; init; } = null!;
 
-        /// <summary>0: new, changed or a due retry; 1: an older rule's low_confidence or failed match; 2: an older rule's matched one</summary>
+        /// <summary>
+        /// 0: new, changed or a due retry; 1: an older rule's low_confidence or failed match, or a
+        /// well-recorded record never matched (matched for its roads, AD-37); 2: an older rule's matched one
+        /// </summary>
         public int Rank { get; init; }
     }
 
     /// <summary>
-    /// The Owner's records waiting for a match. A row of an older rule version waits
-    /// for a re-match (AD-34 rule 7), unless its re-match is backing off; a reject
+    /// The Owner's records waiting for a match: those that need improvement, and every
+    /// other matchable record of a matched type (AD-37). A row of an older rule version
+    /// waits for a re-match (AD-34 rule 7), unless its re-match is backing off; a reject
     /// decision always wins.
     /// </summary>
     public IQueryable<PendingRow> PendingRows(string owner)
     {
         var now = Now;
         const string rule = RouteQuality.RuleVersion;
+        // A well-recorded drive is matched too: its roads are needed for the road filter (AD-37)
+        var matchedTypes = RouteQuality.MatchedTypes;
         return from q in _db.Quality.AsNoTracking()
-            where q.OwnerId == owner && q.NeedsImprovement && q.Matchable == Matchability.Yes
+            where q.OwnerId == owner && q.Matchable == Matchability.Yes && (q.NeedsImprovement || matchedTypes.Contains(q.Type))
             from m in _db.MatchedRoutes.Where(m => m.OwnerId == owner && m.ActivityId == q.ActivityId).DefaultIfEmpty()
             where m == null || m.InputHash != q.InputHash || m.FusedType != q.Type
-                  || ((m.RuleVersion != rule || m.NextAttemptAt != null) && (m.NextAttemptAt == null || m.NextAttemptAt <= now))
+                  || (((m.RuleVersion != rule && m.Method != RebuildMethods.Similar) || m.NextAttemptAt != null)
+                      && (m.NextAttemptAt == null || m.NextAttemptAt <= now))
             where !_db.Decisions.Any(d => d.OwnerId == owner && d.SourceKey == q.SourceKey && d.Kind == RouteDecisionKinds.Reject)
             select new PendingRow
             {
                 Q = q,
-                Rank = m == null || m.InputHash != q.InputHash || m.FusedType != q.Type || m.RuleVersion == rule ? 0
+                Rank = m == null ? (q.NeedsImprovement ? 0 : 1)
+                    : m.InputHash != q.InputHash || m.FusedType != q.Type || m.RuleVersion == rule ? 0
                     : m.Status == RouteStatuses.Matched ? 2 : 1
             };
     }
@@ -191,6 +199,11 @@ public class MatchRunner
         var assessed = await _assess.AssessTracksAsync(owner, tracks, ct);
         tally.Assessed = assessed.Count;
         var keys = tracks.Select(t => t.SourceKey).Distinct().ToList();
+        // The Owner's marked points: every match of those records goes through them (AD-38 rule 7)
+        var marked = (await _db.Waypoints.AsNoTracking()
+                .Where(w => w.OwnerId == owner && keys.Contains(w.SourceKey))
+                .Select(w => new { w.SourceKey, w.Points }).ToListAsync(ct))
+            .ToDictionary(w => w.SourceKey, w => RouteMarks.Parse(w.Points));
         var ids = tracks.Select(t => t.Id).ToList();
         var rejected = (await _db.Decisions.AsNoTracking()
                 .Where(d => d.OwnerId == owner && keys.Contains(d.SourceKey) && d.Kind == RouteDecisionKinds.Reject)
@@ -232,11 +245,14 @@ public class MatchRunner
             var hash = RouteQuality.InputHash(t.Points);
             var row = existing.GetValueOrDefault(t.Id);
             var sameInput = row != null && row.InputHash == hash && row.FusedType == t.Type;
-            var current = sameInput && row!.RuleVersion == RouteQuality.RuleVersion;
+            // A used similar rebuild stays current across rule versions until its input changes (AD-38 rule 7)
+            var current = sameInput && (row!.RuleVersion == RouteQuality.RuleVersion || row.Method == RebuildMethods.Similar);
             // A re-match for a new rule: the old line is served until its replacement is written
             var stale = sameInput && !current && Serves(row!);
             var retryDue = row?.NextAttemptAt != null && row.NextAttemptAt <= Now;
-            if (!force && (!a.NeedsImprovement || (current && !retryDue)))
+            // Every matchable record is matched, not only those that need improvement: the road
+            // filter needs the roads of well-recorded drives too (AD-37)
+            if (!force && current && !retryDue)
             {
                 tally.Skipped++;
                 continue;
@@ -257,7 +273,7 @@ public class MatchRunner
 
             try
             {
-                tally.Add(await MatchOneAsync(row, current, stale, t, hash, costing, engineVersion, yield, ct));
+                tally.Add(await MatchOneAsync(row, current, stale, t, hash, costing, engineVersion, marked.GetValueOrDefault(t.SourceKey), yield, ct));
                 await _db.SaveChangesAsync(ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException and not BackendBusyException)
@@ -273,61 +289,32 @@ public class MatchRunner
     }
 
     /// <summary>Matches one record and fills its row; returns the status, or "retrying"</summary>
+    /// <param name="marks">The Owner's marked points for the record (AD-38); null without them</param>
     private async Task<string> MatchOneAsync(MatchedRouteRow row, bool current, bool stale, RouteTrack t, string hash, string costing,
-        string? engineVersion, Func<bool> yield, CancellationToken ct)
+        string? engineVersion, List<(double Lat, double Lon)>? marks, Func<bool> yield, CancellationToken ct)
     {
         // Re-matches so far of a stored result whose filling timed out (see the end)
         var fillRetries = current && row.Status != RouteStatuses.Failed && row.Polyline != null ? row.Attempts : 0;
         var watch = Stopwatch.StartNew();
-        var plan = TracePlanner.Plan(t.Points, _settings);
-        var answers = new Dictionary<TraceCall, TraceResponse?>();
-        string? refusal = null;
-        foreach (var call in plan.SelectMany(s => s.Calls))
+        MatchResult result;
+        string? refusal;
+        try
         {
-            try
+            // Marked points that no longer fit the track (it changed) are left out, not refused
+            if (marks != null && Waypoints.Check(t.Points, marks) != null)
             {
-                using var doc = await _engine.TraceAttributesAsync(ValhallaTrace.BuildRequest(t.Points, call, costing, t.Source, _settings), ct);
-                answers[call] = ValhallaTrace.Parse(doc.RootElement);
-                _breaker.Success();
+                marks = null;
             }
-            catch (EngineRejectedException ex)
-            {
-                // The engine is alive; this part of the trace has no match (a gap)
-                _breaker.Success();
-                answers[call] = null;
-                refusal ??= ex.Message;
-            }
-            catch (EngineUnavailableException ex)
-            {
-                // The whole engine down (no connection, or the breaker opened or its probe
-                // failed) is no attempt of this record; a timeout or an error is
-                var down = _breaker.Failure(ex.Message) | ex.Unreachable;
-                return down ? EngineDown(row, current, stale, t, hash, costing, ex.Message) : Failure(row, current, stale, t, hash, costing, ex.Message);
-            }
+
+            var points = marks != null ? Waypoints.Place(t.Points, marks) : t.Points;
+            (result, refusal) = await StageB.MatchAsync(points, t.Type, costing, t.Source, _settings, _engine, _breaker, yield, ct,
+                marks != null ? SimilarRoutes.NearM : null);
+        }
+        catch (StageBEngineException ex)
+        {
+            return ex.Down ? EngineDown(row, current, stale, t, hash, costing, ex.Message) : Failure(row, current, stale, t, hash, costing, ex.Message);
         }
 
-        var profile = RouteQuality.ProfileFor(t.Type);
-        var skeleton = RouteAssembler.Build(t.Points, plan, answers, profile);
-        List<FillOutcome>? fills = null;
-        var stretches = RouteAssembler.Stretches(skeleton, _settings.GapFill);
-        if (stretches.Count > 0)
-        {
-            try
-            {
-                // One /route call per stretch, longest first, at most N (AD-35 rule 7). A
-                // timeout leaves that gap; timeouts in a row count for the breaker, and only
-                // an engine that is down makes the record wait. Interactive work stops it.
-                fills = await GapFiller.FillAsync(stretches, costing, _settings.GapFill, profile.MaxSpeedKmh, _engine,
-                    ex => _breaker.Failure(ex.Message) | ex.Unreachable, _breaker.Success, ct, yield);
-            }
-            catch (EngineUnavailableException ex)
-            {
-                return EngineDown(row, current, stale, t, hash, costing, ex.Message);
-            }
-        }
-
-        var result = RouteAssembler.Assemble(t.Points, skeleton, fills, profile, costing, _settings.MaxStoredVertices,
-            _settings.AnchorToleranceFor(t.Source, costing), _settings.GapFill.RoutedOnlyWeight);
         Identify(row, t, hash, costing);
         row.EngineVersion = engineVersion;
         row.GraphVersion = _graph.Current?.Version;
@@ -336,8 +323,14 @@ public class MatchRunner
         row.Polyline = result.Polyline;
         // Reads take a pre-simplified line (lists 400 vertices, density 80), never the full one
         (row.ListPolyline, row.DensityPolyline) = result.Polyline != null ? RouteLines.Derive(result.Polyline) : (null, null);
+        row.Cells = result.Polyline != null ? RouteCells.Line(result.Polyline) : null;
         row.Pieces = JsonSerializer.Serialize(result.Pieces, Json);
         row.MatchedDistanceM = result.Polyline != null ? result.LengthM : null;
+        // The roads it follows, for the panel and the road filter (AD-37)
+        row.Roads = result.Polyline != null ? RouteRoads.Serialize(result.Roads ?? new()) : null;
+        row.RoadNames = result.Polyline != null ? (result.Roads ?? new()).Select(r => r.Name).ToArray() : null;
+        row.Method = marks != null ? RebuildMethods.Waypoints : RebuildMethods.Auto;
+        row.Basis = null;
         row.MetricsAfter = JsonSerializer.Serialize(result.Metrics, Json);
         row.Reason = Truncate(result.Reason != null && refusal != null ? $"{result.Reason}; {refusal}" : result.Reason);
         row.Attempts = 0;
@@ -400,8 +393,11 @@ public class MatchRunner
         row.Polyline = null;
         row.ListPolyline = null;
         row.DensityPolyline = null;
+        row.Cells = null;
         row.Pieces = "[]";
         row.MatchedDistanceM = null;
+        row.Roads = null;
+        row.RoadNames = null;
         row.ComputedAt = Now;
         row.NextAttemptAt = wait;
         row.Reason = Truncate($"{reason} (the engine is unavailable; not counted as an attempt)");
@@ -447,6 +443,8 @@ public class MatchRunner
             var old = row.RuleVersion;
             row.Attempts++;
             row.RuleVersion = RouteQuality.RuleVersion;
+            // The similar-drive pool still needs its start and ends (AD-38 rule 3)
+            SetEnds(row, t);
             row.NextAttemptAt = null;
             row.Reason = Truncate($"{reason} (gave up after {row.Attempts} attempts; the {old} line is kept)");
             return RouteStatuses.Failed;
@@ -464,8 +462,11 @@ public class MatchRunner
         row.Polyline = null;
         row.ListPolyline = null;
         row.DensityPolyline = null;
+        row.Cells = null;
         row.Pieces = "[]";
         row.MatchedDistanceM = null;
+        row.Roads = null;
+        row.RoadNames = null;
         row.ComputedAt = Now;
         if (row.Attempts <= _backoff.Length)
         {
@@ -505,7 +506,7 @@ public class MatchRunner
 
             hash ??= RouteQuality.InputHash(t.Points);
             var sameInput = row.InputHash == hash && row.FusedType == t.Type;
-            var current = sameInput && row.RuleVersion == RouteQuality.RuleVersion;
+            var current = sameInput && (row.RuleVersion == RouteQuality.RuleVersion || row.Method == RebuildMethods.Similar);
             // An older rule's line for the same input stays served (never nulled by a failure)
             var stale = sameInput && !current && Serves(row);
             var outcome = Failure(row, current, stale, t, hash, Clip(costing, 16) ?? string.Empty, reason);
@@ -535,6 +536,7 @@ public class MatchRunner
     /// <summary>The record's values at match time: the read-time check of AD-34 rule 3</summary>
     private static void Identify(MatchedRouteRow row, RouteTrack t, string hash, string costing)
     {
+        SetEnds(row, t);
         row.SourceKey = t.SourceKey;
         row.InputHash = hash;
         row.SourceUpdatedAt = t.UpdatedAt;
@@ -545,18 +547,44 @@ public class MatchRunner
         row.RuleVersion = RouteQuality.RuleVersion;
     }
 
+    /// <summary>The record's start time and first and last point: what the similar-drive pool reads (AD-38 rule 3)</summary>
+    private static void SetEnds(MatchedRouteRow row, RouteTrack t)
+    {
+        row.StartedAt = t.Start;
+        if (t.Points.Count > 0)
+        {
+            (row.StartLat, row.StartLon) = (Math.Round(t.Points[0].Lat, 6), Math.Round(t.Points[0].Lon, 6));
+            (row.EndLat, row.EndLon) = (Math.Round(t.Points[^1].Lat, 6), Math.Round(t.Points[^1].Lon, 6));
+        }
+    }
+
     /// <summary>
-    /// Fills the list and density lines of rows stored before they existed, a page at a
+    /// Fills the list and density lines and the corridor cells of rows stored before they existed, a page at a
     /// time; returns how many rows it filled (0: none are left)
     /// </summary>
     public async Task<int> FillLinesAsync(int page, CancellationToken ct)
     {
         var rows = await _db.MatchedRoutes
-            .Where(m => m.Polyline != null && (m.ListPolyline == null || m.DensityPolyline == null))
+            .Where(m => m.Polyline != null && (m.ListPolyline == null || m.DensityPolyline == null || m.Cells == null))
             .OrderBy(m => m.Id).Take(Math.Max(1, page)).ToListAsync(ct);
         foreach (var row in rows)
         {
-            (row.ListPolyline, row.DensityPolyline) = RouteLines.Derive(row.Polyline!);
+            // Only what is missing; a line that cannot be read gets no cells (never retried forever)
+            try
+            {
+                if (row.ListPolyline == null || row.DensityPolyline == null)
+                {
+                    (row.ListPolyline, row.DensityPolyline) = RouteLines.Derive(row.Polyline!);
+                }
+
+                row.Cells ??= RouteCells.Line(row.Polyline!);
+            }
+            catch (Exception ex) when (ex is ArgumentException or IndexOutOfRangeException or FormatException or OverflowException)
+            {
+                row.ListPolyline ??= row.Polyline;
+                row.DensityPolyline ??= row.Polyline;
+                row.Cells ??= Array.Empty<long>();
+            }
         }
 
         await _db.SaveChangesAsync(ct);

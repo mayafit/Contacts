@@ -23,7 +23,47 @@ public partial class AtlasService
 
     /// <summary>The chosen line of an activity (a record's, or an outing's recordings joined)</summary>
     /// <param name="Final">Already simplified for the line asked for: a density read draws it as it is</param>
-    private sealed record ChosenGeometry(string Polyline, double? DistanceM, List<RouteGeometryPiece>? Pieces, bool Final = true);
+    /// <param name="Roads">The roads it follows, in travel order (the detail view only)</param>
+    private sealed record ChosenGeometry(string Polyline, double? DistanceM, List<RouteGeometryPiece>? Pieces, bool Final = true,
+        List<RouteRoad>? Roads = null);
+
+    /// <summary>
+    /// Resolves the road filter (AD-37) to the activities it keeps: the records whose
+    /// match follows the road and is still for the record as it is now (its UpdatedAt and
+    /// point count), each as the activity Atlas lists (a fused record as its primary).
+    /// Nothing when route quality is off.
+    /// </summary>
+    private async Task ResolveRoadAsync(string owner, AtlasQuery q, CancellationToken ct)
+    {
+        if (!q.HasRoad || q.RoadActivityIds != null)
+        {
+            return;
+        }
+
+        if (_routes is not { Enabled: true })
+        {
+            q.RoadActivityIds = Array.Empty<Guid>();
+            return;
+        }
+
+        var hits = await _routes.OnRoadAsync(owner, q.Road!, ct);
+        if (hits.Count == 0)
+        {
+            q.RoadActivityIds = Array.Empty<Guid>();
+            return;
+        }
+
+        var byId = hits.ToDictionary(h => h.Id);
+        var ids = byId.Keys.ToList();
+        var records = await _db.Activities.AsNoTracking()
+            .Where(a => a.OwnerId == owner && ids.Contains(a.Id))
+            .Select(a => new { a.Id, a.UpdatedAt, a.PointCount, a.ClusterId })
+            .ToListAsync(ct);
+        q.RoadActivityIds = records
+            .Where(r => byId[r.Id].UpdatedAt == r.UpdatedAt && byId[r.Id].PointCount == r.PointCount)
+            .Select(r => r.ClusterId ?? r.Id)
+            .ToHashSet();
+    }
 
     /// <summary>The summaries with their chosen list lines (no pieces)</summary>
     private async Task<List<ActivitySummary>> WithRoutesAsync(string owner, List<ActivitySummary> list, CancellationToken ct)
@@ -120,7 +160,7 @@ public partial class AtlasService
             }
             else if (chosen.TryGetValue(i.Id, out var c))
             {
-                result[i.Id] = new ChosenGeometry(c.Polyline, c.MatchedDistanceM, c.Pieces?.ToList());
+                result[i.Id] = new ChosenGeometry(c.Polyline, c.MatchedDistanceM, c.Pieces?.ToList(), Roads: c.Roads?.ToList());
             }
         }
 
@@ -143,6 +183,8 @@ public partial class AtlasService
 
         var line = new List<(double Lat, double Lon)>();
         var pieces = new List<RouteGeometryPiece>();
+        // The recordings' roads, by name: metres summed, first taken where the outing first takes it
+        var roads = new Dictionary<string, RouteRoad>(StringComparer.Ordinal);
         double at = 0;
         double? distance = 0;
         foreach (var s in segments)
@@ -184,6 +226,15 @@ public partial class AtlasService
             }
 
             pieces.AddRange(own.Select(p => new RouteGeometryPiece(Math.Round(at + p.FromM, 1), Math.Round(at + p.ToM, 1), p.Kind)));
+            if (c != null)
+            {
+                foreach (var r in c.Roads ?? Array.Empty<RouteRoad>())
+                {
+                    roads[r.Name] = roads.TryGetValue(r.Name, out var seen)
+                        ? seen with { M = seen.M + r.M }
+                        : r with { FromM = Math.Round(at + r.FromM, 1) };
+                }
+            }
             line.AddRange(points);
             at += LineLength(points);
         }
@@ -196,7 +247,8 @@ public partial class AtlasService
         // A list draws it whole, so it is simplified as fusion does; the panel keeps the
         // pieces' metres exact; the density map simplifies it once, itself
         var polyline = kind == RouteLine.List ? Geo.EncodePolyline(Geo.Simplify(line)) : Geo.EncodePolyline(line);
-        return new ChosenGeometry(polyline, distance, withPieces ? pieces : null, kind != RouteLine.Density);
+        return new ChosenGeometry(polyline, distance, withPieces ? pieces : null, kind != RouteLine.Density,
+            withPieces ? roads.Values.OrderBy(r => r.FromM).ToList() : null);
     }
 
     /// <summary>A summary drawn with its chosen line; the distance replaced only when fusion took it from the straight legs (rule 5)</summary>
@@ -245,7 +297,8 @@ public partial class AtlasService
             }
         }
 
-        return (Apply(summary, chosen, true), new ActivityRouteInfo(segments.Select(s => s.Id).ToList(), description, observed, inferred));
+        return (Apply(summary, chosen, true),
+            new ActivityRouteInfo(segments.Select(s => s.Id).ToList(), description, observed, inferred, chosen?.Roads));
     }
 
     /// <summary>

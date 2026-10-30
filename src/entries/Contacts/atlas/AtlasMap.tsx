@@ -115,7 +115,73 @@ export interface AtlasMapProps {
   photos?: PhotoSummary[];
   /** Opens the photo viewer on a list at a photo */
   onOpenPhoto?: (photos: PhotoSummary[], index: number) => void;
+  /** Points being marked for a rebuild (AD-38), [lat, lon] in order; null when not marking */
+  marking?: [number, number][] | null;
+  /** Adds a marked point (a click on the map while marking) */
+  onMark?: (lat: number, lon: number) => void;
+  /** Removes a marked point (a click on it) */
+  onUnmark?: (index: number) => void;
 }
+
+/** Colour of the points marked for a rebuild */
+const MARK_COLOR = '#d946ef';
+
+/** A numbered marked point */
+const markIcon = (n: number) =>
+  L.divIcon({
+    className: '',
+    iconSize: [20, 20],
+    iconAnchor: [10, 10],
+    html: `<div style="width:20px;height:20px;border-radius:50%;background:${MARK_COLOR};color:#fff;border:2px solid #fff;box-shadow:0 0 2px rgba(0,0,0,.6);font:600 11px/16px sans-serif;text-align:center">${n}</div>`,
+  });
+
+/**
+ * Marking the way for a rebuild (AD-38): a click on the map adds a point, a click on a
+ * point removes it; the points are joined in order by a thin dashed line
+ */
+const WaypointMarks: React.FC<{
+  points: [number, number][];
+  onMark: (lat: number, lon: number) => void;
+  onUnmark: (index: number) => void;
+}> = ({ points, onMark, onUnmark }) => {
+  const map = useMap();
+  useMapEvents({
+    click(e: LeafletMouseEvent) {
+      onMark(e.latlng.lat, e.latlng.lng);
+    },
+  });
+  useEffect(() => {
+    map.getContainer().style.cursor = 'crosshair';
+    return () => {
+      map.getContainer().style.cursor = '';
+    };
+  }, [map]);
+  return (
+    <>
+      {points.length > 1 && (
+        <Polyline
+          positions={points}
+          interactive={false}
+          pathOptions={{ color: MARK_COLOR, weight: 2, opacity: 0.8, dashArray: '4 6' }}
+        />
+      )}
+      {points.map((p, i) => (
+        <Marker
+          key={`${i}-${p[0]}-${p[1]}`}
+          position={p}
+          icon={markIcon(i + 1)}
+          title={`Point ${i + 1}: click to remove`}
+          eventHandlers={{
+            click: (e) => {
+              L.DomEvent.stopPropagation(e.originalEvent);
+              onUnmark(i);
+            },
+          }}
+        />
+      ))}
+    </>
+  );
+};
 
 /** Source points are shown on a matched route from this zoom on */
 const SOURCE_DOTS_ZOOM = 14;
@@ -135,8 +201,16 @@ const SelectedRouteLines: React.FC<SelectedRouteProps> = ({ runs, color }) => (
     {runs.map((r, i) =>
       r.kind === 'inferred' ? (
         <React.Fragment key={`${r.kind}-${i}`}>
-          <Polyline positions={r.positions} interactive={false} pathOptions={inferredCasingStyle()} />
-          <Polyline positions={r.positions} interactive={false} pathOptions={pieceStyle(r.kind, color)} />
+          <Polyline
+            positions={r.positions}
+            interactive={false}
+            pathOptions={inferredCasingStyle()}
+          />
+          <Polyline
+            positions={r.positions}
+            interactive={false}
+            pathOptions={pieceStyle(r.kind, color)}
+          />
         </React.Fragment>
       ) : (
         <Polyline
@@ -549,6 +623,9 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
   reloadKey = 0,
   photos,
   onOpenPhoto,
+  marking,
+  onMark,
+  onUnmark,
 }) => {
   const [mapStyle, setMapStyle] = useState<MapStyle>(loadMapStyle);
   const [mode, setMode] = useState<MapMode>(loadMapMode);
@@ -688,6 +765,9 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
           force={fitAll}
         />
         <AreaDraw drawing={drawing} onDone={onAreaDrawn} />
+        {marking && onMark && onUnmark && (
+          <WaypointMarks points={marking} onMark={onMark} onUnmark={onUnmark} />
+        )}
         <FocusArea area={area} focus={focusArea} />
         {areaBounds && area && (
           <>

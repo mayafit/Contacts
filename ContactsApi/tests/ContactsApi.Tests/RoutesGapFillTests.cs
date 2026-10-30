@@ -88,6 +88,61 @@ public class RoutesGapFillTests
     }
 
     [Fact]
+    public async Task A_filled_stretch_adds_its_street_names_and_an_unfilled_gap_adds_none()
+    {
+        // The matched calls are on route 4; the 5.5 km stretch between them is routed on 431 (AD-37)
+        var (vertices, points) = CutGapDrive();
+        Func<TraceCall, JsonDocument?> on4 = call =>
+        {
+            var vs = Enumerable.Range(call.Start, call.Count).Select(i => vertices[i]).ToList();
+            return SyntheticTrace.Answer(vs[^1] - vs[0] + 1, vs.Select(v => M(v)), first: vs[0], names: _ => new[] { "4" });
+        };
+        var engine = new RouteOnlyEngine { Answer = r => SyntheticTrace.RouteAnswer(RouteOnlyEngine.Locations(r), 80, streetNames: new[] { "431" }) };
+
+        var r = await MatchAsync(points, on4, engine);
+
+        Assert.Equal(new[] { "4", "431" }, r.Roads!.Select(x => x.Name));
+        Assert.All(r.Roads!, x => Assert.True(x.Ref));
+        // Route 4 before and after the stretch: 8 + 6 vertices of 111 m
+        Assert.InRange(r.Roads![0].M, 1500, 1600);
+        Assert.Equal(0, r.Roads[0].FromM);
+        Assert.InRange(r.Roads[1].M, 5500, 5600);
+        Assert.InRange(r.Roads[1].FromM, 880, 900);
+
+        // Not filled: the straight 5.5 km leg is on no road
+        var none = new RouteOnlyEngine { Answer = r => SyntheticTrace.RouteAnswer(RouteOnlyEngine.Locations(r), 80, lengthFactor: 4, streetNames: new[] { "431" }) };
+        var gap = await MatchAsync(points, on4, none);
+        Assert.Equal(new[] { "4" }, gap.Roads!.Select(x => x.Name));
+        Assert.InRange(gap.Roads![0].M, 1500, 1600);
+    }
+
+    [Fact]
+    public void A_route_answer_gives_each_segment_its_maneuver_street_names()
+    {
+        var body = new JsonObject
+        {
+            ["trip"] = new JsonObject
+            {
+                ["legs"] = new JsonArray(new JsonObject
+                {
+                    ["shape"] = SyntheticTrace.Encode(Enumerable.Range(0, 5).Select(SyntheticTrace.Vertex), 6),
+                    ["maneuvers"] = new JsonArray(
+                        new JsonObject { ["begin_shape_index"] = 0, ["end_shape_index"] = 2, ["street_names"] = new JsonArray("הרצל", " ") },
+                        new JsonObject { ["begin_shape_index"] = 2, ["end_shape_index"] = 3 },
+                        new JsonObject { ["begin_shape_index"] = 3, ["end_shape_index"] = 4, ["street_names"] = new JsonArray("431", "431") })
+                }),
+                ["summary"] = new JsonObject { ["length"] = 0.444, ["time"] = 30 }
+            }
+        };
+        using var doc = JsonDocument.Parse(body.ToJsonString());
+
+        var fill = GapFiller.Parse(doc.RootElement)!;
+
+        // The segment into vertex j: blank names dropped, repeats once
+        Assert.Equal(new string?[] { null, "הרצל", "הרצל", null, "431" }, fill.Roads!.Select(n => n?.Single()));
+    }
+
+    [Fact]
     public async Task A_cut_gap_is_filled_with_a_plausible_route()
     {
         var (vertices, points) = CutGapDrive();
@@ -96,10 +151,11 @@ public class RoutesGapFillTests
 
         var call = Assert.Single(engine.Routes);
         var at = RouteOnlyEngine.Locations(call);
-        // Between the two anchors' positions, with the drive's costing, no narrative
+        // Between the two anchors' positions, with the drive's costing; maneuvers (for the
+        // street names, AD-37), no narrative
         Assert.Equal(SyntheticTrace.Vertex(8).Lat, at[0].Lat, 6);
         Assert.Equal(SyntheticTrace.Vertex(58).Lat, at[1].Lat, 6);
-        Assert.Equal(("auto", "none"), ((string)call["costing"]!, (string)call["directions_type"]!));
+        Assert.Equal(("auto", "maneuvers"), ((string)call["costing"]!, (string)call["directions_type"]!));
 
         Assert.DoesNotContain(r.Pieces, p => p.Kind == PieceKinds.Gap);
         Assert.Equal((1, 1, 1, 0), (r.Metrics.CutGaps, r.Metrics.Stretches, r.Metrics.Filled, r.Metrics.FillRejectedTime));

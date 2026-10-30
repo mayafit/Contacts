@@ -350,7 +350,14 @@ public partial class AtlasService
             await _db.SaveChangesAsync(ct);
         }
 
-        return new IngestResult(run.Id, req.Activities.Count, req.Places.Count, req.Visits.Count, health);
+        // Reviews (AD-39): stored, then linked to places, as are reviews waiting for the places a batch brought
+        var reviews = req.Reviews.Count > 0 ? await UpsertReviewsAsync(owner, source, run, req.Reviews, ct) : 0;
+        if (req.Reviews.Count > 0 || req.Places.Count > 0)
+        {
+            await LinkReviewsAsync(owner, ct);
+        }
+
+        return new IngestResult(run.Id, req.Activities.Count, req.Places.Count, req.Visits.Count, health, reviews);
     }
 
     // ---------------------------------------------------------------- queries
@@ -358,6 +365,7 @@ public partial class AtlasService
     /// <summary>Activities and visits matching time, area, type and text together</summary>
     public async Task<SearchResult> SearchAsync(string owner, AtlasQuery q, CancellationToken ct = default)
     {
+        await ResolveRoadAsync(owner, q, ct);
         var limit = Math.Clamp(q.Limit, 1, 2000);
         var activities = new List<ActivitySummary>();
         var visits = new List<VisitSummary>();
@@ -384,7 +392,7 @@ public partial class AtlasService
                 .Select(_routes is { Enabled: true } ? ToSummaryRouted : ToSummary).ToListAsync(ct);
         }
 
-        if (q.Visits && !q.ConflictsOnly)
+        if (q.Visits && !q.ActivitiesOnly)
         {
             var vq = await QueryVisitsAsync(owner, q, ct);
             if (q.From.HasValue)
@@ -415,6 +423,7 @@ public partial class AtlasService
     public async Task<DensityData> DensityAsync(string owner, AtlasQuery q, CancellationToken ct = default)
     {
         const int maxTracks = 6000, maxVisits = 30000;
+        await ResolveRoadAsync(owner, q, ct);
         var tracks = new List<DensityTrack>();
         var visits = new List<double[]>();
         var truncated = false;
@@ -471,7 +480,7 @@ public partial class AtlasService
             }
         }
 
-        if (q.Visits && !q.ConflictsOnly)
+        if (q.Visits && !q.ActivitiesOnly)
         {
             var vq = await QueryVisitsAsync(owner, q, ct);
             if (q.From.HasValue)
@@ -520,6 +529,13 @@ public partial class AtlasService
         {
             var types = q.Types.Select(NormalizeType).ToList();
             aq = aq.Where(a => types.Contains(a.Fusion != null && a.Fusion.Type != null ? a.Fusion.Type : a.Type));
+        }
+
+        if (q.HasRoad)
+        {
+            // Resolved by ResolveRoadAsync; unresolved finds nothing rather than everything
+            var onRoad = (q.RoadActivityIds ?? Array.Empty<Guid>()).ToList();
+            aq = aq.Where(a => onRoad.Contains(a.Id));
         }
 
         var text = q.Text?.Trim();
@@ -855,6 +871,7 @@ public partial class AtlasService
         from = Utc(from);
         to = Utc(to);
         filter ??= new AtlasQuery();
+        await ResolveRoadAsync(owner, filter, ct);
 
         // Activities and visits: few enough to bucket here, with every search filter
         var rows = new List<HistogramRow>();
@@ -868,7 +885,7 @@ public partial class AtlasService
                 .Select(g => new HistogramRow(g.Key.Bucket, g.Key.Type, g.Count())));
         }
 
-        if (filter.Visits && !filter.ConflictsOnly)
+        if (filter.Visits && !filter.ActivitiesOnly)
         {
             var starts = await (await QueryVisitsAsync(owner, filter, ct))
                 .Where(v => v.StartTime >= from && v.StartTime <= to)
@@ -1101,12 +1118,14 @@ public partial class AtlasService
             details = new();
         }
 
+        var (review, reviewState) = await PlaceReviewAsync(owner, p, visits.Select(v => (v.StartTime, v.EndTime)).ToList(), ct);
         return new PlaceDetail(p.Id, p.Name, p.Address, p.Category, p.Lat, p.Lon, p.Notes, p.Source, p.LinkedRef, p.Website, p.Phone,
             p.OpeningHours, details, visits.Count,
             visits.Count > 0 ? visits.Min(v => v.StartTime) : null,
             visits.Count > 0 ? visits.Max(v => v.EndTime) : null,
             Math.Round(visits.Sum(v => Math.Max(0, (v.EndTime - v.StartTime).TotalHours)), 1),
-            p.IdentifyState, p.IdentifyState == "ambiguous" ? CandidatesOf(p) : new List<LocationCandidate>(), p.IdentifiedFrom);
+            p.IdentifyState, p.IdentifyState == "ambiguous" ? CandidatesOf(p) : new List<LocationCandidate>(), p.IdentifiedFrom,
+            review, reviewState);
     }
 
     /// <summary>
@@ -1187,6 +1206,7 @@ public partial class AtlasService
         var removed = await _db.Visits.Where(x => x.OwnerId == owner && x.ImportId == importId).ExecuteDeleteAsync(ct);
         removed += await _db.Activities.Where(x => x.OwnerId == owner && x.ImportId == importId).ExecuteDeleteAsync(ct);
         removed += await _db.HealthSamples.Where(x => x.OwnerId == owner && x.ImportId == importId).ExecuteDeleteAsync(ct);
+        removed += await _db.Reviews.Where(x => x.OwnerId == owner && x.ImportId == importId).ExecuteDeleteAsync(ct);
         removed += await _db.Places.Where(x => x.OwnerId == owner && x.ImportId == importId).ExecuteDeleteAsync(ct);
         await _db.Imports.Where(i => i.Id == importId && i.OwnerId == owner).ExecuteDeleteAsync(ct);
         // Records whose fused activity's primary was deleted stand alone until re-fused

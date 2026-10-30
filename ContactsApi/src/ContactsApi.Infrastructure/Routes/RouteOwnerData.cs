@@ -96,6 +96,24 @@ public class RouteOwnerData
         }
 
         w.WriteEndArray();
+
+        // The points the Owner marked (AD-38): decisions too
+        w.WriteStartArray("waypoints");
+        foreach (var m in await _db.Waypoints.AsNoTracking().Where(x => x.OwnerId == owner).OrderBy(x => x.SourceKey).ToListAsync(ct))
+        {
+            w.WriteStartObject();
+            w.WriteString("sourceKey", m.SourceKey);
+            w.WritePropertyName("points");
+            using (var points = JsonDocument.Parse(string.IsNullOrWhiteSpace(m.Points) ? "[]" : m.Points))
+            {
+                points.RootElement.WriteTo(w);
+            }
+
+            w.WriteString("createdAt", m.CreatedAt);
+            w.WriteEndObject();
+        }
+
+        w.WriteEndArray();
         await w.FlushAsync(ct);
 
         w.WriteStartArray("quality");
@@ -228,6 +246,7 @@ public class RouteOwnerData
         w.WriteString("engineVersion", m.EngineVersion);
         w.WriteString("graphVersion", m.GraphVersion);
         w.WriteString("ruleVersion", m.RuleVersion);
+        w.WriteString("method", m.Method);
         w.WriteString("reason", m.Reason);
         w.WriteString("computedAt", m.ComputedAt);
         // Piece kinds in metres along the line: observed, inferred, gap
@@ -235,6 +254,13 @@ public class RouteOwnerData
         using (var pieces = JsonDocument.Parse(string.IsNullOrWhiteSpace(m.Pieces) ? "[]" : m.Pieces))
         {
             pieces.RootElement.WriteTo(w);
+        }
+
+        // The roads the line follows, in travel order (AD-37)
+        w.WritePropertyName("roads");
+        using (var roads = JsonDocument.Parse(string.IsNullOrWhiteSpace(m.Roads) ? "[]" : m.Roads))
+        {
+            roads.RootElement.WriteTo(w);
         }
 
         w.WriteEndObject();

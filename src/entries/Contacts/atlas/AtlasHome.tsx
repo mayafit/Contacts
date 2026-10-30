@@ -42,12 +42,14 @@ import ResultsList from './ResultsList';
 import InsightsPanel, { type InsightsFilter } from './InsightsPanel';
 import { areaAround } from './insights';
 import ActivityPanel from './ActivityPanel';
+import { MAX_MARKS, type RebuildState } from './RouteRebuild';
 import PlacePanel from './PlacePanel';
 import ImportDialog, { type ImportTab } from './ImportDialog';
 import PhotoViewer from './PhotoViewer';
 import AiAccessDialog from './AiAccessDialog';
 import FusionSettingsDialog from './FusionSettingsDialog';
 import AtlasFilterBar from './AtlasFilterBar';
+import { parseRoadQuery } from './filters';
 import AssistantPanel from '../components/assistant/AssistantPanel';
 import { atlasToolset } from './atlasTools';
 import { tokens } from '../theme/contactsTheme';
@@ -91,6 +93,8 @@ const AtlasHome: React.FC = () => {
   const [types, setTypes] = useState<string[]>([]);
   // Only fused activities whose sources disagree
   const [conflictsOnly, setConflictsOnly] = useState(false);
+  // Only activities whose matched route follows this road ('' for none)
+  const [road, setRoad] = useState('');
   // The right panel's tab, kept while the filters change and while a detail is open
   const [panelTab, setPanelTab] = useState<'results' | 'insights'>('results');
   // A question for the assistant ("Explain with AI"); a new id sends it
@@ -106,21 +110,50 @@ const AtlasHome: React.FC = () => {
   // The open activity drawn on roads (its matched route) or as recorded
   const [routeView, setRouteView] = useState<'roads' | 'recorded'>('roads');
   const detailId = detail?.summary.id;
-  useEffect(() => setRouteView('roads'), [detailId]);
+  // A rebuild's suggestion, drawn instead of the route until used or discarded, and the
+  // points being marked for one (AD-38)
+  const [rebuildState, setRebuildState] = useState<RebuildState | null>(null);
+  const [marking, setMarking] = useState<[number, number][] | null>(null);
+  useEffect(() => {
+    setRouteView('roads');
+    setRebuildState(null);
+    setMarking(null);
+  }, [detailId]);
+  const suggested =
+    rebuildState && rebuildState.activityId === detailId ? rebuildState.result : null;
+  // Marking ends when the open activity can no longer be rebuilt (reloaded without a route)
+  const rebuildable =
+    !!detail?.route &&
+    detail.route.recordIds.length === 1 &&
+    (detail.route.description?.matchable ?? 'yes') === 'yes';
+  useEffect(() => {
+    if (!rebuildable) {
+      setMarking(null);
+    }
+  }, [rebuildable]);
+  /** Marking the way and drawing an area are one map mode at a time */
+  const startMarking = useCallback((points: [number, number][] | null) => {
+    if (points) {
+      setDrawing(false);
+    }
+    setMarking(points);
+  }, []);
   // One object per detail and view, so the map decodes the route's pieces once
   const selectedRoute = useMemo(
     () =>
-      detail &&
-      detail.summary.geometry === 'matched' &&
-      detail.summary.polyline &&
-      routeView === 'roads'
-        ? {
-            id: detail.summary.id,
-            polyline: detail.summary.polyline,
-            pieces: detail.summary.pieces,
-          }
-        : null,
-    [detail, routeView],
+      detail && suggested?.polyline
+        ? { id: detail.summary.id, polyline: suggested.polyline, pieces: suggested.pieces }
+        : detail &&
+            detail.summary.geometry === 'matched' &&
+            detail.summary.polyline &&
+            routeView === 'roads'
+          ? {
+              id: detail.summary.id,
+              polyline: detail.summary.polyline,
+              pieces: detail.summary.pieces,
+            }
+          : null,
+    [detail, routeView, suggested],
   );
   const [visit, setVisit] = useState<VisitSummary | null>(null);
   const [cursor, setCursor] = useState<[number, number] | null>(null);
@@ -140,6 +173,26 @@ const AtlasHome: React.FC = () => {
   const [mergeFrom, setMergeFrom] = useState<string | null>(null);
   // Bumped when new results arrive, so the map fits to them (not to the old ones)
   const [fitTick, setFitTick] = useState(0);
+
+  // Back from the Google sign-in that was asked to allow Drive (AD-40): the Google Drive tab
+  const [driveAllowed, setDriveAllowed] = useState(false);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('connected') !== 'takeout') {
+      return;
+    }
+    if (params.get('declined')) {
+      setError('Google Drive was not connected: the permission was not given.');
+    } else {
+      setDriveAllowed(true);
+    }
+    setImportTab('google-drive');
+    setImportOpen(true);
+    params.delete('connected');
+    params.delete('declined');
+    const rest = params.toString();
+    window.history.replaceState(null, '', window.location.pathname + (rest ? `?${rest}` : ''));
+  }, []);
 
   // Back from Microsoft's sign-in (OneDrive): show the OneDrive tab with the outcome
   useEffect(() => {
@@ -237,11 +290,26 @@ const AtlasHome: React.FC = () => {
       .catch(() => setAssistantEnabled(false));
   }, [loadSummary]);
 
-  // Debounced text search
+  // Debounced text search; "road 431" waits for Enter, which makes it the road filter
   useEffect(() => {
-    const t = setTimeout(() => setQuery(text.trim()), 350);
+    const t = setTimeout(() => {
+      if (!parseRoadQuery(text)) {
+        setQuery(text.trim());
+      }
+    }, 350);
     return () => clearTimeout(t);
   }, [text]);
+
+  /** Enter in the search box: "road 431" or "כביש 431" becomes the road filter */
+  const searchKey = (e: React.KeyboardEvent) => {
+    const typedRoad = e.key === 'Enter' ? parseRoadQuery(text) : null;
+    if (typedRoad) {
+      e.preventDefault();
+      setRoad(typedRoad);
+      setText('');
+      setQuery('');
+    }
+  };
 
   // The filters (time, area, types, text, conflicts): the insights use them as they are
   const filters: AtlasQuery = useMemo(
@@ -252,8 +320,9 @@ const AtlasHome: React.FC = () => {
       types: types.length ? types : undefined,
       text: query || undefined,
       conflictsOnly: conflictsOnly || undefined,
+      road: road || undefined,
     }),
-    [selection, area, types, query, conflictsOnly],
+    [selection, area, types, query, conflictsOnly, road],
   );
   const q: AtlasQuery = useMemo(() => ({ ...filters, limit: 500 }), [filters]);
   const fitKey = JSON.stringify(q);
@@ -268,8 +337,9 @@ const AtlasHome: React.FC = () => {
       types: types.length ? types : undefined,
       text: query || undefined,
       conflictsOnly: conflictsOnly || undefined,
+      road: road || undefined,
     }),
-    [area, types, query, conflictsOnly],
+    [area, types, query, conflictsOnly, road],
   );
 
   // The selected activity or visit, marked on the timeline
@@ -388,7 +458,16 @@ const AtlasHome: React.FC = () => {
     );
     setTypes(s.types ?? []);
     setConflictsOnly(!!s.conflictsOnly);
+    setRoad(s.road ?? '');
     setText(s.text ?? '');
+  }, []);
+
+  /** Every activity whose route follows a road (from the panel's roads) */
+  const showRoad = useCallback((r: string) => {
+    setDetail(null);
+    setVisit(null);
+    setRoad(r);
+    setPanelTab('results');
   }, []);
 
   const toolset = useMemo(
@@ -441,6 +520,7 @@ const AtlasHome: React.FC = () => {
     setDrawing(false);
     setTypes([]);
     setConflictsOnly(false);
+    setRoad('');
     setText('');
     setQuery('');
   };
@@ -455,7 +535,8 @@ const AtlasHome: React.FC = () => {
   };
 
   const showInsights = !mergeFrom && !detail && !visit && panelTab === 'insights';
-  const filtered = !!selection || !!area || types.length > 0 || query !== '' || conflictsOnly;
+  const filtered =
+    !!selection || !!area || types.length > 0 || query !== '' || conflictsOnly || road !== '';
 
   if (status && !status.ready) {
     return (
@@ -522,7 +603,8 @@ const AtlasHome: React.FC = () => {
           <InputBase
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder="Search places and activities…"
+            onKeyDown={searchKey}
+            placeholder="Search places, activities or road 431…"
             inputProps={{ 'aria-label': 'Search Atlas', dir: 'auto' }}
             sx={{ flex: 1, fontSize: { xs: 16, sm: 14 } }}
           />
@@ -542,6 +624,7 @@ const AtlasHome: React.FC = () => {
                 setArea(null);
                 setDrawing(false);
               } else {
+                setMarking(null);
                 setDrawing((d) => !d);
               }
             }}
@@ -605,6 +688,7 @@ const AtlasHome: React.FC = () => {
         types={types}
         text={query}
         conflictsOnly={conflictsOnly}
+        road={road}
         result={result}
         loading={loading}
         onClearTime={() => setSelection(null)}
@@ -616,6 +700,7 @@ const AtlasHome: React.FC = () => {
         onFocusArea={() => setFocusArea((n) => n + 1)}
         onClearTypes={() => setTypes([])}
         onClearConflicts={() => setConflictsOnly(false)}
+        onClearRoad={() => setRoad('')}
         onClearText={() => {
           setText('');
           setQuery('');
@@ -663,9 +748,10 @@ const AtlasHome: React.FC = () => {
                   setArea(b);
                   setDrawing(false);
                 }}
-                onSelectActivity={selectActivity}
+                // While marking the way, a click marks a point; it opens nothing
+                onSelectActivity={(id) => !marking && selectActivity(id)}
                 onSelectVisit={(v) => {
-                  if (mergeFrom) {
+                  if (mergeFrom || marking) {
                     return;
                   }
                   setDetail(null);
@@ -678,6 +764,11 @@ const AtlasHome: React.FC = () => {
                 reloadKey={reloadKey}
                 photos={panelPhotos}
                 onOpenPhoto={(photos, index) => setViewer({ photos, index })}
+                marking={marking}
+                onMark={(lat, lon) =>
+                  setMarking((m) => (m && m.length < MAX_MARKS ? [...m, [lat, lon]] : m))
+                }
+                onUnmark={(i) => setMarking((m) => (m ? m.filter((_, k) => k !== i) : m))}
               />
               {empty && (
                 <Paper
@@ -810,6 +901,13 @@ const AtlasHome: React.FC = () => {
                 onOpenPhoto={(index) => setViewer({ photos: panelPhotos, index })}
                 routeView={routeView}
                 onRouteView={setRouteView}
+                onRoad={showRoad}
+                rebuild={{
+                  suggestion: rebuildState,
+                  onSuggestion: setRebuildState,
+                  marking,
+                  onMarking: startMarking,
+                }}
                 onRouteChanged={async () => {
                   // The list and the map draw the new choice too
                   setReloadKey((k) => k + 1);
@@ -982,6 +1080,8 @@ const AtlasHome: React.FC = () => {
         }}
         onChanged={changed}
         initialTab={importTab}
+        driveAllowed={driveAllowed}
+        onDriveConnected={() => setDriveAllowed(false)}
       />
       <PhotoViewer
         photos={viewer?.photos ?? []}

@@ -29,6 +29,7 @@ public class RoutesDbContext : DbContext
     public DbSet<MatchedRouteRow> MatchedRoutes => Set<MatchedRouteRow>();
     public DbSet<RouteDecision> Decisions => Set<RouteDecision>();
     public DbSet<RouteSetting> Settings => Set<RouteSetting>();
+    public DbSet<RouteWaypoints> Waypoints => Set<RouteWaypoints>();
     public DbSet<RouteJob> Jobs => Set<RouteJob>();
     public DbSet<OwnerCursor> Cursors => Set<OwnerCursor>();
 
@@ -73,6 +74,13 @@ public class RoutesDbContext : DbContext
             e.Property(x => x.Status).HasMaxLength(16);
             e.Property(x => x.Pieces).HasColumnType("jsonb");
             e.Property(x => x.MetricsAfter).HasColumnType("jsonb");
+            e.Property(x => x.Roads).HasColumnType("jsonb");
+            e.Property(x => x.RoadNames).HasColumnType("text[]");
+            // The similar-drive pool's corridor cells (AD-38 rule 3): no index of its own, as
+            // every index leads with OwnerId; the overlap runs over one Owner's rows
+            e.Property(x => x.Cells).HasColumnType("bigint[]");
+            e.Property(x => x.Method).HasMaxLength(16).HasDefaultValue("auto");
+            e.Property(x => x.Basis).HasColumnType("jsonb");
             e.Property(x => x.Reason).HasMaxLength(500);
         });
 
@@ -83,6 +91,15 @@ public class RoutesDbContext : DbContext
             e.Property(x => x.OwnerId).HasMaxLength(64);
             e.Property(x => x.SourceKey).HasMaxLength(256);
             e.Property(x => x.Kind).HasMaxLength(8);
+        });
+
+        b.Entity<RouteWaypoints>(e =>
+        {
+            e.ToTable("route_waypoints");
+            e.HasIndex(x => new { x.OwnerId, x.SourceKey }).IsUnique();
+            e.Property(x => x.OwnerId).HasMaxLength(64);
+            e.Property(x => x.SourceKey).HasMaxLength(256);
+            e.Property(x => x.Points).HasColumnType("jsonb");
         });
 
         b.Entity<RouteSetting>(e =>
@@ -110,6 +127,7 @@ public class RoutesDbContext : DbContext
             e.Property(x => x.Counts).HasColumnType("jsonb");
             e.Property(x => x.LastError).HasMaxLength(500);
             e.Property(x => x.Cursor).HasMaxLength(128);
+            e.Property(x => x.Result).HasColumnType("jsonb");
         });
 
         b.Entity<OwnerCursor>(e =>

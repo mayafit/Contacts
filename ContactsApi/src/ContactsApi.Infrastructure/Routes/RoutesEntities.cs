@@ -71,6 +71,22 @@ public class MatchedRouteRow
     /// <summary>JSON: [{fromM, toM, kind: observed / inferred / gap}]</summary>
     public string Pieces { get; set; } = "[]";
     public double? MatchedDistanceM { get; set; }
+    /// <summary>JSON: the roads the line follows, in travel order: [{name, ref, m, fromM}] (AD-37); null without a line</summary>
+    public string? Roads { get; set; }
+    /// <summary>The roads' names alone, for the road filter (AD-37); null without a line</summary>
+    public string[]? RoadNames { get; set; }
+    /// <summary>How the line was made (AD-38): auto, similar (rebuilt from a similar drive), waypoints (through the Owner's points)</summary>
+    public string Method { get; set; } = "auto";
+    /// <summary>JSON: what a similar rebuild was based on (the basis drive, fit, counts); null otherwise</summary>
+    public string? Basis { get; set; }
+    /// <summary>The record's start time and its first and last point (the similar-drive pool, AD-38)</summary>
+    public DateTime? StartedAt { get; set; }
+    public double? StartLat { get; set; }
+    public double? StartLon { get; set; }
+    public double? EndLat { get; set; }
+    public double? EndLon { get; set; }
+    /// <summary>The corridor cells of the line (RouteCells, AD-38 rule 3); null without a line or before the start-up fill</summary>
+    public long[]? Cells { get; set; }
     /// <summary>JSON: the metrics on the matched line</summary>
     public string? MetricsAfter { get; set; }
     public string? Reason { get; set; }
@@ -87,6 +103,17 @@ public class RouteDecision
     public string SourceKey { get; set; } = string.Empty;
     /// <summary>reject or accept</summary>
     public string Kind { get; set; } = "reject";
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>The points the Owner marked for a record's route (AD-38), by its natural key: a decision</summary>
+public class RouteWaypoints
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string OwnerId { get; set; } = string.Empty;
+    public string SourceKey { get; set; } = string.Empty;
+    /// <summary>JSON: [[lat, lon]…] in the order marked</summary>
+    public string Points { get; set; } = "[]";
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 
@@ -121,6 +148,8 @@ public class RouteJob
     public string? LastError { get; set; }
     /// <summary>A time-range job's paging cursor (durable, so the job resumes after a restart)</summary>
     public string? Cursor { get; set; }
+    /// <summary>JSON: a rebuild's suggestion (AD-38); null for other jobs</summary>
+    public string? Result { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? StartedAt { get; set; }
     public DateTime? FinishedAt { get; set; }
@@ -146,6 +175,8 @@ public static class RouteJobKinds
 {
     public const string Assess = "assess";
     public const string Improve = "improve";
+    /// <summary>One record rebuilt on demand (AD-38): the result is a suggestion on the job</summary>
+    public const string Rebuild = "rebuild";
 }
 
 /// <summary>Job priorities</summary>

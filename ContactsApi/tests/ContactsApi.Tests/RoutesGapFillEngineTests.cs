@@ -112,6 +112,67 @@ public class RoutesGapFillEngineTests
         return (result, watch.Elapsed.TotalMilliseconds, stretches.Count, fills);
     }
 
+    [EngineFact]
+    public async Task A_sparse_drive_is_rebuilt_from_a_similar_one_both_ways()
+    {
+        var url = TestEngine.Url!;
+        var options = new RoutesOptions { EngineTimeoutSeconds = 30 };
+        var client = new ValhallaClient(new Factory(url), Options.Create(options));
+        var breaker = new EngineBreaker(Options.Create(options), TimeProvider.System);
+        var settings = MatchSettings.From(options);
+        // Ramla to Modi'in on 423 and 431 (AD-38): the similar drive is the road itself
+        var (there, timeS) = await RoadAsync(url, (31.9300, 34.8200), (31.9010, 34.9600));
+        var (back, backS) = await RoadAsync(url, (31.9010, 34.9600), (31.9300, 34.8200));
+        var twin = new SimilarCandidate(Guid.NewGuid(), new DateTime(2026, 9, 1, 7, 50, 0, DateTimeKind.Utc),
+            Geo.EncodePolyline(there.Select(p => (Math.Round(p.Lat, 5), Math.Round(p.Lon, 5))).ToList()));
+
+        foreach (var (road, s, reversed) in new[] { (there, timeS, false), (back, backS, true) })
+        {
+            // Sparse, with a ~6 km stretch not recorded
+            var points = Sparse(road, s);
+            var cut = points.Take(4).Concat(points.Skip(6)).ToList();
+            var plain = (await StageB.MatchAsync(cut, "drive", "auto", "google-timeline", settings, client, breaker, null, default)).Result;
+
+            var rebuilt = await Rebuilder.SimilarAsync(cut, new[] { twin }, "drive", "auto", "google-timeline", settings, client, breaker, default);
+
+            Assert.NotNull(rebuilt);
+            Assert.Equal(reversed, rebuilt!.Basis!.Reversed);
+            // The way back leaves the way there in places (another ramp, the other carriageway)
+            Assert.True(rebuilt.Basis.Fit >= 0.8, $"fit {rebuilt.Basis.Fit}");
+            Assert.True(rebuilt.Added > 0);
+            Assert.Equal(RouteStatuses.Matched, rebuilt.Result.Status);
+            // Gap filling alone already bridges this cut, so the plain match is as good or better here
+            // (the panel says when a suggestion is no better than the current match); the rebuild
+            // is capped by its basis's fit
+            Assert.True(rebuilt.Result.Confidence >= Math.Min(0.8, plain.Confidence), $"{plain.Confidence} → {rebuilt.Result.Confidence}");
+            Assert.True(rebuilt.Result.Confidence <= rebuilt.Basis.Fit);
+            Assert.Equal(PieceKinds.Inferred, rebuilt.Result.Pieces.OrderByDescending(p => p.ToM - p.FromM).First().Kind);
+            Assert.InRange(rebuilt.Result.LengthM / LineM(road), 0.95, 1.05);
+        }
+    }
+
+    private static double LineM(List<(double Lat, double Lon)> line) =>
+        line.Zip(line.Skip(1)).Sum(p => Geo.Haversine(p.First.Lat, p.First.Lon, p.Second.Lat, p.Second.Lon));
+
+    [EngineFact]
+    public async Task A_filled_stretch_is_counted_on_the_road_it_was_routed_on()
+    {
+        var url = TestEngine.Url!;
+        // Ramla to Modi'in on 431 (AD-37); one stretch of ~6 km has no recorded point
+        var (road, timeS) = await RoadAsync(url, (31.9300, 34.8200), (31.9010, 34.9600));
+        var points = Sparse(road, timeS);
+        var cut = points.Take(4).Concat(points.Skip(6)).ToList();
+
+        var without = await MatchAsync(url, cut, false);
+        var with = await MatchAsync(url, cut, true);
+
+        Assert.Contains(with.Fills, f => f.Accepted);
+        double On431(MatchResult r) => r.Roads!.Single(x => x.Name == "431").M;
+        // The filled stretch was the gap: it now counts for 431
+        Assert.True(On431(with.Result) > On431(without.Result) + 3_000, $"{On431(without.Result)} → {On431(with.Result)} m on 431");
+        Assert.True(On431(with.Result) > 10_000);
+    }
+
     [EngineTheory]
     [InlineData("Route 4", 31.6688, 34.5743, 31.8044, 34.6553)] // Ashkelon to Ashdod
     [InlineData("Route 6", 31.6100, 34.7642, 32.0956, 34.9566)] // Kiryat Gat to Rosh HaAyin

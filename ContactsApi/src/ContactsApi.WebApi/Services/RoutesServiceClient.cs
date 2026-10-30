@@ -63,6 +63,20 @@ public class RoutesServiceClient : ContactsApi.Core.Interfaces.IRouteChangeSigna
     public Task<RoutesServiceAnswer> QueueAsync(string kind, string owner, object scope, bool interactive, bool force, CancellationToken ct) =>
         SendAsync(HttpMethod.Post, $"internal/v1/{kind}", new { ownerId = owner, scope, interactive, force }, ct);
 
+    /// <summary>Queues a rebuild of one record (AD-38); the answer is the service's 202 {jobId}</summary>
+    /// <param name="method">similar or waypoints</param>
+    /// <param name="waypoints">waypoints only: [[lat, lon]…] in the order marked</param>
+    public Task<RoutesServiceAnswer> RebuildAsync(string owner, Guid activityId, string method, List<double[]>? waypoints, CancellationToken ct) =>
+        SendAsync(HttpMethod.Post, "internal/v1/rebuild", new { ownerId = owner, activityId, method, waypoints }, ct);
+
+    /// <summary>Uses a rebuild's suggestion as the record's match; 409 when the record changed or there is none</summary>
+    public Task<RoutesServiceAnswer> ApplyAsync(string owner, Guid jobId, Guid activityId, CancellationToken ct) =>
+        SendAsync(HttpMethod.Post, "internal/v1/apply", new { ownerId = owner, jobId, activityId }, ct);
+
+    /// <summary>Clears the points the Owner marked for a record; it is then matched again as the matcher's own</summary>
+    public Task<RoutesServiceAnswer> ClearMarksAsync(string owner, Guid activityId, CancellationToken ct) =>
+        SendAsync(HttpMethod.Post, "internal/v1/marks/clear", new { ownerId = owner, activityId }, ct);
+
     /// <summary>One of the Owner's jobs (another Owner's answers 404)</summary>
     public Task<RoutesServiceAnswer> JobAsync(string owner, Guid id, CancellationToken ct) =>
         SendAsync(HttpMethod.Get, $"internal/v1/jobs/{id}?ownerId={Uri.EscapeDataString(owner)}", null, ct);
