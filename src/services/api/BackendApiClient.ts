@@ -38,6 +38,7 @@ import type {
   SourceConnection,
   VisitPlaceResult,
 } from '../../entries/Contacts/atlas/types';
+import type { Flight } from '../../entries/Contacts/atlas/flights';
 
 /** One ingest batch */
 export type AtlasIngest = Omit<ParsedData, 'source'> & {
@@ -1262,6 +1263,57 @@ export class BackendApiClient {
   /** Signs in to Google again, allowing Echo to read Drive (comes back to /atlas?connected=takeout) */
   connectTakeoutDrive(): void {
     window.location.href = `${this.baseUrl}/auth/login?takeout=true`;
+  }
+
+  /** A flight's identity and public details (AD-42); looked up when it never was */
+  async atlasFlight(activityId: string): Promise<Flight> {
+    return unwrap(
+      await this.request<Flight>(`/atlas/flights/${activityId}`),
+      'Loading the flight failed',
+    );
+  }
+
+  /** The Owner types the flight number (the day is the flight's recorded day) */
+  async atlasSetFlightNumber(activityId: string, flightNumber: string): Promise<Flight> {
+    return unwrap(
+      await this.request<Flight>(`/atlas/flights/${activityId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ flightNumber }),
+      }),
+      'Saving the flight number failed',
+    );
+  }
+
+  /** Clears the Owner's flight number: Echo looks for it again */
+  async atlasClearFlightNumber(activityId: string): Promise<Flight> {
+    return unwrap(
+      await this.request<Flight>(`/atlas/flights/${activityId}/number`, { method: 'DELETE' }),
+      'Clearing the flight number failed',
+    );
+  }
+
+  /** Looks the flight up again */
+  async atlasSearchFlight(activityId: string): Promise<Flight> {
+    return unwrap(
+      await this.request<Flight>(`/atlas/flights/${activityId}/search`, { method: 'POST' }),
+      'Searching again failed',
+    );
+  }
+
+  /** Confirms a suggested public flight, named by its aircraft and take-off */
+  async atlasConfirmFlight(activityId: string, icao24: string, firstSeen: string): Promise<Flight> {
+    return unwrap(
+      await this.request<Flight>(`/atlas/flights/${activityId}/confirm`, {
+        method: 'POST',
+        body: JSON.stringify({ icao24, firstSeen }),
+      }),
+      'Confirming the flight failed',
+    );
+  }
+
+  /** Allows reading email content for flights (leaves the page; back to /atlas?connected=mail) */
+  connectMailForFlights(): void {
+    window.location.href = `${this.baseUrl}/auth/login?signatures=true&back=atlas`;
   }
 
   /** The Owner's Google Maps reviews and the places to review (AD-39) */

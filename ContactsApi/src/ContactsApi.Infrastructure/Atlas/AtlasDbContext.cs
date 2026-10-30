@@ -30,6 +30,10 @@ public class AtlasDbContext : DbContext
     public DbSet<ActivityEffort> Efforts => Set<ActivityEffort>();
     public DbSet<AtlasPhoto> Photos => Set<AtlasPhoto>();
     public DbSet<OwnerSetting> OwnerSettings => Set<OwnerSetting>();
+    public DbSet<Flights.AtlasFlight> Flights => Set<Flights.AtlasFlight>();
+
+    /// <summary>How a flight's details are kept (camelCase JSON)</summary>
+    internal static readonly System.Text.Json.JsonSerializerOptions FlightJson = new(System.Text.Json.JsonSerializerDefaults.Web);
     public DbSet<PlaceReview> Reviews => Set<PlaceReview>();
     public DbSet<ReviewReminder> ReviewReminders => Set<ReviewReminder>();
 
@@ -77,6 +81,30 @@ public class AtlasDbContext : DbContext
             e.ToTable("fusion_queue");
             e.HasIndex(x => new { x.OwnerId, x.Id });
             e.Property(x => x.OwnerId).HasMaxLength(64);
+        });
+
+        b.Entity<Flights.AtlasFlight>(e =>
+        {
+            e.ToTable("flights");
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.OwnerId, x.ActivityId }).IsUnique();
+            e.HasIndex(x => new { x.OwnerId, x.Status });
+            e.Property(x => x.OwnerId).HasMaxLength(64);
+            e.Property(x => x.FlightNumber).HasMaxLength(16);
+            e.Property(x => x.Source).HasMaxLength(16);
+            e.Property(x => x.Status).HasMaxLength(16);
+            e.Property(x => x.MailState).HasMaxLength(16);
+            e.Property(x => x.Note).HasMaxLength(500);
+            // The worker's write loses to the Owner's change made meanwhile
+            e.Property(x => x.UpdatedAt).IsConcurrencyToken();
+            e.Property(x => x.Details).HasColumnType("jsonb").HasConversion(
+                d => System.Text.Json.JsonSerializer.Serialize(d, FlightJson),
+                s => System.Text.Json.JsonSerializer.Deserialize<Flights.FlightDetails>(s, FlightJson) ?? new Flights.FlightDetails(),
+                new Microsoft.EntityFrameworkCore.ChangeTracking.ValueComparer<Flights.FlightDetails>(
+                    (a, c) => System.Text.Json.JsonSerializer.Serialize(a, FlightJson) == System.Text.Json.JsonSerializer.Serialize(c, FlightJson),
+                    d => System.Text.Json.JsonSerializer.Serialize(d, FlightJson).GetHashCode(),
+                    d => System.Text.Json.JsonSerializer.Deserialize<Flights.FlightDetails>(System.Text.Json.JsonSerializer.Serialize(d, FlightJson), FlightJson)!));
+            e.HasOne<AtlasActivity>().WithMany().HasForeignKey(x => x.ActivityId).OnDelete(DeleteBehavior.Cascade);
         });
 
         b.Entity<OwnerSetting>(e =>

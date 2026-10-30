@@ -500,6 +500,73 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                     b.ToTable("places", "atlas");
                 });
 
+            modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.Flights.AtlasFlight", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ActivityId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("CheckedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("ClaimedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Details")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<DateOnly?>("FlightDate")
+                        .HasColumnType("date");
+
+                    b.Property<string>("FlightNumber")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("MailState")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("OwnerId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Source")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .IsConcurrencyToken()
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ActivityId");
+
+                    b.HasIndex("OwnerId", "ActivityId")
+                        .IsUnique();
+
+                    b.HasIndex("OwnerId", "Status");
+
+                    b.ToTable("flights", "atlas");
+                });
+
             modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.FusionDecision", b =>
                 {
                     b.Property<long>("Id")
@@ -1017,6 +1084,15 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                     b.HasOne("ContactsApi.Infrastructure.Atlas.AtlasActivity", null)
                         .WithOne("Fusion")
                         .HasForeignKey("ContactsApi.Infrastructure.Atlas.ActivityFusion", "ActivityId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.Flights.AtlasFlight", b =>
+                {
+                    b.HasOne("ContactsApi.Infrastructure.Atlas.AtlasActivity", null)
+                        .WithMany()
+                        .HasForeignKey("ActivityId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

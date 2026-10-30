@@ -65,6 +65,7 @@ import { tokens } from '../theme/contactsTheme';
 import RouteLine, { type RouteView } from './RouteLine';
 import RouteRoads from './RouteRoads';
 import RouteRebuild, { type RouteRebuildProps } from './RouteRebuild';
+import FlightSection from './FlightSection';
 import { fs } from '../settings/uiSettings';
 
 /** Props for ActivityPanel */
@@ -95,6 +96,8 @@ export interface ActivityPanelProps {
   onRoad?: (road: string) => void;
   /** Rebuilding the route on demand (AD-38): the suggestion and the marking, held by the page */
   rebuild?: Omit<RouteRebuildProps, 'detail' | 'onApplied'>;
+  /** A flight's path for the map: its flown track or the great circle between its airports (AD-42) */
+  onFlightPath?: (path: [number, number][] | null) => void;
 }
 
 /** Icon and text of a linked place's role */
@@ -220,6 +223,7 @@ const ActivityPanel: React.FC<ActivityPanelProps> = ({
   onRouteChanged,
   onRoad,
   rebuild,
+  onFlightPath,
 }) => {
   const s = detail.summary;
   const [editing, setEditing] = useState(false);
@@ -325,6 +329,7 @@ const ActivityPanel: React.FC<ActivityPanelProps> = ({
           </>
         )}
       </Typography>
+      {s.type === 'flight' && <FlightSection activityId={s.id} onPath={onFlightPath} />}
       {onRouteView && onRouteChanged && (
         <RouteLine
           detail={detail}

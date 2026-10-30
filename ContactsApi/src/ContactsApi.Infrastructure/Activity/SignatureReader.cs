@@ -129,7 +129,7 @@ public class SignatureReader
     }
 
     /// <summary>The charset of a part (Content-Type), e.g. windows-1255 for older Hebrew mail</summary>
-    private static string? CharsetOf(MessagePart p)
+    internal static string? CharsetOf(MessagePart p)
     {
         var type = p.Headers?.FirstOrDefault(h => string.Equals(h.Name, "Content-Type", StringComparison.OrdinalIgnoreCase))?.Value;
         var m = type == null ? null : System.Text.RegularExpressions.Regex.Match(type, @"charset=""?([^"";\s]+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
@@ -137,7 +137,7 @@ public class SignatureReader
     }
 
     /// <summary>Gmail's base64url body data as text ('' when it cannot be decoded)</summary>
-    private static string Decode(string data, string? charset)
+    internal static string Decode(string data, string? charset)
     {
         try
         {

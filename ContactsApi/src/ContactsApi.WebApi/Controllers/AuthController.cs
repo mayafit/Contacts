@@ -26,6 +26,12 @@ public class AuthController : ControllerBase
     /// <summary>Session key: where to go after the callback (set by an opt-in flow)</summary>
     private const string AfterLoginKey = "AfterLogin";
 
+    /// <summary>The pages an opt-in returns to (the Drive opt-in and email content from a flight return to Atlas)</summary>
+    private static readonly HashSet<string> OptInReturns = new(StringComparer.Ordinal)
+    {
+        "/contacts?connected=activity", "/contacts?connected=signatures", "/atlas?connected=takeout", "/atlas?connected=mail"
+    };
+
     private readonly ILogger<AuthController> _logger;
     private readonly IConfiguration _configuration;
     private readonly GoogleOAuthOptions _oauthOptions;
@@ -60,11 +66,12 @@ public class AuthController : ControllerBase
     /// <param name="consent">Show Google's consent screen (to get a new refresh token)</param>
     /// <param name="activity">Also ask for Gmail metadata and Calendar access (opt-in)</param>
     /// <param name="takeout">Also ask to read Takeout exports in Google Drive (opt-in, AD-40)</param>
+    /// <param name="back">Where an email-content opt-in returns: atlas (from a flight) or Contacts</param>
     /// <param name="again">Second step: ask for the scopes the callback found missing</param>
     /// <param name="hint">Account to sign in (second step)</param>
     public async Task<IActionResult> Login(
         [FromQuery] bool consent = false, [FromQuery] bool activity = false, [FromQuery] bool signatures = false,
-        [FromQuery] bool again = false, [FromQuery] string? hint = null, [FromQuery] bool takeout = false)
+        [FromQuery] bool again = false, [FromQuery] string? hint = null, [FromQuery] bool takeout = false, [FromQuery] string? back = null)
     {
         try
         {
@@ -94,7 +101,8 @@ public class AuthController : ControllerBase
             {
                 optIns.Signatures = true;
                 consent = true;
-                HttpContext.Session.SetString(AfterLoginKey, "/contacts?connected=signatures");
+                // From a flight (AD-42 rule 4): back to Atlas; any other value is ignored
+                HttpContext.Session.SetString(AfterLoginKey, back == "atlas" ? "/atlas?connected=mail" : "/contacts?connected=signatures");
             }
 
             // Drive is asked on top of a known account's opt-ins; signed out, they are not known
@@ -195,7 +203,7 @@ public class AuthController : ControllerBase
                 // Declining an opt-in (Gmail & Calendar, or email content) leaves the
                 // existing sign-in as it was
                 var optIn = HttpContext.Session.GetString(AfterLoginKey);
-                if (optIn is "/contacts?connected=activity" or "/contacts?connected=signatures" or "/atlas?connected=takeout"
+                if (optIn != null && OptInReturns.Contains(optIn)
                     && HttpContext.Session.GetString(GoogleTokenService.UserIdKey) != null)
                 {
                     HttpContext.Session.Remove(AfterLoginKey);
@@ -361,7 +369,7 @@ public class AuthController : ControllerBase
             var afterLogin = HttpContext.Session.GetString(AfterLoginKey);
             HttpContext.Session.Remove(AfterLoginKey);
             await HttpContext.Session.CommitAsync();
-            return RedirectToFrontend(afterLogin is "/contacts?connected=activity" or "/contacts?connected=signatures" ? afterLogin : "/");
+            return RedirectToFrontend(afterLogin != null && OptInReturns.Contains(afterLogin) ? afterLogin : "/");
         }
         catch (Exception ex)
         {

@@ -23,7 +23,7 @@ Echo is not greenfield. Two Areas already run in production at https://contacts.
 
 The rest of this document works as follows:
 - The Glossary (§3) fixes the vocabulary.
-- Features (§4) nest globally numbered requirements, FR-01 to FR-71. FR-51 to FR-54 were added after the Owner's answers of 2026-10-28, so they sit in the section they belong to, not in id order. FR-55 to FR-60 (route quality, §4.12) follow them. FR-61 (roads travelled), FR-62 (rebuild from similar drives) and FR-63 (mark the way) were added to §4.12 on 2026-10-29. FR-64 to FR-67 (place reviews, §4.13) and FR-68 to FR-71 (settings and appearance, §4.14) were added on 2026-10-30.
+- Features (§4) nest globally numbered requirements, FR-01 to FR-76. FR-51 to FR-54 were added after the Owner's answers of 2026-10-28, so they sit in the section they belong to, not in id order. FR-55 to FR-60 (route quality, §4.12) follow them. FR-61 (roads travelled), FR-62 (rebuild from similar drives) and FR-63 (mark the way) were added to §4.12 on 2026-10-29. FR-64 to FR-67 (place reviews, §4.13), FR-68 to FR-71 (settings and appearance, §4.14) and FR-72 to FR-76 (flights, §4.15) were added on 2026-10-30.
 - Cross-cutting quality requirements are NFR-01 to NFR-21 (§6).
 - Inferences are tagged `[ASSUMPTION]` and indexed in §13.
 - Technical "how" (mechanisms, storage, pipelines, remediation steps, and implementation details of Built behaviour such as error codes, scope names and thresholds) is in [prd-addendum.md](prd-addendum.md) for the architect.
@@ -802,6 +802,54 @@ Every text in Echo belongs to one of these kinds, including the texts sized outs
 - **Route styles**, for each activity type: line width, opacity, and pattern (solid, dashed, dotted). Also: the width of the selected route, the opacity of the others while one is selected, and the width and pattern of each piece of a road-matched route: observed, inferred (dashed by default) and gap (dotted by default).
 - **Charts**: the colours of speed, elevation and cadence, and of the five heart-rate zones. Heart rate has one colour everywhere (the chart, the Insights trend, the map's hover marker): the heart rate and health colour.
 
+### 4.15 Atlas: Flights (Proposed)
+
+Echo knows when the Owner flew (the Timeline records a flight as an activity, about 100 of them since 2014 in the first Owner's data), but not which flight it was: the line on the map runs from the phone's last point before take-off to its first point after landing, and the times are the phone's guesses. The Owner wants each flight to be a real flight: its flight number, the airline, the aircraft, the airports, the scheduled and the actual times, and the route it really flew.
+
+- **Who knows the flight number.** The Owner's mail does: booking confirmations, schedule changes and boarding passes name each flight (number, airports, date, local times). The Owner can also type it. Public flight data alone cannot tell which of several flights it was: on 27 Aug 2026 two Etihad flights left Abu Dhabi for Tel Aviv within 20 minutes of the recorded take-off (checked 2026-10-30), and Bangkok to Chiang Mai had three airlines within the hour.
+- **Who knows what happened.** Public ADS-B data (aircraft transmit their position, collected by volunteers' receivers) does: when the aircraft actually took off and landed, which aircraft it was, and, for recent flights, the path it flew. Echo uses **The OpenSky Network** for flights and tracks, and **adsbdb** for airline names and aircraft. Both are free; OpenSky needs an account, which the operator holds.
+- **Per Owner**, like the rest of Atlas (§2.2, NFR-07). A flight's details are Owner data derived from their activity and their mail; they are deleted with the activity and erased with the Owner (FR-49).
+
+#### FR-72: Which flight it was — Proposed
+Each flight activity can carry a **flight number** (airline code and number, as on the ticket: "EY593", "LY 315") and its **date**. It comes from, in order of precedence:
+1. **The Owner**, who types it (FR-74) or confirms a suggestion (FR-75); it always wins, and is kept across imports and searches;
+2. **The Owner's mail** (FR-73), found automatically;
+3. nothing: Echo then **suggests** the public flights that fit the recorded flight, for the Owner to confirm, and never sets one by itself.
+
+- **Airports.** Echo finds the departure and arrival airports from the flight's first and last recorded points: the airports with scheduled flights within **50 km**, nearest first (up to 3 each). A flight with no such airport at one end says so. A "flight" that starts and ends at the same airport, less than 100 km apart, is marked **probably not a flight** (the Timeline sometimes calls a fast drive a flight); the Owner can still type a flight number.
+- **When.** Echo looks for every flight by itself, the newest first, within the hour after the flight is imported, and again when the Owner types a number, clears it, confirms a suggestion, or asks **Search again** (what the Owner asked for goes first). A search that failed for a passing reason (a service busy or unreachable) is tried again the next hour, up to 5 times. A flight that landed less than 36 hours ago is looked up again every hour until then: public flight data is published the day after.
+- **Fused flights.** A flight recorded by two sources is one flight (FR-40); its details follow the fused activity.
+
+#### FR-73: Find the flight in my mail — Proposed
+With **email content** allowed (tier T2, §5.1), Echo searches the Owner's Gmail for the mails about each flight and takes the flight number from them.
+- **Which mails.** Mails that name both airports by their codes (as bookings, changes and boarding passes do, "TLV", "AUH"), received from a year before the flight to two days after it; the newest 20.
+- **What counts.** In a mail, a flight number counts for this flight when, after it, the mail names the departure airport, then the arrival airport, and a date that is the flight's day (or the day before, in the departure airport's time); and, when a time is given beside it, that time, in the departure airport's time zone, is between 4 hours before and 2 hours after the recorded take-off. Mails that describe their flights in the schema.org format airlines use for Gmail (`FlightReservation`) are read from that first.
+- **Which one.** Of the numbers that count, the one whose scheduled time is nearest the recorded take-off; between equals, the newest mail's (a schedule change replaces the booking).
+- **What is kept.** The flight number, the scheduled departure (and arrival, when the mail gives it), and which mail it came from: its subject, sender and date, and a link that opens it in Gmail. **Mail bodies are never stored**; they are read in memory and dropped. Nothing from the mail leaves Echo.
+- **Not allowed.** Without email content allowed, the flight panel says the mail was not searched and offers **Allow reading email content**, the same permission as the signatures of Contacts (T2). Once allowed, the flights that were not searched in mail are searched.
+
+#### FR-74: Type the flight number — Proposed
+In the flight's panel, the Owner can type the flight number. Its day is the flight's recorded day (in the departure airport's time): the flight is the activity, whose day is known.
+- Accepted as written on a ticket or a board: an airline's two-character code and a number ("EY593", "EY 593", "ey0593"), or its three-letter code ("ETD593"). Echo stores it in the two-character form, without leading zeros.
+- Echo looks it up at once and shows the result within a minute; the panel waits for it.
+- **Clear** removes the Owner's number; Echo then looks for the flight again by itself (mail, then suggestions).
+
+#### FR-75: The flight's actual details — Proposed
+For a flight with a number, Echo finds the actual flight in public data and shows:
+- **Airline**: its name and codes; **Operated by**, when another airline flew it (a codeshare: the mail says "EY7629", the aircraft flew as Bangkok Airways);
+- **Airports**: departure and arrival, with code, name and city;
+- **Times**, each in its airport's local time: **scheduled** departure and arrival (from the mail; not shown when the number was typed and no mail names it), **actual take-off and landing** (from ADS-B: when receivers first and last saw the aircraft near the airports, within a few minutes of the real take-off and landing), the **delay** against the schedule, and the **time in the air**;
+- **Aircraft**: type and registration (for example "Airbus A321neo · A6-AEA"), and the call sign it flew under;
+- **Distance**: great-circle distance between the airports.
+- **How it is matched.** The aircraft that left the departure airport around the scheduled time (or the recorded take-off) under the flight's call sign; or, when airlines fly under a call sign that is not the flight number (Etihad's EY593 flew as `ETD5SM`), the only flight that left that airport for the arrival airport within the scheduled window. When public data has no such flight (coverage is thinner before 2018 and at some airports), the panel shows what the mail said and says that no public record matched.
+- **Suggestions.** A flight without a number shows the public flights that fit it (left the airport near the recorded take-off and landed at the arrival airport near the recorded landing), at most 3, best first, each with its airline, call sign and times, and **This one**. Confirming one makes it the flight (FR-72). The choice names the flight itself (its aircraft and take-off), so a list that changed meanwhile never confirms another flight.
+- **Sources.** The panel names the sources ("Flight data: The OpenSky Network · Airlines and aircraft: adsbdb · Airports: OurAirports, mwgg/Airports") and when they were read.
+
+#### FR-76: The route it flew — Proposed
+- **The flown path.** For a flight that landed within the last **30 days** when Echo looks it up, Echo keeps the path the aircraft flew (OpenSky keeps tracks for 30 days only), with its altitude, and the map draws the flight along it.
+- **Otherwise** the map draws the great-circle arc between the actual departure and arrival airports (no longer between the phone's last and first points), and the panel says the flown path is not available for older flights.
+- The Owner's own recorded points stay as they are; the path is the aircraft's, drawn in the flight's style.
+
 ## 5. Privacy Model
 
 Privacy is a product pillar, not a compliance appendix. The requirements in §4.10 and NFR-07, NFR-08 and NFR-11 implement it.
@@ -812,7 +860,7 @@ Privacy is a product pillar, not a compliance appendix. The requirements in §4.
 |---|---|---|---|
 | **T0: Base** | Google Contacts (read/write); the Owner's profile (and, from Phase 0, their email address, checked against the allowlist, FR-51) | On at sign-in | Built |
 | **T1: Touchpoints** | Gmail headers (From/To/Cc/date), Calendar events (time, attendees, title) | Off | Built |
-| **T2: Email content** | The permission (`gmail.readonly`, which replaces the T1 Gmail permission) allows reading the whole mailbox. Echo reads only the last 3 emails from each Contact the Owner chooses (up to 10), processes them in memory and never stores them. | Off | Built |
+| **T2: Email content** | The permission (`gmail.readonly`, which replaces the T1 Gmail permission) allows reading the whole mailbox. Echo reads only the last 3 emails from each Contact the Owner chooses (up to 10), and, for each flight in Atlas, the newest 20 mails that name both its airports (FR-73). It processes them in memory and never stores them; of a flight's mails it keeps only the flight number, the scheduled times and which mail (subject, sender, date). | Off | Built (flights: Proposed) |
 | **T3: Life sources** | Each Atlas source connected or imported separately (Timeline, Sports Tracker, health exports, OneDrive photo metadata) | Off per source | Built |
 | **T4: Faces** | Face detections and templates computed from Photos | Off; separate biometric consent | Proposed |
 
@@ -835,6 +883,8 @@ Privacy is a product pillar, not a compliance appendix. The requirements in §4.
 | **Google Drive** (backups, Proposed; Q-8) | Nightly system-level backups of Echo's database, holding **every user's data**, encrypted before upload with a key held in Vault and never in Drive (NFR-05). They go to the operator's Drive, through a scope that reaches only the files the backup job creates. Google sees file names, sizes and times, not content. Face data is never in a backup. | Daily, once backups are set up (Phase 0) | Operator only (system level); an Owner's erase (FR-49) reaches backups when they expire |
 | **Sports Tracker** (unofficial API) | Login once; workout listing and downloads, on a schedule (FR-52) | T3 Sports Tracker | Disconnect |
 | **Cloudflare** | All traffic (tunnel, Access) | Always | none (hosting choice) |
+| **The OpenSky Network** (Proposed, FR-75, FR-76) | Airport codes and time windows ("flights that left LLBG between 07:00 and 13:00 UTC on 27 Aug 2026") and, for a recent flight, an aircraft's address and a time. No Owner identity is sent: the requests carry the operator's OpenSky account, not the Owner's. Together they reveal that someone using Echo was interested in that flight. | Once per flight looked up | Do not open flights; the operator can remove the OpenSky credentials (FR-72 then shows mail and typed numbers only) |
+| **adsbdb** (Proposed, FR-75) | Airline codes ("EY"), call signs ("ETD5SM") and aircraft addresses, without a key and without any Owner identity | Once per flight looked up (airlines cached) | as above |
 | **Geofabrik** (OpenStreetMap extracts, Proposed, FR-56, FR-60) | **Nothing about any Owner.** CI downloads the latest public map extract (Israel and Palestine, and later any region the operator adds; Geofabrik updates them daily) once a month to build the routing graph. The request comes from GitHub Actions, not from the cluster, and carries no user data. It is listed for completeness: road matching itself runs on Echo's cluster and sends nothing out (NFR-20). | Monthly, from CI | Operator only: remove a region from the build list |
 
 **Never shared:** face data (T4), stored tokens and secrets, or an Owner's whole data set in bulk to any party, apart from the encrypted backups above. Route tracks are never sent to a hosted routing or map-matching API (NFR-20). **No Owner's data is ever shared with another Owner.**

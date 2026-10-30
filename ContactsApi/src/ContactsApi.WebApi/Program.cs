@@ -115,6 +115,24 @@ builder.Services.AddSingleton<TakeoutDriveQueue>();
 builder.Services.AddSingleton<ITakeoutTokens, GoogleTakeoutTokens>();
 builder.Services.AddScoped<TakeoutDriveService>();
 builder.Services.AddHostedService<TakeoutDriveWorker>();
+// Flights (AD-42): the Owner's mail (T2), The OpenSky Network and adsbdb
+builder.Services.Configure<ContactsApi.Infrastructure.Atlas.Flights.OpenSkyOptions>(builder.Configuration.GetSection("OpenSky"));
+builder.Services.AddHttpClient(ContactsApi.Infrastructure.Atlas.Flights.OpenSkyClient.HttpClientName, c => c.Timeout = TimeSpan.FromSeconds(90));
+builder.Services.AddHttpClient(ContactsApi.Infrastructure.Atlas.Flights.AdsbdbClient.HttpClientName, c =>
+{
+    c.Timeout = TimeSpan.FromSeconds(20);
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("Echo/1.0 (personal atlas)");
+});
+builder.Services.AddSingleton<ContactsApi.Infrastructure.Atlas.Flights.IOpenSky>(sp => new ContactsApi.Infrastructure.Atlas.Flights.OpenSkyClient(
+    () => sp.GetRequiredService<IHttpClientFactory>().CreateClient(ContactsApi.Infrastructure.Atlas.Flights.OpenSkyClient.HttpClientName),
+    sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<ContactsApi.Infrastructure.Atlas.Flights.OpenSkyOptions>>(),
+    sp.GetRequiredService<ILogger<ContactsApi.Infrastructure.Atlas.Flights.OpenSkyClient>>()));
+builder.Services.AddSingleton<ContactsApi.Infrastructure.Atlas.Flights.IAdsbdb>(sp => new ContactsApi.Infrastructure.Atlas.Flights.AdsbdbClient(
+    () => sp.GetRequiredService<IHttpClientFactory>().CreateClient(ContactsApi.Infrastructure.Atlas.Flights.AdsbdbClient.HttpClientName)));
+builder.Services.AddSingleton<IFlightMail, GmailFlightMail>();
+builder.Services.AddSingleton<FlightQueue>();
+builder.Services.AddScoped<FlightService>();
+builder.Services.AddHostedService<FlightWorker>();
 builder.Services.AddHttpContextAccessor();
 
 // MCP server over the Atlas service (tools in AtlasMcpTools), at /api/mcp
