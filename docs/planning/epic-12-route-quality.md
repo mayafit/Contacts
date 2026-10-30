@@ -640,6 +640,36 @@ Acceptance criteria (FR-63, AD-38):
   interactive jobs; marking ends with an unrebuildable reload and is exclusive with
   the Area tool.
 
+### 12.19 Similar drives by the way, not the ends — R1
+
+As the Owner, I want a drive whose recording started late, stopped early or ended on
+a stray point rebuilt from the drives that run along its points, so that a commute
+with a bad end is not left with "no similar drive".
+
+Acceptance criteria (FR-62, AD-38 rule 3, amended 2026-10-30):
+- [x] `matched_routes.Cells` (bigint[], no index of its own): the 0.01° cells within 200 m of the
+  line, written with every line and filled at start-up for rows matched before it
+  (migration `RoutesCells`; no rule bump).
+- [x] Stray points (reached and left faster than 1.5 × the maximum, with 60 s of
+  slack) take no part in the search.
+- [x] The pool: rows whose cells hold at least 60% of the drive's points (counted in the
+  query); rows without cells yet by both ends; the best 200 by cover, ends, time.
+- [x] Each line scored in both directions; dropped when its span is faster than the
+  type's maximum; scored by fit, time of day, kind of day, detour and ends.
+- [x] The best 30 grouped into ways (90% of the span within 150 m); the bases tried
+  are the best of up to three ways; the basis says how many drives take its way.
+- [x] `no_similar` says when drives are still being prepared.
+- [x] The panel: "From 40 similar drives (12 take this way), the closest on …".
+- [x] Review fixes: the cover counted in the query (a home cell alone matches almost
+  every row); a teleport second point no longer makes the first stray; the same-way
+  count includes agreeing drives beyond the best 30; rows without their own start time
+  are not scored on the time; the backfill fills only what is missing and survives a
+  bad line; the cells hold at any latitude.
+- [x] Tests: pure (cells, also far north; stray points and ends; a late start and an
+  early stop; direction; pace; ways and their size; kinds of day; untimed rows),
+  Postgres (the corridor pool, a shared start cell alone, the fallback by ends, the
+  backfill, cells written on apply), Jest (the basis text).
+
 ## Coverage
 
 | Requirement | Stories |
@@ -651,7 +681,7 @@ Acceptance criteria (FR-63, AD-38):
 | FR-59 Route quality in Insights | 12.10 |
 | FR-60 Routes abroad | 12.11 |
 | FR-61 Roads travelled | 12.16 |
-| FR-62 Rebuild from similar drives | 12.17 |
+| FR-62 Rebuild from similar drives | 12.17, 12.19 |
 | FR-63 Mark the way | 12.18 |
 | NFR-20 Route matching stays home | 12.1, 12.2 |
 | NFR-21 Route quality fits the Pi | 12.1, 12.5, 12.7 |

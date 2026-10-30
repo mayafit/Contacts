@@ -278,7 +278,8 @@ describe('rebuild texts (AD-38)', () => {
       reversed: true,
       fit: 0.9,
       candidates: 14,
-      agreeing: 6,
+      agreeing: 14,
+      sameWay: 6,
       examples: [],
     },
     ...s,
@@ -286,11 +287,18 @@ describe('rebuild texts (AD-38)', () => {
 
   it('says what a rebuild was based on', () => {
     expect(rebuildText(suggestion())).toMatch(
-      /^From 14 drives between the same places \(6 follow this one\), the closest on 3 Sept? at \d\d:12, the other way$/,
+      /^From 14 similar drives \(6 take this way\), the closest on 3 Sept? at \d\d:12, the other way$/,
     );
     expect(
-      rebuildText(suggestion({ basis: { ...suggestion().basis!, agreeing: 14, reversed: false } })),
-    ).not.toMatch(/follow|other way/);
+      rebuildText(suggestion({ basis: { ...suggestion().basis!, sameWay: 14, reversed: false } })),
+    ).not.toMatch(/take this way|other way/);
+    expect(
+      rebuildText(suggestion({ basis: { ...suggestion().basis!, sameWay: 1, reversed: false } })),
+    ).toMatch(/\(1 takes this way\)/);
+    // A basis stored before ways were counted
+    expect(
+      rebuildText(suggestion({ basis: { ...suggestion().basis!, agreeing: 1, sameWay: undefined } })),
+    ).toMatch(/^From 1 similar drive, the closest/);
     expect(rebuildText(suggestion({ method: 'waypoints', waypoints: [[32, 34.8]] }))).toBe(
       'Through the 1 point you marked',
     );

@@ -36,21 +36,21 @@ public static class Rebuilder
     public const double GoodEnough = 0.95;
 
     /// <summary>
-    /// The best rebuild from similar drives: for each of the best <see cref="SimilarRoutes.Tries"/>
-    /// bases, at each spacing, borrow and match, and keep the most confident (stopping
+    /// The best rebuild from similar drives: for each of the first <see cref="SimilarRoutes.Tries"/>
+    /// bases of the rank (the best of up to three ways), at each spacing, borrow and match, and keep the most confident (stopping
     /// early only at <see cref="GoodEnough"/>). The confidence is min(the match's, the
     /// basis's fit). Null when no candidate fits.
     /// </summary>
     public static async Task<RebuildOutcome?> SimilarAsync(IReadOnlyList<RoutePoint> points, IReadOnlyList<SimilarCandidate> candidates,
         string type, string costing, string source, MatchSettings settings, IValhallaClient engine, EngineBreaker breaker, CancellationToken ct)
     {
-        var options = SimilarRoutes.Rank(points, candidates);
+        var maxSpeed = RouteQuality.ProfileFor(type).MaxSpeedKmh;
+        var options = SimilarRoutes.Rank(points, candidates, SimilarRoutes.Tries, maxSpeed);
         if (options.Count == 0)
         {
             return null;
         }
 
-        var maxSpeed = RouteQuality.ProfileFor(type).MaxSpeedKmh;
         RebuildOutcome? best = null;
         var tried = 0;
         foreach (var (basis, line) in options)

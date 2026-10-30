@@ -335,7 +335,7 @@ const dayAndTime = (iso: string): string => {
 /**
  * What a rebuild was based on, in a line (AD-38).
  * @param s - The suggestion
- * @returns e.g. "From 14 similar drives (6 agree), the closest on 3 Sep at 08:12, the other way"
+ * @returns e.g. "From 14 similar drives (6 take this way), the closest on 3 Sep at 08:12, the other way"
  */
 export const rebuildText = (s: RebuildSuggestion): string => {
   if (s.method === 'waypoints') {
@@ -346,9 +346,13 @@ export const rebuildText = (s: RebuildSuggestion): string => {
   if (!b) {
     return '';
   }
-  const scored = `${b.candidates} drive${b.candidates === 1 ? '' : 's'} between the same places`;
-  const agree = b.agreeing === b.candidates ? '' : ` (${b.agreeing} follow this one)`;
-  return `From ${scored}${agree}, the closest on ${dayAndTime(b.start)}${b.reversed ? ', the other way' : ''}`;
+  const similar = `${b.agreeing} similar drive${b.agreeing === 1 ? '' : 's'}`;
+  // How many of them take the basis's way (absent on bases stored before ways were counted)
+  const way =
+    typeof b.sameWay === 'number' && b.sameWay < b.agreeing
+      ? ` (${b.sameWay} take${b.sameWay === 1 ? 's' : ''} this way)`
+      : '';
+  return `From ${similar}${way}, the closest on ${dayAndTime(b.start)}${b.reversed ? ', the other way' : ''}`;
 };
 
 /**

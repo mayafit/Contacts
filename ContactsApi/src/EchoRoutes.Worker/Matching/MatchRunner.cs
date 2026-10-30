@@ -323,6 +323,7 @@ public class MatchRunner
         row.Polyline = result.Polyline;
         // Reads take a pre-simplified line (lists 400 vertices, density 80), never the full one
         (row.ListPolyline, row.DensityPolyline) = result.Polyline != null ? RouteLines.Derive(result.Polyline) : (null, null);
+        row.Cells = result.Polyline != null ? RouteCells.Line(result.Polyline) : null;
         row.Pieces = JsonSerializer.Serialize(result.Pieces, Json);
         row.MatchedDistanceM = result.Polyline != null ? result.LengthM : null;
         // The roads it follows, for the panel and the road filter (AD-37)
@@ -392,6 +393,7 @@ public class MatchRunner
         row.Polyline = null;
         row.ListPolyline = null;
         row.DensityPolyline = null;
+        row.Cells = null;
         row.Pieces = "[]";
         row.MatchedDistanceM = null;
         row.Roads = null;
@@ -460,6 +462,7 @@ public class MatchRunner
         row.Polyline = null;
         row.ListPolyline = null;
         row.DensityPolyline = null;
+        row.Cells = null;
         row.Pieces = "[]";
         row.MatchedDistanceM = null;
         row.Roads = null;
@@ -556,17 +559,32 @@ public class MatchRunner
     }
 
     /// <summary>
-    /// Fills the list and density lines of rows stored before they existed, a page at a
+    /// Fills the list and density lines and the corridor cells of rows stored before they existed, a page at a
     /// time; returns how many rows it filled (0: none are left)
     /// </summary>
     public async Task<int> FillLinesAsync(int page, CancellationToken ct)
     {
         var rows = await _db.MatchedRoutes
-            .Where(m => m.Polyline != null && (m.ListPolyline == null || m.DensityPolyline == null))
+            .Where(m => m.Polyline != null && (m.ListPolyline == null || m.DensityPolyline == null || m.Cells == null))
             .OrderBy(m => m.Id).Take(Math.Max(1, page)).ToListAsync(ct);
         foreach (var row in rows)
         {
-            (row.ListPolyline, row.DensityPolyline) = RouteLines.Derive(row.Polyline!);
+            // Only what is missing; a line that cannot be read gets no cells (never retried forever)
+            try
+            {
+                if (row.ListPolyline == null || row.DensityPolyline == null)
+                {
+                    (row.ListPolyline, row.DensityPolyline) = RouteLines.Derive(row.Polyline!);
+                }
+
+                row.Cells ??= RouteCells.Line(row.Polyline!);
+            }
+            catch (Exception ex) when (ex is ArgumentException or IndexOutOfRangeException or FormatException or OverflowException)
+            {
+                row.ListPolyline ??= row.Polyline;
+                row.DensityPolyline ??= row.Polyline;
+                row.Cells ??= Array.Empty<long>();
+            }
         }
 
         await _db.SaveChangesAsync(ct);
