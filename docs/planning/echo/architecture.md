@@ -1418,6 +1418,99 @@ Image availability was checked on 2026-10-28. Resource figures for the Israel ex
 - The symbols are hidden while the form is disabled (saving).
 - **Table** (`EditableCell`). In edit mode, an empty **Phonetic name** or **Email** text box ends with the same symbol (a spinner while it works). A found value fills the box (saved with Enter, as typing); a menu lists the addresses to pick from ("None of these"), or says why nothing was found ("No mail from “Dana Cohen”", "Could not spell “לב”: …") with the permission link when that is why.
 
+## 5F. Favourites, Labels and Segments (FR-79 to FR-84)
+
+No rule in this section or in §5G calls a language model: favourites, labels, segments, suggested segments, profiles and the dossier are computed by the rules below (the Owner's decision of 2026-10-31).
+
+### AD-44 — A favourite is Google's Starred membership; Echo keeps every label in step with Google by a membership check, not a full reload
+
+- **Binds:** `redux/thunks/labelThunks.ts` (`changeMembership`, `refreshContacts`), `contactsSlice` (`membershipChanged`), `hooks/useLabelSync.ts`, `ContactsController` (`GET /api/contacts/groups/members`), `GooglePeopleApiClient.GroupMembersAsync`, the star (`components/common/FavouriteStar.tsx`) in `ContactsTable`, `MobileContactList` and `ContactCardDrawer`, the selection toolbar of `ContactsHome`, `model/favourites.ts`, `insights/FavouritesCard.tsx`; FR-79 to FR-81; AD-5.
+- **Prevents:**
+  - a favourites list of Echo's own that disagrees with the phone's;
+  - a star changed in Google or on a phone that Echo shows only after a reload;
+  - a save refused (412) because a membership change moved the contact's etag;
+  - reloading thousands of Contacts every few minutes to learn of one star.
+- **Rule:**
+  1. **Identity.** A Contact is a favourite when its `labels` hold `contactGroups/starred`. Nothing else stores it.
+  2. **Change** (`changeMembership(resourceNames, label, on)`): the store changes first (`membershipChanged`: each Contact's `labels`, and the group's `memberCount`), then `POST /api/contacts/labels {labelResourceName, add | remove}` (chunks of 1,000, AD-5's existing path); then `refreshContacts`: each changed Contact is read again for its new etag (more than **25**: the whole list is fetched again, as the Assistant's apply did; that function moves to `labelThunks.ts` and serves both). Google refusing: the store change is undone and the caller says so ("Could not add Dana Cohen to favourites: …").
+  3. **The check** (`useLabelSync`, mounted by `ContactsHome`): **60 s** after the Contacts load, then every **5 minutes** while `document.visibilityState` is `visible`, and when the page becomes visible after at least **60 s** of the last check. A check is `GET /api/contacts/groups` (names and counts) and `GET /api/contacts/groups/members`: the members of `contactGroups/starred`, of every user label and of the Trash label, from one `contactGroups:batchGet` (`maxMembers` 20,000; at most 200 groups). Then, for every Contact in the store, its labels among those groups are compared with the members: a Contact whose set differs is changed in the store and read again (`refreshContacts`); a member not in the store (a Contact made elsewhere) makes the whole list fetched again. Labels of other system groups (`myContacts`…) are left as they are. A check that fails is skipped silently; the next one tries again. No check runs while one is running or while a change (rule 2) is in flight.
+  4. **Where the star is.** In the table, inside the **Name** cell before the avatar (always present, whatever the column set); in the phone list, at the row's end before the call buttons; in the card's header after the name; a click does not open the card. Filled amber when a favourite, an outline otherwise; `aria-pressed`, label "Add to favourites" / "Remove from favourites". The selection toolbar adds **Add to favourites** and **Remove from favourites** for the checked rows.
+  5. **Finding.** The filter chip **Favourites** (count; shown when there is any). The Assistant's `search_contacts` filters take `favourite` (`has: ["favourite"]` lists the favourites, `missing` the others).
+  6. **The Favourites card** (Insights; T1 for the lists): **Gone quiet**: favourites with `overdueOf(activity)` (FR-13), or whose last touch is more than **180** days ago, or with none; the most overdue first, at most 10. **Suggested**: Contacts not favourites whose tier (AD-45 rule 6) is `inner` or `regular`, by activity score (emails + 3 × meetings, last 12 months) descending, at most **10**, each with **Add** (rule 2). Without T1 the card shows the count only.
+
+### AD-45 — Labels are managed in Google; segments are Echo-side rules evaluated in the browser; suggested segments come from grouping, not from a model
+
+- **Binds:** `ContactsController` (`POST`, `PUT`, `DELETE /api/contacts/groups…`), `GooglePeopleApiClient` (`CreateGroupAsync`, `RenameGroupAsync`, `DeleteGroupAsync`), `OwnerSettings` kind `segments`, `model/segments.ts` (rules, evaluation, tiers, normalization), `model/callingCodes.ts`, `components/segments/*` (menu, editor, labels manager), the card's label editor, `insights/SuggestedSegments.tsx`; FR-82 to FR-84.
+- **Prevents:**
+  - a segment that is a frozen copy of yesterday's members;
+  - a label changed in Google without the Owner seeing the change (P-2);
+  - a label deleted with its Contacts;
+  - suggested groups that depend on a model's judgement.
+- **Rule:**
+  1. **Labels.** `POST /api/contacts/groups {name}` creates a user label; `PUT /api/contacts/groups/{id} {name}` renames one (`contactGroups.update` with the group's current etag, read first); `DELETE /api/contacts/groups/{id}` deletes the label only (`deleteContacts=false`). Only user labels (`USER_CONTACT_GROUP`), never the Trash label nor a system group (400 `INVALID_LABEL`). A name is 1 to 100 characters after trimming, not a system group's name, and unique among the user labels ignoring case (409 `LABEL_EXISTS`). Each change is followed by `fetchContactGroups` (and, for a delete, removing the label from the Contacts in the store).
+  2. **Membership in the card.** The header's label chips are editable: × removes, a search box (existing labels, or "Create “…”") adds. These apply at once through AD-44 rule 2, not with **Save**: memberships are not fields of the Contact's patch. The selection toolbar's **Label…** menu adds the checked rows to a label (or a new one) or removes them from one.
+  3. **A segment** (`Segment {id, name, match: all | any, rules, label?}`), stored per Owner in `OwnerSettings` kind `segments` as `{version: 1, segments}` (at most **100** segments of at most **20** rules, within the store's 64 KB). Rules, each `{kind, op?, value?, days?}`:
+     - `label` in / not in (a label's resource name); `favourite` true / false;
+     - `organization` is / contains (normalized, rule 5); `emailDomain` is (any address's domain, lower case);
+     - `phoneCountry` is (a calling code, rule 4); `script` is `hebrew` / `latin` / `mixed` (`scriptOf` of the name);
+     - `field` has / missing: `phone`, `email`, `phonetic`, `birthday`, `address`, `organization`, `photo` (a photo that is not Google's default), `website`;
+     - `birthdayMonth` is 1 to 12;
+     - `lastTouch` within N days / more than N days ago / never; `tier` is one of rule 6's (these two need the activity, T1);
+     - `text`: the search box's matching (`matchesQuery`).
+     `all` with no rule matches everyone; `any` with no rule, no one. A rule that needs the activity when there is none (T1 off) matches no one, and the editor says "needs Gmail & Calendar".
+  4. **Phone country.** From the number's E.164 form (`canonicalForm`, or a number written with `+` or `00`): the longest prefix of 1 to 3 digits found in `callingCodes.ts` (the ITU list, with country names; `+1` is "USA/Canada"). A number in national form (starting `0`) is the Owner's main country: the most common code among their Contacts' international numbers, `972` when none.
+  5. **Organization.** Normalized: lower case, punctuation (including `״`, `"`, `'`) removed, white space collapsed, and the last word dropped while it is a company suffix (`ltd`, `limited`, `inc`, `incorporated`, `corp`, `corporation`, `llc`, `plc`, `gmbh`, `co`, `company`, `בעמ`, `בע מ`). "Elta Systems Ltd." and "ELTA SYSTEMS" are one; "Elta" is another (exact after normalizing; `contains` covers the rest).
+  6. **Relationship tier** (`tierOf(activity, now)`), from the activity's 12-month score (emails + 3 × meetings) and the days since the last touch: `inner` score ≥ **24** and ≤ **30** days; `regular` score ≥ **6** and ≤ **90** days; `occasional` ≤ **365** days; `dormant` a touch longer ago; `never` no touch. First that applies.
+  7. **The segment menu** (beside the label filter): the segments with their live counts, **New segment…**, and **Manage labels…**. Choosing one filters the table as the label filter does (both can apply). The editor shows the live count while editing.
+  8. **Linked label.** A segment may name a user label. Its difference is computed each time: *add* = members not in the label, *remove* = Contacts in the label not members. The menu shows "+3 −1" beside it; **Update label** lists both (names) and applies them through AD-44 rule 2. Never by itself.
+  9. **Suggested segments** (`suggestSegments(contacts, activity)`): groups of **3** or more, largest first, at most **8** per kind: organization (rule 5, non-empty); work email domain (not a personal mail service, AD-43 rule 8's list); phone country other than the main one (rule 4); tier (rule 6, T1; all five, also when small); script (`hebrew`, `latin`, `mixed`). Each offers **Save as segment** (one rule) and **Create label** (a label named as the group, with its members, through AD-44 rule 2), and hides once saved.
+- **Alternatives considered:**
+  - storing segments as Google labels only (rejected: Google has no rules; a label is a fixed list);
+  - keeping a linked label updated automatically (rejected: P-2, Echo shows every write first);
+  - clustering Contacts with embeddings or a model (rejected: the Owner asked for traditional methods; exact groupings are explainable);
+  - a separate star column (rejected: a column the Owner's saved column set does not include would not appear).
+
+## 5G. Public Profiles and the Dossier (FR-85 to FR-89)
+
+### AD-46 — Profiles come from links on the Contact, Gravatar by email hash and the person's own signatures, matched by identity only; the dossier is computed in the browser
+
+- **Binds:** `model/profiles.ts` (`classifyUrl`, `profilesOf`), `model/dossier.ts` (colleagues, segments, relationship), `components/card/Dossier.tsx`, `insights/ProfilesCard.tsx` and its review dialog, `ProfilesController` (`/api/profiles…`), `ProfileStore`, `ProfileQueue`, `ProfileWorker` (WebApi), `GravatarClient` and `SignatureLinks` (Infrastructure, `Activity/`); FR-85 to FR-89; T0 (email addresses), T2 (signatures); P-6.
+- **Prevents:**
+  - a stranger's profile attached to a Contact because the names are alike;
+  - scraping LinkedIn or Facebook (their terms forbid it, and they block it);
+  - an email address sent to a third party (only its hash is);
+  - a profile written to Google without the Owner choosing it;
+  - Gravatar's limit exceeded, or one Owner's backlog delaying another's forever.
+- **Rule:**
+  1. **Recognising a link** (`classifyUrl`): the URL (with `https://` added when it has no scheme) is parsed; the host loses `www.`, `m.` and a LinkedIn country prefix (`il.`). Then, first that fits:
+     - `linkedin.com/in/{id}` → LinkedIn (a person); other `linkedin.com` paths → LinkedIn (a page);
+     - `facebook.com` or `fb.com` `/{name}` (not `sharer`, `share`, `groups`, `events`, `pages`, `watch`, `login`) or `/profile.php?id={n}` → Facebook;
+     - `instagram.com/{name}` → Instagram; `x.com` or `twitter.com/{name}` (not `intent`, `share`, `home`, `i`, `search`) → X;
+     - `github.com/{name}` (not `orgs`, `sponsors`, `features`, `topics`, `about`) → GitHub; `tiktok.com/@{name}` → TikTok;
+     - `youtube.com/@{h}`, `/c/{x}`, `/channel/{id}`, `/user/{x}` → YouTube; `t.me/{name}` → Telegram; `medium.com/@{name}` or `{name}.medium.com` → Medium; `wa.me/{n}` → WhatsApp;
+     - any other `http(s)` URL → Website (its host).
+     Its key is the network and the handle in lower case (a website: the host and path); two links with one key are one profile. Its canonical URL is `https://host/path` without query, fragment or final `/` (`profile.php` keeps `id`).
+  2. **On the Contact** (FR-85): each of `urls` (source `contact`); each phone that is a mobile number → WhatsApp `https://wa.me/{E.164 digits}` (Israeli mobile numbers converted as the device actions do).
+  3. **Gravatar** (FR-86):
+     - **Hash.** The browser computes SHA-256 of each address trimmed and in lower case (`crypto.subtle`), and sends only hashes. Gravatar's own key for a profile is that hash.
+     - **On, off.** `POST /api/profiles/enable` turns it on for the Owner; `DELETE /api/profiles` turns it off and deletes everything stored. While on, the browser sends the hashes of all Contact addresses at each load of the Contacts (`POST /api/profiles/hashes`, at most 20,000); the server queues each hash it has not checked in the last **30** days and has not queued.
+     - **Store** (`ProfileStore`, Redis, as the activity snapshot: one value per Owner, encrypted with the protector `Echo.Contacts.Profiles.v1`, AD-11; no expiry while on): `{enabled, queue: [hash], entries: {hash: {checkedAt, found, profile?}}}`.
+     - **Worker** (`ProfileWorker`, a hosted service; `ProfileQueue` the Owners with a non-empty queue, refilled by `POST …/hashes`): one request at a time for the whole server, Owners in turn (one hash each), at least **2 s** apart. `GET https://api.gravatar.com/v3/profiles/{hash}` (with `Authorization: Bearer {Gravatar__ApiKey}` when that Vault key is set; then 1,000 an hour, otherwise **100**). `X-RateLimit-Remaining` 0, or a 429: the worker sleeps until `X-RateLimit-Reset` (one hour without it). 404: `found = false`. 200: the profile, kept as `displayName`, `jobTitle`, `company`, `location`, `description` (at most 500 characters), `profileUrl`, and `verified_accounts` and `links` (at most 10 each, `https` only, each `{label, url}`). Another status or no answer: the hash goes back to the end of the queue, and the worker waits **5 minutes** before Gravatar again.
+     - **Read.** `GET /api/profiles` returns `{enabled, checked, pending, found, limitedUntil, profiles: {hash: profile}}` (found ones only). The browser maps hashes back to its Contacts.
+  4. **Signatures** (FR-87; T2, else 403 `SIGNATURES_NOT_CONNECTED`): `POST /api/profiles/signatures {emails}` (one Contact, at most 5 addresses) reads the last **3** emails from those addresses (`SignatureReader.RecentFromAsync`, as FR-15) and takes, from each email's author tail (`SignatureText.AuthorTail`, which drops quoted mail), every match of `(?:https?://|www\.)[^\s<>"'()\[\]]+` and of a bare `linkedin.com/in/…`, cleaned by `SignatureText.CleanUrl`, distinct, at most 20. The reply is `{emails, urls}`; nothing is stored. The browser keeps the social profiles (rule 1), and websites only when their host is (or ends with) the domain of one of the person's addresses (their own company), so a newsletter's link is not taken for theirs.
+  5. **Add to contact** (FR-88): a profile not on the Contact (its key matches none of the Contact's `urls`) offers **Add to contact**: in the card it goes into the draft's `urls` as `{value: canonical URL, type: network name}` (saved with **Save**); in Insights' **Review links** (the Contacts with such profiles, ticked by the Owner), each Contact is updated once with its ticked links (`buildPatch`, its etag, AD-5), as the suggested emails are.
+  6. **The dossier** (FR-89), computed in the browser for the open Contact:
+     - **Profiles**: rules 2 to 4 merged by key; each with its sources (`contact`, `gravatar`, `signature`) and whether it is on the Contact.
+     - **About**: Gravatar's fields, labelled "from Gravatar".
+     - **Relationship**: tier (AD-45 rule 6), last email sent and received, last and next meeting, emails and meetings of the last 12 months, the usual rhythm (`describeGap`), the awaiting threads (FR-13).
+     - **Shared context**: favourite; labels; the segments it is a member of; **colleagues**: other Contacts with the same normalized organization (AD-45 rule 5, non-empty) or an address at the same work domain (not a personal service), at most **8**, by activity score then name; its relations.
+  7. **The Profiles card** (Insights): off, it explains what is sent and to whom and offers **Find public profiles**; on, "Checked N of M addresses · K profiles found · about H hours to go" (pending ÷ the hourly limit), **Review links** (when there are profiles to add) and **Turn off and forget**.
+- **Alternatives considered:**
+  - searching LinkedIn, Facebook or the web by name (rejected: it guesses who a person is, and scraping those sites breaks their terms);
+  - GitHub's user search by email (rejected: it finds only addresses users made public, 10 searches a minute; Gravatar's verified accounts include GitHub);
+  - Clearbit, People Data Labs and similar enrichment services (rejected: paid, and they sell profiles assembled about people without their part);
+  - reading the signatures with Gemini (rejected: the Owner asked for traditional methods; links have a fixed form).
+
 ## 6. Consistency Conventions
 
 | Concern | Convention |
@@ -1584,6 +1677,17 @@ routing/regions.txt                  # Geofabrik regions built into the tiles im
 | FR-76 The route it flew | Proposed | OpenSky `/tracks/all`, `Details.track`, `AtlasMap` `flightPath` | AD-42 | 1 |
 | FR-77 Fill the phonetic name from the Hebrew name | Proposed | `model/phonetic.ts`, `useCardAutofill`, `POST /api/assistant/transliterate`, `ContactForm.tsx` | AD-43 | 1 |
 | FR-78 Find the email in my mail | Proposed | `model/emailFind.ts`, `POST /api/activity/find-email`, `GmailMailSenders`, `ContactForm.tsx`, `cellAssist.tsx` | AD-43 | 1 |
+| FR-79 Mark favourites, in step with Google | Proposed | `changeMembership`, `useLabelSync`, `GET /api/contacts/groups/members`, `FavouriteStar` | AD-44 | 1 |
+| FR-80 Find favourites | Proposed | the Favourites chip, `search_contacts` `favourite` | AD-44 | 1 |
+| FR-81 Keep favourites close | Proposed | `model/favourites.ts`, `FavouritesCard` | AD-44, AD-45 | 1 |
+| FR-82 Labels, managed | Proposed | `/api/contacts/groups` create, rename, delete; the card's label editor; **Label…** | AD-45, AD-44 | 1 |
+| FR-83 Smart segments | Proposed | `model/segments.ts`, `OwnerSettings` `segments`, the segment menu and editor | AD-45 | 1 |
+| FR-84 Suggested segments | Proposed | `suggestSegments`, `tierOf`, `SuggestedSegments` | AD-45 | 1 |
+| FR-85 Profiles on file | Proposed | `classifyUrl`, `profilesOf` | AD-46 | 1 |
+| FR-86 Public profiles by email | Proposed | `ProfilesController`, `ProfileStore`, `ProfileWorker`, `GravatarClient` | AD-46 | 1 |
+| FR-87 Links in their signatures | Proposed | `POST /api/profiles/signatures`, `SignatureLinks` | AD-46 | 1 |
+| FR-88 Into the Contact | Proposed | `Dossier.tsx`, the Review links dialog | AD-46, AD-5 | 1 |
+| FR-89 The dossier | Proposed | `model/dossier.ts`, `Dossier.tsx` | AD-46 | 1 |
 | FR-67 Reviews from a scheduled Takeout on Drive | Proposed | `OptIns.Takeout`, `GoogleDriveTakeout`, `GoogleReviewsParser`, `TakeoutDriveService`, `TakeoutDriveWorker`, `/api/atlas/connections/google-drive`, the Google Drive tab | AD-40, AD-39 | 1 |
 | FR-60 Routes abroad | Proposed | `routing/regions.txt`, region outlines, per-region counts | AD-32 | R3 |
 

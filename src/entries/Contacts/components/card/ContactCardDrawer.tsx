@@ -9,7 +9,6 @@ import {
   Alert,
   Box,
   Button,
-  Chip,
   CircularProgress,
   Dialog,
   DialogActions,
@@ -36,12 +35,13 @@ import { contactUpdated, updateContact } from '../../redux/slices/contacts/conta
 import { GoogleContactsService } from '../../services/GoogleContactsService';
 import { selectContactEntities } from '../../redux/slices/contacts/selectors';
 import ContactAvatar from '../common/ContactAvatar';
+import FavouriteStar from '../common/FavouriteStar';
+import LabelEditor from './LabelEditor';
 import ContactForm from './ContactForm';
 import { buildPatch, changedGroups, createDraft, validateDraft } from './cardModel';
 import {
   getDisplayName,
   getJobTitle,
-  getLabelNames,
   getOrganization,
   getPhoneticName,
 } from '../../model/contactView';
@@ -173,6 +173,21 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({
     }
   }, [resourceName]);
 
+  // A star or label changed (here or by the check against Google) moves the contact's etag
+  // without changing its fields: the card takes the new etag and labels, so Save is not
+  // refused as a conflict (AD-44 rule 2)
+  useEffect(() => {
+    if (
+      contact &&
+      original &&
+      contact.resourceName === original.resourceName &&
+      contact.etag !== original.etag &&
+      changedGroups(original, createDraft(contact)).length === 0
+    ) {
+      setOriginal({ ...original, etag: contact.etag, labels: contact.labels });
+    }
+  }, [contact]);
+
   const dirtyGroups = useMemo(
     () => (original && draft ? changedGroups(original, draft) : []),
     [original, draft],
@@ -244,7 +259,6 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({
   const requestClose = () => (dirty ? setConfirmClose(true) : onClose());
 
   const open = !!resourceName && !!draft && !!original;
-  const labels = original ? getLabelNames(original, groups) : [];
   const phonetic = original ? getPhoneticName(original) : '';
   const orgLine = original
     ? [getJobTitle(original), getOrganization(original)].filter(Boolean).join(' · ')
@@ -266,13 +280,16 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({
             <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-start', p: 3, pb: 2 }}>
               <ContactAvatar contact={original} size={60} />
               <Box sx={{ flex: 1, minWidth: 0 }}>
-                <Typography
-                  variant="h2"
-                  dir="auto"
-                  sx={{ wordBreak: 'break-word', textAlign: 'left' }}
-                >
-                  {getDisplayName(original)}
-                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.5 }}>
+                  <Typography
+                    variant="h2"
+                    dir="auto"
+                    sx={{ wordBreak: 'break-word', textAlign: 'left' }}
+                  >
+                    {getDisplayName(original)}
+                  </Typography>
+                  <FavouriteStar contact={contact ?? original} size="medium" />
+                </Box>
                 <Typography
                   variant="body2"
                   dir="auto"
@@ -331,9 +348,7 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({
                 <Box
                   sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap', mt: 1, alignItems: 'center' }}
                 >
-                  {labels.map((l) => (
-                    <Chip key={l} label={l} size="small" sx={{ bgcolor: tokens.surface }} />
-                  ))}
+                  <LabelEditor contact={contact ?? original} groups={groups} />
                   <Link
                     href={googleContactsUrl(original.resourceName)}
                     target="_blank"

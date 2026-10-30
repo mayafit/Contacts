@@ -24,6 +24,15 @@ public class BatchDeleteRequest
 /// <summary>
 /// Request to add contacts to, and remove them from, one label
 /// </summary>
+public class LabelNameRequest
+{
+    /// <summary>The label's name</summary>
+    public string Name { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Request to add contacts to, and remove them from, one label
+/// </summary>
 public class LabelMembersRequest
 {
     /// <summary>Label by name (created when missing and contacts are added)</summary>

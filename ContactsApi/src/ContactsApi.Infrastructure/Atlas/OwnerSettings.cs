@@ -19,7 +19,7 @@ public record OwnerSettingsDoc(JsonElement Json, DateTime? UpdatedAt);
 public class OwnerSettingsService
 {
     /// <summary>The kinds of settings kept</summary>
-    public static readonly HashSet<string> Kinds = new(StringComparer.Ordinal) { "ui" };
+    public static readonly HashSet<string> Kinds = new(StringComparer.Ordinal) { "ui", "segments" };
 
     /// <summary>The largest document kept (UTF-8 bytes)</summary>
     public const int MaxBytes = 64 * 1024;

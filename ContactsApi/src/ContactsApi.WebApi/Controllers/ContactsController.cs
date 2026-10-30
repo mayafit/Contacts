@@ -115,6 +115,114 @@ public class ContactsController : ControllerBase
     }
 
     /// <summary>
+    /// The members of the starred group, every user label and the Trash label, for the
+    /// browser's check against Google (AD-44 rule 3)
+    /// </summary>
+    /// <returns>Label → its members</returns>
+    [HttpGet("groups/members")]
+    public async Task<IActionResult> GetGroupMembers()
+    {
+        var accessToken = await _tokens.GetAccessTokenAsync(HttpContext);
+        if (string.IsNullOrEmpty(accessToken))
+        {
+            return Unauthorized(ApiResponse<object>.ErrorResponse("SESSION_EXPIRED", "Your Google session expired. Please sign in again."));
+        }
+
+        var apiClient = new GooglePeopleApiClient(accessToken, _loggerFactory.CreateLogger<GooglePeopleApiClient>());
+        var groups = (await apiClient.ListContactGroupsAsync())
+            .Where(g => g.GroupType == "USER_CONTACT_GROUP" || g.ResourceName == "contactGroups/starred")
+            .Select(g => g.ResourceName)
+            .ToList();
+        var members = await apiClient.GroupMembersAsync(groups);
+        return Ok(ApiResponse<object>.SuccessResponse(new { members }));
+    }
+
+    /// <summary>Creates a user label (AD-45 rule 1)</summary>
+    /// <param name="request">Its name</param>
+    /// <returns>The label</returns>
+    [HttpPost("groups")]
+    public async Task<IActionResult> CreateGroup([FromBody] LabelNameRequest request)
+    {
+        var accessToken = await _tokens.GetAccessTokenAsync(HttpContext);
+        if (string.IsNullOrEmpty(accessToken))
+        {
+            return Unauthorized(ApiResponse<object>.ErrorResponse("SESSION_EXPIRED", "Your Google session expired. Please sign in again."));
+        }
+
+        var apiClient = new GooglePeopleApiClient(accessToken, _loggerFactory.CreateLogger<GooglePeopleApiClient>());
+        var name = (request?.Name ?? string.Empty).Trim();
+        var refusal = LabelNames.Check(name, await apiClient.ListContactGroupsAsync(), null);
+        if (refusal != null)
+        {
+            return refusal.Value.Code == "LABEL_EXISTS"
+                ? Conflict(ApiResponse<object>.ErrorResponse(refusal.Value.Code, refusal.Value.Message))
+                : BadRequest(ApiResponse<object>.ErrorResponse(refusal.Value.Code, refusal.Value.Message));
+        }
+
+        var created = await apiClient.CreateGroupAsync(name);
+        _logger.LogInformation("Created label {Label}", created.ResourceName);
+        return Ok(ApiResponse<ContactGroup>.SuccessResponse(created));
+    }
+
+    /// <summary>Renames a user label (AD-45 rule 1)</summary>
+    /// <param name="id">The label's id (after "contactGroups/")</param>
+    /// <param name="request">Its new name</param>
+    /// <returns>Nothing</returns>
+    [HttpPut("groups/{id}")]
+    public async Task<IActionResult> RenameGroup(string id, [FromBody] LabelNameRequest request)
+    {
+        var accessToken = await _tokens.GetAccessTokenAsync(HttpContext);
+        if (string.IsNullOrEmpty(accessToken))
+        {
+            return Unauthorized(ApiResponse<object>.ErrorResponse("SESSION_EXPIRED", "Your Google session expired. Please sign in again."));
+        }
+
+        var apiClient = new GooglePeopleApiClient(accessToken, _loggerFactory.CreateLogger<GooglePeopleApiClient>());
+        var resourceName = $"contactGroups/{id}";
+        var groups = await apiClient.ListContactGroupsAsync();
+        if (!LabelNames.IsOwnLabel(resourceName, groups))
+        {
+            return BadRequest(ApiResponse<object>.ErrorResponse("INVALID_LABEL", "Only your own labels can be renamed"));
+        }
+
+        var name = (request?.Name ?? string.Empty).Trim();
+        var refusal = LabelNames.Check(name, groups, resourceName);
+        if (refusal != null)
+        {
+            return refusal.Value.Code == "LABEL_EXISTS"
+                ? Conflict(ApiResponse<object>.ErrorResponse(refusal.Value.Code, refusal.Value.Message))
+                : BadRequest(ApiResponse<object>.ErrorResponse(refusal.Value.Code, refusal.Value.Message));
+        }
+
+        await apiClient.RenameGroupAsync(resourceName, name);
+        return Ok(ApiResponse<object>.SuccessResponse(new { resourceName, name }));
+    }
+
+    /// <summary>Deletes a user label, never its contacts (AD-45 rule 1)</summary>
+    /// <param name="id">The label's id (after "contactGroups/")</param>
+    /// <returns>Nothing</returns>
+    [HttpDelete("groups/{id}")]
+    public async Task<IActionResult> DeleteGroup(string id)
+    {
+        var accessToken = await _tokens.GetAccessTokenAsync(HttpContext);
+        if (string.IsNullOrEmpty(accessToken))
+        {
+            return Unauthorized(ApiResponse<object>.ErrorResponse("SESSION_EXPIRED", "Your Google session expired. Please sign in again."));
+        }
+
+        var apiClient = new GooglePeopleApiClient(accessToken, _loggerFactory.CreateLogger<GooglePeopleApiClient>());
+        var resourceName = $"contactGroups/{id}";
+        if (!LabelNames.IsOwnLabel(resourceName, await apiClient.ListContactGroupsAsync()))
+        {
+            return BadRequest(ApiResponse<object>.ErrorResponse("INVALID_LABEL", "Only your own labels can be deleted"));
+        }
+
+        await apiClient.DeleteGroupAsync(resourceName);
+        _logger.LogInformation("Deleted label {Label}", resourceName);
+        return Ok(ApiResponse<object>.SuccessResponse(new { resourceName }));
+    }
+
+    /// <summary>
     /// Delete several contacts
     /// </summary>
     /// <param name="request">Contacts to delete (1-500)</param>
