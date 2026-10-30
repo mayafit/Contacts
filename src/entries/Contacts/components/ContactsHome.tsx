@@ -44,10 +44,33 @@ import {
   Logout as LogoutIcon,
   Refresh,
   Search,
+  Star,
+  StarBorder,
   ViewColumn,
 } from '@mui/icons-material';
 import { logoutUser } from '../redux/slices/auth/authSlice';
 import TrashView from './cleanup/TrashView';
+import { isFavourite, STAR_COLOR } from './common/FavouriteStar';
+import { onNotify } from './common/notify';
+import { useLabelSync } from '../hooks/useLabelSync';
+import { changeMembership, STARRED } from '../redux/thunks/labelThunks';
+import { useSegments } from '../hooks/useSegments';
+import {
+  labelDiff,
+  mainCountryOf,
+  matchesSegment,
+  membersOf,
+  newSegmentId,
+  type Segment,
+  type SegmentContext,
+} from '../model/segments';
+import SegmentMenu, { type SegmentFigures } from './segments/SegmentMenu';
+import SegmentEditor from './segments/SegmentEditor';
+import LabelsManager from './segments/LabelsManager';
+import UpdateLabelDialog from './segments/UpdateLabelDialog';
+import LabelMenu from './segments/LabelMenu';
+import FavouritesCard from './insights/FavouritesCard';
+import SuggestedSegments from './insights/SuggestedSegments';
 import { trashContacts } from '../redux/thunks/cleanupThunks';
 import { selectIsAuthenticated, selectUser } from '../redux/slices/auth/selectors';
 import SignedOutHome from './SignedOutHome';
@@ -112,6 +135,7 @@ export const TRASH_LABEL_NAME = 'Contacts app – Trash';
 
 const FILTERS: { id: ContactFilter; label: string }[] = [
   { id: 'all', label: 'All' },
+  { id: 'favourites', label: 'Favourites' },
   { id: 'missingPhonetic', label: 'Missing phonetic' },
   { id: 'noPhone', label: 'No phone' },
   { id: 'noEmail', label: 'No email' },
@@ -162,6 +186,10 @@ const SignedInHome: React.FC = () => {
   const [mergeTargets, setMergeTargets] = useState<Contact[] | null>(null);
   const [deletePermanent, setDeletePermanent] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  // Messages from stars and label chips anywhere in the workspace
+  useEffect(() => onNotify(setToast), []);
+  // Favourites and labels in step with Google (AD-44 rule 3)
+  useLabelSync(allContacts);
   const [reviewDomain, setReviewDomain] = useState<DomainInsight | null>(null);
   const [isColumnConfigOpen, setIsColumnConfigOpen] = useState(false);
   const [accountAnchor, setAccountAnchor] = useState<HTMLElement | null>(null);
@@ -192,6 +220,14 @@ const SignedInHome: React.FC = () => {
     () => (activity.people ? buildActivityIndex(contacts, activity.people) : undefined),
     [contacts, activity.people],
   );
+
+  // Epic 17: segments (AD-45)
+  const segmentsState = useSegments();
+  const { segments } = segmentsState;
+  const [segmentId, setSegmentId] = useState<string | null>(null);
+  const [editingSegment, setEditingSegment] = useState<Segment | null>(null);
+  const [labelsOpen, setLabelsOpen] = useState(false);
+  const [updateFor, setUpdateFor] = useState<Segment | null>(null);
 
   useEffect(() => {
     backendApiClient
@@ -285,10 +321,34 @@ const SignedInHome: React.FC = () => {
     () => new Map(contacts.map((c) => [c.resourceName, searchTextOf(c)])),
     [contacts],
   );
+  const mainCountry = useMemo(() => mainCountryOf(contacts), [contacts]);
+  const segmentCtx = useMemo<SegmentContext>(
+    () => ({ activity: activityIndex ?? null, mainCountry, now: new Date(), searchIndex }),
+    [activityIndex, mainCountry, searchIndex],
+  );
+  const segmentMembers = useMemo(
+    () => new Map(segments.map((s) => [s.id, membersOf(contacts, s, segmentCtx)])),
+    [segments, contacts, segmentCtx],
+  );
+  const segmentFigures = useMemo(() => {
+    const figures = new Map<string, SegmentFigures>();
+    segments.forEach((s) => {
+      const members = segmentMembers.get(s.id) ?? [];
+      // A label deleted since is no link
+      const diff = s.label && groups[s.label] ? labelDiff(members, contacts, s.label) : null;
+      figures.set(s.id, {
+        count: members.length,
+        diff: diff ? { add: diff.add.length, remove: diff.remove.length } : undefined,
+      });
+    });
+    return figures;
+  }, [segments, segmentMembers, contacts, groups]);
+  const activeSegment = segments.find((s) => s.id === segmentId) ?? null;
 
   const predicates = useMemo<Record<ContactFilter, (c: Contact) => boolean>>(
     () => ({
       all: () => true,
+      favourites: isFavourite,
       missingPhonetic: (c) => !getPhoneticName(c),
       noPhone: (c) => !c.phoneNumbers?.some((p) => p.value),
       noEmail: (c) => !c.emailAddresses?.some((e) => e.value),
@@ -324,9 +384,20 @@ const SignedInHome: React.FC = () => {
           predicates[filter](c) &&
           (!selection || selection.ids.has(c.resourceName)) &&
           (!label || (c.labels ?? []).includes(label)) &&
+          (!activeSegment || matchesSegment(c, activeSegment, segmentCtx)) &&
           matchesQuery(c, deferredQuery, searchIndex.get(c.resourceName)),
       ),
-    [contacts, predicates, filter, selection, label, deferredQuery, searchIndex],
+    [
+      contacts,
+      predicates,
+      filter,
+      selection,
+      label,
+      activeSegment,
+      segmentCtx,
+      deferredQuery,
+      searchIndex,
+    ],
   );
 
   /** Shows a set of contacts in the table, replacing other filters */
@@ -533,6 +604,20 @@ const SignedInHome: React.FC = () => {
     [checked, byResourceName],
   );
 
+  /** Adds the contacts to favourites or removes them (AD-44 rule 2) */
+  const setFavourites = useCallback(
+    async (list: Contact[], on: boolean) => {
+      const targets = list.filter((c) => isFavourite(c) !== on).map((c) => c.resourceName);
+      const refused = await changeMembership(dispatch, targets, STARRED, on);
+      setToast(
+        refused
+          ? `Favourites not changed: ${refused}`
+          : `${fmt.format(targets.length)} ${on ? 'added to' : 'removed from'} favourites`,
+      );
+    },
+    [dispatch],
+  );
+
   // Checks apply to what is on screen: a new search or filter starts a new
   // selection, so a delete can never include rows the user cannot see.
   useEffect(() => {
@@ -637,6 +722,23 @@ const SignedInHome: React.FC = () => {
           </Button>
           <Button
             size="small"
+            startIcon={<Star sx={{ color: STAR_COLOR }} />}
+            onClick={() => void setFavourites(checkedContacts, true)}
+            disabled={checkedContacts.every(isFavourite)}
+          >
+            Add to favourites
+          </Button>
+          <Button
+            size="small"
+            startIcon={<StarBorder />}
+            onClick={() => void setFavourites(checkedContacts, false)}
+            disabled={!checkedContacts.some(isFavourite)}
+          >
+            Remove from favourites
+          </Button>
+          <LabelMenu contacts={checkedContacts} groups={groups} onDone={setToast} />
+          <Button
+            size="small"
             startIcon={<SaveAlt />}
             onClick={async () => {
               const how = await saveToDevice(checkedContacts, `${checkedContacts.length} contacts`);
@@ -712,6 +814,24 @@ const SignedInHome: React.FC = () => {
             ))}
           </Select>
         )}
+        <SegmentMenu
+          segments={segments}
+          figures={segmentFigures}
+          active={activeSegment}
+          onSelect={setSegmentId}
+          onNew={() =>
+            setEditingSegment({
+              id: newSegmentId(),
+              name: '',
+              match: 'all',
+              rules: [],
+              label: null,
+            })
+          }
+          onEdit={setEditingSegment}
+          onManageLabels={() => setLabelsOpen(true)}
+          onUpdateLabel={setUpdateFor}
+        />
         <Box sx={{ flex: 1 }} />
         <Typography
           variant="body2"
@@ -1019,6 +1139,12 @@ const SignedInHome: React.FC = () => {
               onReviewDomain={setReviewDomain}
               activitySection={
                 <>
+                  <FavouritesCard
+                    contacts={contacts}
+                    activity={activityIndex ?? null}
+                    onOpenCard={setCardFor}
+                    onShowFavourites={() => showFilter('favourites')}
+                  />
                   <ReachOutSection
                     contacts={contacts}
                     index={activityIndex}
@@ -1056,6 +1182,19 @@ const SignedInHome: React.FC = () => {
                     onOpenCard={setCardFor}
                     onShowContacts={showContacts}
                     onAddContact={addContactForEmail}
+                  />
+                  <SuggestedSegments
+                    contacts={contacts}
+                    ctx={segmentCtx}
+                    segments={segments}
+                    groups={groups}
+                    onSave={segmentsState.save}
+                    onShow={(members, title) =>
+                      showContacts(
+                        members.map((m) => m.resourceName),
+                        title,
+                      )
+                    }
                   />
                 </>
               }
@@ -1133,6 +1272,33 @@ const SignedInHome: React.FC = () => {
           count > 0 && setToast(`Updated ${count} contacts from their signatures`)
         }
       />
+      <SegmentEditor
+        segment={editingSegment}
+        contacts={contacts}
+        groups={groups}
+        ctx={segmentCtx}
+        onSave={async (s) => {
+          await segmentsState.save(s);
+          setSegmentId(s.id);
+        }}
+        onDelete={async (id) => {
+          await segmentsState.remove(id);
+          if (segmentId === id) {
+            setSegmentId(null);
+          }
+        }}
+        onClose={() => setEditingSegment(null)}
+      />
+      <LabelsManager open={labelsOpen} groups={groups} onClose={() => setLabelsOpen(false)} />
+      {updateFor?.label && groups[updateFor.label] && (
+        <UpdateLabelDialog
+          open
+          label={updateFor.label}
+          labelName={groups[updateFor.label]?.name ?? 'label'}
+          {...labelDiff(segmentMembers.get(updateFor.id) ?? [], contacts, updateFor.label)}
+          onClose={() => setUpdateFor(null)}
+        />
+      )}
       <SuggestEmailsDialog
         open={suggestOpen}
         onClose={() => setSuggestOpen(false)}

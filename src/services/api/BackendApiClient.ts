@@ -656,6 +656,46 @@ export class BackendApiClient {
     return unwrap(response, 'Failed to update the label').label;
   }
 
+  /** The members of the starred group and of every user label (AD-44 rule 3) */
+  async groupMembers(): Promise<Record<string, string[]>> {
+    return unwrap(
+      await this.request<{ members: Record<string, string[]> }>('/contacts/groups/members'),
+      'Failed to read the labels',
+    ).members;
+  }
+
+  /** Creates a user label (AD-45 rule 1) */
+  async createLabel(name: string): Promise<ContactGroup> {
+    return unwrap(
+      await this.request<ContactGroup>('/contacts/groups', {
+        method: 'POST',
+        body: JSON.stringify({ name }),
+      }),
+      'Failed to create the label',
+    );
+  }
+
+  /** Renames a user label */
+  async renameLabel(resourceName: string, name: string): Promise<void> {
+    unwrap(
+      await this.request<object>(`/contacts/groups/${resourceName.replace(/^contactGroups\//, '')}`, {
+        method: 'PUT',
+        body: JSON.stringify({ name }),
+      }),
+      'Failed to rename the label',
+    );
+  }
+
+  /** Deletes a user label, never its contacts */
+  async deleteLabel(resourceName: string): Promise<void> {
+    unwrap(
+      await this.request<object>(`/contacts/groups/${resourceName.replace(/^contactGroups\//, '')}`, {
+        method: 'DELETE',
+      }),
+      'Failed to delete the label',
+    );
+  }
+
   // ===================================
   // Atlas (activities, places, visits, health)
   // ===================================
@@ -1212,7 +1252,7 @@ export class BackendApiClient {
    * The Owner's settings document of a kind (AD-41): an empty object when none was saved.
    * @param kind - ui
    */
-  async settings(kind: 'ui'): Promise<{ json: unknown; updatedAt: string | null }> {
+  async settings(kind: 'ui' | 'segments'): Promise<{ json: unknown; updatedAt: string | null }> {
     return unwrap(
       await this.request<{ json: unknown; updatedAt: string | null }>(`/settings/${kind}`),
       'Loading the settings failed',
@@ -1225,7 +1265,7 @@ export class BackendApiClient {
    * @param json - The document
    * @param keepalive - Sent even if the page closes meanwhile
    */
-  async saveSettings(kind: 'ui', json: unknown, keepalive = false): Promise<void> {
+  async saveSettings(kind: 'ui' | 'segments', json: unknown, keepalive = false): Promise<void> {
     unwrap(
       await this.request<unknown>(`/settings/${kind}`, {
         method: 'PUT',
@@ -1241,7 +1281,7 @@ export class BackendApiClient {
    * @param kind - ui
    * @param keepalive - Sent even if the page closes meanwhile
    */
-  async resetSettings(kind: 'ui', keepalive = false): Promise<void> {
+  async resetSettings(kind: 'ui' | 'segments', keepalive = false): Promise<void> {
     unwrap(
       await this.request<unknown>(`/settings/${kind}`, { method: 'DELETE', keepalive }),
       'Resetting the settings failed',

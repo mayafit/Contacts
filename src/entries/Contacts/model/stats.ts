@@ -20,6 +20,7 @@ import {
 /** Filters the Contacts view understands; Insights links into them */
 export type ContactFilter =
   | 'all'
+  | 'favourites'
   | 'missingPhonetic'
   | 'noPhone'
   | 'noEmail'

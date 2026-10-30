@@ -22,6 +22,7 @@ import type { ColumnDefinition } from '../../features/columnConfig/types';
 import { EditableCell } from '../EditableCell';
 import { cellAssistFor } from './cellAssist';
 import ContactAvatar from '../common/ContactAvatar';
+import FavouriteStar from '../common/FavouriteStar';
 import AlphabetRail, { type RailEntry } from '../common/AlphabetRail';
 import {
   compareByName,
@@ -354,7 +355,14 @@ const ContactsTable: React.FC<ContactsTableProps> = ({
         contactName={name}
         placeholder={PLACEHOLDERS[column.id] ?? ''}
         strong={column.id === 'displayName'}
-        leading={column.id === 'displayName' ? <ContactAvatar contact={contact} /> : undefined}
+        leading={
+          column.id === 'displayName' ? (
+            <>
+              <FavouriteStar contact={contact} quiet />
+              <ContactAvatar contact={contact} />
+            </>
+          ) : undefined
+        }
         onCommit={(text) => commit(contact, column, text)}
         onOpenCard={() => onOpenCard(contact.resourceName)}
         onNavigate={(dir) => navigate(rowIndex, colIndex, dir)}
@@ -465,6 +473,8 @@ const ContactsTable: React.FC<ContactsTableProps> = ({
                         : 'transparent',
                     boxShadow: selected ? `inset 3px 0 0 ${tokens.accent}` : 'none',
                     '&:hover': { bgcolor: selected ? 'rgba(57,135,229,0.16)' : tokens.hover },
+                    // The star's outline shows on the row under the pointer (AD-44 rule 4)
+                    '&:hover .favourite-off': { opacity: 1 },
                   }}
                 >
                   {selectable && (

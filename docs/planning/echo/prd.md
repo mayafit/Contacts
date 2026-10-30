@@ -882,6 +882,78 @@ An email field that is empty shows a **find in mail** symbol inside it; a Contac
 - **Without T2** only the activity scan's names are checked, and when nothing is found the card offers **Allow reading email content** (the T2 opt-in; it leaves the page, so the card says so). Without T1 either, only the mailbox search would run, so the symbol asks for that permission.
 - **Nothing is stored**: the senders are read in memory for the click and dropped.
 
+### 4.17 Contacts: Favourites (Proposed)
+
+The Owner keeps a short list of the people who matter most, the same list their phone's contacts app and Google Contacts show as **favourites** (Google calls it **Starred**). Echo shows it, edits it and keeps it in step with Google; it adds what Google lacks: finding favourites quickly, noticing when one has gone quiet, and suggesting people who behave like favourites.
+
+- **No AI.** Favourites, segments (§4.18) and profiles (§4.19) use rules, counts and exact matches only; nothing is sent to Gemini or any other language model (the Owner's decision, 2026-10-31).
+
+#### FR-79: Mark favourites, in step with Google — Proposed
+- **One list.** A Contact is a favourite exactly when it is in Google's **Starred** group. Echo keeps no list of its own: starring in Echo stars in Google (and so on the Owner's phones), and starring in Google or on a phone shows in Echo.
+- **Where.** A star on each row of the table and of the phone list, in the contact card's header, and, for the selected rows, **Add to favourites** / **Remove from favourites**. One click (or tap) toggles it; the star changes at once and goes back, with a message, if Google refuses.
+- **From Google.** Echo checks Google's favourites a minute after it opens, every 5 minutes while it is in view, and when the Owner comes back to it after a minute or more away; a change made elsewhere shows within that time without reloading. The same check updates every other label (FR-82).
+
+#### FR-80: Find favourites — Proposed
+- A **Favourites** filter chip (with its count), and favourites as a segment rule (FR-83).
+- The Assistant's contact search can be limited to favourites.
+
+#### FR-81: Keep favourites close — Proposed
+With touchpoints (tier T1), Insights shows a **Favourites** card:
+- **Gone quiet**: favourites whose last email or meeting is overdue against their usual rhythm (FR-13's rule), or more than 6 months ago, or never; each opens the contact.
+- **Suggested favourites**: people who are not favourites but are in the Owner's **inner circle** or are **regular** contacts (FR-84's relationship tiers), most in touch first, at most 10, each with **Add**.
+- The count of favourites and how many are in touch in the last 3 months.
+
+### 4.18 Contacts: Groups and Segments (Proposed)
+
+The Owner wants to divide their Contacts into groups. Echo offers three layers, from what syncs everywhere to what Echo computes:
+
+#### FR-82: Labels, managed — Proposed
+Google's labels (contact groups) are the groups the Owner's phones and Google Contacts know. Echo already shows them and filters by one; now the Owner can also:
+- **create, rename and delete** labels (deleting a label never deletes its Contacts; the confirmation says how many it holds);
+- **add and remove** Contacts: in the contact card (the label chips become editable: add with a search box, remove with the chip's ×), and for the selected rows (**Label…**: add to a label, a new one, or remove from one);
+- see labels change when they change in Google (FR-79's check).
+
+#### FR-83: Smart segments — Proposed
+A **segment** is a saved rule: "favourites at Elta", "Hebrew names without a phonetic name", "people I have not written to in a year". Its members are computed from the Contacts each time, so they stay current.
+- **Rules** combine (all or any of) conditions on: a label (in, not in); favourite; organization (is, contains); email domain; phone country (by calling code: Israel, the USA, the UK…); name script (Hebrew, English, mixed); a field present or missing (phone, email, phonetic name, birthday, address, organization, photo, website); birthday month; last in touch (within, more than N days ago, never) and relationship tier (FR-84), these two with T1; and free text (as the search box).
+- **Use.** A **Segments** menu beside the label filter lists them with their counts; choosing one filters the table. Each can be edited, duplicated or deleted. The live count shows while editing.
+- **Into Google.** A segment can be **linked to a label**: Echo then shows when the label and the segment differ ("+3 to add, 1 to remove") and **Update label** makes them the same. Echo never changes the label by itself (P-2: the Owner sees every write).
+- **Per Owner**, stored in Echo (not in Google, which has no rules), and never shared.
+
+#### FR-84: Suggested segments — Proposed
+Insights proposes segments found in the Contacts by grouping, each with its count, **Save as segment** and **Create label**:
+- **Organization**: Contacts whose organization names are the same once case, punctuation and company suffixes ("Ltd", "Inc.", "בע"מ") are set aside; 3 or more.
+- **Email domain**: Contacts sharing a work email domain (not a personal mail service); 3 or more.
+- **Phone country**: Contacts by their numbers' country; 3 or more, other than the Owner's main country, which is everyone.
+- **Relationship tier** (T1), from the last 12 months of emails and meetings (an email counts 1, a meeting 3): **Inner circle** (24 or more, and in touch in the last 30 days), **Regular** (6 or more, in the last 90 days), **Occasional** (in touch in the last year), **Dormant** (in touch before, not in the last year), **Never in touch**.
+- **Name script**: Hebrew, English, mixed (for clean-up).
+
+### 4.19 Contacts: Public Profiles and the Dossier (Proposed)
+
+Tools like Nimble show, for each person, their social profiles and everything the user shares with them. Echo does it from **public, keyed sources and exact matches**, never by guessing who someone is from a name: a profile is linked to a Contact only through something that identifies the person (a link on the Contact, their email address, their own mail signature).
+
+#### FR-85: Profiles on file — Proposed
+The links already on a Contact (its websites) are recognised by site and shown as profiles: LinkedIn, Facebook, Instagram, X, GitHub, TikTok, YouTube, Telegram, Medium, and websites. A phone number that can receive WhatsApp shows as a WhatsApp link.
+
+#### FR-86: Public profiles by email — Proposed
+**Gravatar** is a public profile service people fill in themselves; looked up by an email address's hash (not the address), it returns the person's public profile: name, job title, company, location, a short bio, and the accounts they verified (X, LinkedIn, GitHub, Instagram…).
+- **Off until the Owner starts it** (P-6: it widens what leaves Echo). **Find public profiles** in Insights turns it on, after saying what is sent (a SHA-256 hash of each Contact's email address) and to whom.
+- **Automatic.** Once on, Echo looks up every Contact email address in the background, about 100 an hour (Gravatar's limit without a key; 1,000 with one), and again after 30 days; new Contacts and addresses are looked up as they appear. A progress line says how many are checked and how many profiles were found.
+- **Turn off and forget** stops it and deletes what was found.
+
+#### FR-87: Links in their signatures — Proposed
+With email content (tier T2), the dossier can read the last 3 emails a Contact sent and take the profile and website links from **their own signature** (the end of their text, not quoted mail), by pattern, not by AI. Nothing of the mail is kept.
+
+#### FR-88: Into the Contact — Proposed
+A profile found (FR-86, FR-87) and not on the Contact is offered with **Add to contact**: it becomes one of the Contact's websites in Google, typed by its site ("LinkedIn"), and so reaches the Owner's phones. Insights lists the Contacts with profiles to add; the Owner ticks the links and adds them together. Echo never adds one by itself.
+
+#### FR-89: The dossier — Proposed
+The contact card opens with a **Dossier**, everything Echo knows about the person in one place:
+- **Profiles**: on the Contact, from Gravatar, from their signatures, each with its source and, when new, **Add to contact**.
+- **About**: Gravatar's job title, company, location and bio (labelled as such), and the Contact's own organization and title.
+- **Relationship** (T1): the tier, the last email and meeting, the next meeting, the emails and meetings of the last 12 months, the usual rhythm, threads awaiting a reply.
+- **Shared context**: favourite, its labels and segments, **colleagues** (other Contacts with the same organization or work email domain, at most 8, each opening their card), and its relations.
+
 ## 5. Privacy Model
 
 Privacy is a product pillar, not a compliance appendix. The requirements in §4.10 and NFR-07, NFR-08 and NFR-11 implement it.
@@ -892,7 +964,7 @@ Privacy is a product pillar, not a compliance appendix. The requirements in §4.
 |---|---|---|---|
 | **T0: Base** | Google Contacts (read/write); the Owner's profile (and, from Phase 0, their email address, checked against the allowlist, FR-51) | On at sign-in | Built |
 | **T1: Touchpoints** | Gmail headers (From/To/Cc/date), Calendar events (time, attendees, title) | Off | Built |
-| **T2: Email content** | The permission (`gmail.readonly`, which replaces the T1 Gmail permission) allows reading the whole mailbox. Echo reads only the last 3 emails from each Contact the Owner chooses (up to 10), and, for each flight in Atlas, the newest 20 mails that name both its airports (FR-73). When the Owner asks to find a Contact's email (FR-78), it reads the sender (name and address) of the newest 25 mails Gmail finds from that Contact's names, and nothing else of them. It processes them in memory and never stores them; of a flight's mails it keeps only the flight number, the scheduled times and which mail (subject, sender, date). | Off | Built (flights, find email: Proposed) |
+| **T2: Email content** | The permission (`gmail.readonly`, which replaces the T1 Gmail permission) allows reading the whole mailbox. Echo reads only the last 3 emails from each Contact the Owner chooses (up to 10), and, for each flight in Atlas, the newest 20 mails that name both its airports (FR-73). When the Owner asks to find a Contact's email (FR-78), it reads the sender (name and address) of the newest 25 mails Gmail finds from that Contact's names, and nothing else of them. When the Owner asks a Contact's dossier for the links in their signatures (FR-87), it reads that Contact's last 3 emails and keeps only the links. It processes them in memory and never stores them; of a flight's mails it keeps only the flight number, the scheduled times and which mail (subject, sender, date). | Off | Built (flights, find email: Proposed) |
 | **T3: Life sources** | Each Atlas source connected or imported separately (Timeline, Sports Tracker, health exports, OneDrive photo metadata) | Off per source | Built |
 | **T4: Faces** | Face detections and templates computed from Photos | Off; separate biometric consent | Proposed |
 
@@ -916,6 +988,7 @@ Privacy is a product pillar, not a compliance appendix. The requirements in §4.
 | **Sports Tracker** (unofficial API) | Login once; workout listing and downloads, on a schedule (FR-52) | T3 Sports Tracker | Disconnect |
 | **Cloudflare** | All traffic (tunnel, Access) | Always | none (hosting choice) |
 | **Google Cloud Translation** (Proposed, FR-77) | A Contact's name (first, middle and last name), in the sentence "שמי …" ("My name is …"), when the Owner clicks to fill its phonetic name and the Owner's own Contacts do not spell every word of it. The request carries the operator's API key, not the Owner's identity. | Only on that click, at most 30 a minute per Owner | Do not click the fill; the operator can remove the key (the fill then uses Gemini for those words) |
+| **Gravatar** (Automattic; Proposed, FR-86) | The SHA-256 hash of each Contact email address (not the address), from Echo's server, without the Owner's identity (the operator's key, if any). Gravatar learns that someone asked about that hash. | Only after the Owner turns on **Find public profiles**; then in the background, each address once per 30 days | Turn off and forget (deletes what was found) |
 | **The OpenSky Network** (Proposed, FR-75, FR-76) | Airport codes and time windows ("flights that left LLBG between 07:00 and 13:00 UTC on 27 Aug 2026") and, for a recent flight, an aircraft's address and a time. No Owner identity is sent: the requests carry the operator's OpenSky account, not the Owner's. Together they reveal that someone using Echo was interested in that flight. | Once per flight looked up | Do not open flights; the operator can remove the OpenSky credentials (FR-72 then shows mail and typed numbers only) |
 | **adsbdb** (Proposed, FR-75) | Airline codes ("EY"), call signs ("ETD5SM") and aircraft addresses, without a key and without any Owner identity | Once per flight looked up (airlines cached) | as above |
 | **Geofabrik** (OpenStreetMap extracts, Proposed, FR-56, FR-60) | **Nothing about any Owner.** CI downloads the latest public map extract (Israel and Palestine, and later any region the operator adds; Geofabrik updates them daily) once a month to build the routing graph. The request comes from GitHub Actions, not from the cluster, and carries no user data. It is listed for completeness: road matching itself runs on Echo's cluster and sends nothing out (NFR-20). | Monthly, from CI | Operator only: remove a region from the build list |
