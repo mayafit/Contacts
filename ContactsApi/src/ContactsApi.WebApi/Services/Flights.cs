@@ -599,7 +599,7 @@ public class FlightService
 
             if (match == null)
             {
-                details.Candidates = await CandidatesAsync(FlightMatch.RouteFits(flights, arrivals, sched, start, end).Take(FlightMatch.SuggestionCount)
+                details.Candidates = await CandidatesAsync(FlightMatch.RouteFits(flights, arrivals, sched, start, end, icaos).Take(FlightMatch.SuggestionCount)
                     .Select(f => (f, 0)), ct);
                 row.Status = FlightStatus.MailOnly;
                 row.Note = details.Candidates.Count > 0
@@ -630,7 +630,8 @@ public class FlightService
         details.Callsign = flight.Callsign;
         details.Icao24 = flight.Icao24;
         details.Takeoff = flight.FirstSeen;
-        details.Landing = flight.LastSeen;
+        // Without an estimated arrival, the last sighting is where receivers lost the aircraft, not its landing
+        details.Landing = flight.Arrival == null && match.By != "confirmed" ? null : flight.LastSeen;
         details.Match = match.By;
         if (Airports.ByIcao(flight.Departure) is { } d && details.Mail == null)
         {

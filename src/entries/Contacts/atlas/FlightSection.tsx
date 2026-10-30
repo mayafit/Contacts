@@ -241,6 +241,15 @@ const FlightSection: React.FC<FlightSectionProps> = ({ activityId, onPath }) => 
                 {d.scheduledArrival ? ` → ${localTime(d.scheduledArrival, arr?.tz, true)}` : ''}
               </Fact>
             )}
+            {d.takeoff && !d.landing && flight.status === 'found' && (
+              <Fact label="Took off">
+                {localTime(d.takeoff, dep?.tz, true)}
+                <Typography variant="caption" component="div" sx={{ color: tokens.textMuted }}>
+                  {d.scheduledDeparture ? `${takeoffText(d.scheduledDeparture, d.takeoff)} · ` : ''}
+                  landing not seen by receivers
+                </Typography>
+              </Fact>
+            )}
             {d.takeoff && d.landing && flight.status === 'found' && (
               <Fact label="Took off · landed">
                 {localTime(d.takeoff, dep?.tz, true)} → {localTime(d.landing, arr?.tz, true)}
