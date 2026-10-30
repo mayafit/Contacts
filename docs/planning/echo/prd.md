@@ -23,7 +23,7 @@ Echo is not greenfield. Two Areas already run in production at https://contacts.
 
 The rest of this document works as follows:
 - The Glossary (§3) fixes the vocabulary.
-- Features (§4) nest globally numbered requirements, FR-01 to FR-67. FR-51 to FR-54 were added after the Owner's answers of 2026-10-28, so they sit in the section they belong to, not in id order. FR-55 to FR-60 (route quality, §4.12) follow them. FR-61 (roads travelled), FR-62 (rebuild from similar drives) and FR-63 (mark the way) were added to §4.12 on 2026-10-29. FR-64 to FR-67 (place reviews, §4.13) were added on 2026-10-30.
+- Features (§4) nest globally numbered requirements, FR-01 to FR-71. FR-51 to FR-54 were added after the Owner's answers of 2026-10-28, so they sit in the section they belong to, not in id order. FR-55 to FR-60 (route quality, §4.12) follow them. FR-61 (roads travelled), FR-62 (rebuild from similar drives) and FR-63 (mark the way) were added to §4.12 on 2026-10-29. FR-64 to FR-67 (place reviews, §4.13) and FR-68 to FR-71 (settings and appearance, §4.14) were added on 2026-10-30.
 - Cross-cutting quality requirements are NFR-01 to NFR-21 (§6).
 - Inferences are tagged `[ASSUMPTION]` and indexed in §13.
 - Technical "how" (mechanisms, storage, pipelines, remediation steps, and implementation details of Built behaviour such as error codes, scope names and thresholds) is in [prd-addendum.md](prd-addendum.md) for the architect.
@@ -765,6 +765,41 @@ Importing a Takeout by hand every time is a chore. The Owner can instead schedul
 - **Disconnecting** stops the checks and forgets which exports were seen; the imported reviews stay (they are deleted with their import). The Drive permission itself is removed at the Google Account's "Third-party connections" page, which the tab links to.
 - **Renewal.** Google ends a Takeout schedule after a year (6 exports); the tab reminds the Owner when no new export has arrived for 70 days.
 - **Privacy.** The zip is downloaded to the backend's temporary disk only for as long as the reviews file is read, then deleted. Nothing leaves Echo; only Google's Drive API is called, with the Owner's own permission.
+
+### 4.14 Settings and Appearance (Proposed)
+
+The Owner finds some of Echo's text too small, the points on the map too small to grab, and the pointer too small to follow. Enlarging everything would only move the problem. Instead, a **Settings** page lets the Owner set each kind of thing on its own: the size of each kind of text, the size of each kind of symbol on the map and how far from it a click still takes it, the pointer, the colour of each kind of thing, and the style of each kind of route. Every change shows at once, everywhere, so the Owner sees the result before moving on, and every setting can be put back to its default.
+
+- **Per Owner, on every device.** Settings are kept with the Owner's account, so another browser or the phone shows the same Echo. The browser also remembers the last settings, so Echo opens with them without a flash of the defaults.
+- **Defaults are today's Echo.** Nothing changes until the Owner changes it.
+- **Bounded.** Every number has a sensible range (text from 9 to 32 px, map symbols up to five times their default), so a slip cannot make Echo unusable; **Reset** puts a section, or everything, back.
+
+#### FR-68: The Settings page — Proposed
+- A **Settings** entry (a gear) at the bottom of the navigation rail opens `/settings`. It is not an Area: Echo never opens on it by itself.
+- Sections: **Text**, **Pointer**, **Map symbols**, **Colours**, **Routes**, **Charts**, and **Other settings** (where the other settings live: fusion, route quality, connected sources, Google permissions).
+- Each control shows its value and its default; a section's **Reset** puts the section back, and **Reset everything** all of them. Changes apply at once and are saved by themselves; a line says when they were saved, or that saving failed.
+- Each section has a small **preview**: sample text at each size, map symbols on a dark map background, route lines of each type and piece, chart lines.
+
+#### FR-69: Text sizes — Proposed
+The Owner sets, in pixels:
+- **Body text** (default 15): most text, lists, panels, buttons; secondary body text follows it, half a pixel smaller.
+- **Small text** (default 13): captions, labels, chips, notes, table headers.
+- **Headings** (default 100%): titles and section headings, as a percentage of their default sizes (25, 21, 18, 16 px).
+- **Charts** (default 11): axes and labels of charts and the timeline.
+- **Map labels** (default 11): numbers on marked points, the area label, the map's attribution and controls.
+- **Navigation** (default 11.5): the labels of the navigation rail.
+
+Every text in Echo belongs to one of these kinds, including the texts sized outside the theme, so no text is left behind.
+
+#### FR-70: Map symbols, grabbing and the pointer — Proposed
+- **Symbol sizes**, in pixels: visits (radius 5) and the selected visit (8), photo points (4), photo pins (34), the recorded points of the selected route (2), the hover marker on the selected route (7), airports (3.5), and marked points (20).
+- **Grab distance** (default 0 px, up to 20): how far beyond a point or line a click or hover still takes it. A larger distance makes small points easy to grab without making them look larger.
+- **Pointer** (default: the system's): Echo's own pointer, drawn at 24, 32 or 48 px, for the arrow, the hand over things that can be clicked, the hand that grabs and drags the map, the crosshair of marking and drawing, and the text cursor. Browsers draw pointers of up to 128 px; where a browser or system limits them, it falls back to its own.
+
+#### FR-71: Colours and route styles — Proposed
+- **Colours** of each activity type (ride, hike, run, walk, drive, transit, flight, ski, swim, other), visits, photos, heart rate and health, the area filter, the inferred pieces of a route, gaps, marked points, and the selected route's highlight. The density map, the legend, the lists, the charts and the panels use the same colours.
+- **Route styles**, for each activity type: line width, opacity, and pattern (solid, dashed, dotted). Also: the width of the selected route, the opacity of the others while one is selected, and the width and pattern of each piece of a road-matched route: observed, inferred (dashed by default) and gap (dotted by default).
+- **Charts**: the colours of speed, elevation, cadence and heart rate, and of the five heart-rate zones.
 
 ## 5. Privacy Model
 

@@ -1201,6 +1201,60 @@ Image availability was checked on 2026-10-28. Resource figures for the Israel ex
 - **Place panel** (`PlaceReview.tsx`, before the photos). A **Your review** block: the stars (★, filled in amber, labelled "4 of 5 stars"), "Reviewed 3 Sep 2025" or "Draft, never published (3 Sep 2025)", the text (clamped to 6 lines past 280 characters, "more" expands), the answers as small "question: answer" lines, and **Open on Google Maps** "with the photos you added". A place to review shows instead a **Review** block: "You have not reviewed this place", **Write a review** (opens Google Maps in a new tab), **Later**, **Not this one**, **Not this kind** (when the place has a category) and **I reviewed it**. A set-aside place shows why ("Review reminder hidden until 3 Dec 2026", "No review reminders for this place", "… for this kind of place", "You said you reviewed it; the next import brings the review") with **Remind me again** (which also clears the kind when the kind was set aside). A place that is not one to review shows nothing.
 - **Insights** (`ReviewsSection.tsx`, after **Places**). A **Reviews** section: "12 reviews · ★ 4.3 · 9 at places you visited"; **To review (43)** with up to 30 rows (name; category, "last 21 Oct 2026", visits; a write icon that opens Google Maps; a menu with Later (30 days), Not this one, Not this kind, I reviewed it, after which the list loads again); then **Latest reviews** (stars, name, when). A row click shows the place on the map, as the **Places** rows do (the area around the place); an unlinked review opens Google Maps. Without any review or reminder, the section is not shown. A choice made in the place panel shows in this list when Insights loads again.
 
+## 5C. Settings and Appearance (FR-68 to FR-71)
+
+### AD-41 — One appearance document per Owner, resolved in the browser, applied through the theme, CSS variables and one settings context
+
+- **Binds:** `atlas.owner_settings` (a document per Owner and kind), `SettingsController` (`/api/settings/{kind}`), `uiSettings.ts` (the schema, defaults, ranges and the merge), `SettingsProvider` and `useUi()` (the context), `createContactsTheme(settings)`, `textSize()` (`fs`) for text sized outside the theme, the cursor style sheet, `AtlasMap.tsx`, `routeGeometry.ts` (`pieceStyle`), `DensityLayer.tsx`, `types.ts` (`typeColor`, `kindColor`), `ActivityCharts.tsx`, `analysis.ts` (zones), `SettingsPage.tsx`, `SiteShell.tsx`; FR-68 to FR-71.
+- **Prevents:**
+  - one global zoom that makes the large parts too large to make the small parts readable;
+  - a setting that moves some texts and leaves others (sized outside the theme) behind;
+  - a value that makes Echo unusable (a 2 px text, a 200 px point);
+  - settings lost to another browser, or a flash of the defaults on every load;
+  - colours and styles that differ between the map, the density layer, the legend and the charts.
+- **Rule:**
+  1. **The document.** `atlas.owner_settings` (`OwnerId`, `Kind`, `Json` jsonb, `UpdatedAt`; primary key `(OwnerId, Kind)`) holds one JSON document per Owner and kind; kind `ui` is the appearance. It is Owner configuration (backed up; erased with the Owner). It sits in `atlas` because that is the schema the backend migrates per Owner today; it moves with the other per-Owner configuration if a `platform` schema is built.
+     - `GET /api/settings/{kind}` returns `{json, updatedAt}` (an empty object when none); `PUT` stores the body (a JSON object of at most **64 KB**; 400 otherwise); `DELETE` removes it (the defaults apply). `kind` is `ui` only (400 otherwise). The server does not interpret the document: the browser owns its schema.
+  2. **The schema** (`uiSettings.ts`, `version: 1`). Every value has a default (today's Echo) and a range; the browser **merges** a stored document over the defaults key by key, drops unknown keys, and **clamps** every number into its range and every colour to `#rrggbb`, so an old, partial or damaged document still gives a whole, valid set. A later version migrates in `merge`.
+
+     | Group | Setting | Default | Range |
+     |---|---|---|---|
+     | Text (px) | body | 15 | 11 to 28 |
+     | | small | 13 | 9 to 24 |
+     | | headings (%) | 100 | 70 to 200 |
+     | | charts | 11 | 8 to 22 |
+     | | map labels | 11 | 8 to 22 |
+     | | navigation | 11.5 | 9 to 20 |
+     | Pointer | size | system | system, 24, 32, 48 |
+     | Map (px) | visit, selected visit | 5, 8 | 2 to 25, 3 to 30 |
+     | | photo point, photo pin | 4, 34 | 2 to 20, 20 to 96 |
+     | | recorded point, hover marker | 2, 7 | 1 to 10, 3 to 25 |
+     | | airport, marked point | 3.5, 20 | 2 to 15, 12 to 48 |
+     | | grab distance | 0 | 0 to 20 |
+     | Colours | ride, hike, run, walk, drive, transit, flight, ski, swim, other | `#3fb6ff`, `#5bd16b`, `#ff8a3d`, `#c9a7ff`, `#8b95a5`, `#6f7d92`, `#f2d15c`, `#9fe7ff`, `#3ee0c5`, `#b0b7c3` | any |
+     | | visit, photo, heart rate, area filter, inferred, gap, marked point | `#e879f9`, `#f472b6`, `#ff4d6d`, `#3987e5`, `#ffb020`, `#9ca3af`, `#d946ef` | any |
+     | | selected highlight (dark maps, light maps) | `#ffffff`, `#111827` | any |
+     | Routes, per type | width, opacity, pattern | 2.5, 0.9, solid (flight: 2, dashed) | 0.5 to 10, 0.1 to 1 |
+     | Routes | selected width, others while one is selected, crowded width | 5, 0.3, 1.5 | 1 to 14, 0.05 to 1, 0.5 to 6 |
+     | Pieces | observed width; inferred width, pattern; gap width, pattern | 4.5; 4, dashed; 1.5, dotted | 1 to 12 |
+     | Charts | speed, elevation, cadence, heart rate | `#3fb6ff`, `#5bd16b`, `#c9a7ff`, `#ff4d6d` | any |
+     | | zones 1 to 5 | `#7aa7d9`, `#5bd16b`, `#f2d15c`, `#ff8a3d`, `#ff4d6d` | any |
+
+     Patterns are drawn in proportion to the line's width: dashed `3w 2.4w`, dotted `0.6w 2w` (`w` the width, at least 1), so a wider line keeps the same look; the flight route's and the inferred piece's defaults reproduce today's `8 6`.
+  3. **Loading.** `SettingsProvider` (around the app, inside the sign-in) starts from the document the browser kept (`localStorage` `settings.ui`), so the first paint already uses it, then loads the Owner's document and replaces it; signed out, the kept document or the defaults apply. The resolved settings are the context `useUi()`.
+  4. **Saving.** The Settings page changes the context at once (every view follows), keeps the browser copy, and saves the document after **600 ms** without further change (one `PUT` for a burst of changes). A failed save says so on the page and is retried at the next change; the browser copy keeps the change meanwhile.
+  5. **Text.** `createContactsTheme(settings)` sets the theme's typography from the text sizes: `body1` = body, `body2` = body − 0.5, `button` = body, `caption`, `subtitle2` and the tooltip = small, `h1`, `h2`, `h3`, `subtitle1` = 25, 21, 18, 16 px × headings. The theme is rebuilt when the settings change. Text sized outside the theme (chart axes, the timeline, chips, badges, about 120 places) is written `fontSize: fs(px)`, which returns `calc(<px>px * var(--ui-…))` by the default size it replaces: up to 13.5 px it follows **small** (`--ui-small` = small ÷ 13), above 13.5 and up to 16.5 px **body** (`--ui-body` = body ÷ 15), above that **headings**; chart and timeline texts use `fs.chart(px)` (`--ui-chart` = charts ÷ 11), map texts `fs.map(px)` (`--ui-map` = map labels ÷ 11), the rail `fs.nav(px)`. The provider sets the variables on the document's root. Icons sized with `fontSize` follow the same rule, so they grow with the text beside them. SVG texts take the size through `style`, not the `font-size` attribute (which does not take `calc`).
+  6. **Map symbols and grabbing.** `AtlasMap.tsx` reads every radius and size from `useUi().map`. Lines and circles are drawn on one canvas (`preferCanvas`); the grab distance is that renderer's `tolerance` (`L.canvas({ tolerance })`, the map's `renderer`), which widens the area a click or hover takes without changing the drawing. A renderer's tolerance is fixed when it is made, so the map makes a new renderer when the grab distance changes (the view is kept). DOM markers (photo pins, marked points, badges) take their size from the settings and keep their own hit area.
+  7. **The pointer.** With a size other than `system`, the provider adds one style sheet of `cursor: url(data:image/svg+xml…) x y, <fallback>` rules: the arrow on the page; the hand on links, buttons, `[role=button]`, MUI button bases and Leaflet's interactive paths; grab and grabbing on the map (`.leaflet-grab`, `.leaflet-dragging`); the crosshair on `.atlas-crosshair` (marking the way and drawing an area, which set that class instead of an inline cursor); the text cursor on inputs and text areas. The images are SVG drawn at the size (a dark outline and a light fill, readable on light and dark), with their hot spots. The fallback is the system cursor of the same kind.
+  8. **Colours and route styles.** `typeColor`, `kindColor`, `PHOTO_COLOR`, the inferred and gap colours, the highlight, `MARK` and the chart colours stop being constants: each reads the settings (a function of the settings, or `useUi()` in components), so the map, the density layer (`typeColorExpression` and the heat ramp), the legend, the lists, the panels and the charts agree. `pieceStyle` and the activity line style take the route styles. Constants that stay (the dark page colours, avatars, contact actions) are not settings.
+  9. **Cost.** One small document per Owner, read once per load and written after a burst of changes; the theme and the map style objects are rebuilt only when the settings change.
+- *Alternatives:*
+  - a single overall zoom (rejected by the Owner: it enlarges what is already large);
+  - the browser's zoom (rejected: per device, it moves the layout, and it does not change map symbols or the pointer);
+  - settings in `localStorage` only (rejected: lost on another browser or device);
+  - a column per setting (rejected: a schema migration for every new setting; the browser owns the schema, the server keeps the document);
+  - per-Area settings (deferred: one appearance for all of Echo first).
+
 ## 6. Consistency Conventions
 
 | Concern | Convention |
@@ -1356,6 +1410,10 @@ routing/regions.txt                  # Geofabrik regions built into the tiles im
 | FR-64 Import my reviews | Proposed | `parseGoogleReviews`, `IngestRequest.Reviews`, `atlas.place_reviews` | AD-39 | 1 |
 | FR-65 My review on each place | Proposed | `PlaceReviews.Link`, `PlaceDetail.Review`, `GET /api/atlas/reviews`, the place panel and Insights | AD-39 | 1 |
 | FR-66 Reminders to review | Proposed | `PlaceReviews.Assess`, `AtlasService.DueAsync`, `atlas.review_reminders`, `POST /api/atlas/reviews/reminders` | AD-39 | 1 |
+| FR-68 The Settings page | Proposed | `atlas.owner_settings`, `/api/settings/{kind}`, `uiSettings.ts`, `SettingsProvider`, `SettingsPage.tsx` | AD-41 | 1 |
+| FR-69 Text sizes | Proposed | `createContactsTheme(settings)`, `fs`, the `--ui-*` variables | AD-41 | 1 |
+| FR-70 Map symbols, grabbing and the pointer | Proposed | `AtlasMap.tsx`, the canvas renderer's tolerance, the cursor style sheet | AD-41 | 1 |
+| FR-71 Colours and route styles | Proposed | `typeColor`, `kindColor`, `pieceStyle`, `DensityLayer.tsx`, `ActivityCharts.tsx` | AD-41 | 1 |
 | FR-67 Reviews from a scheduled Takeout on Drive | Proposed | `OptIns.Takeout`, `GoogleDriveTakeout`, `GoogleReviewsParser`, `TakeoutDriveService`, `TakeoutDriveWorker`, `/api/atlas/connections/google-drive`, the Google Drive tab | AD-40, AD-39 | 1 |
 | FR-60 Routes abroad | Proposed | `routing/regions.txt`, region outlines, per-region counts | AD-32 | R3 |
 
