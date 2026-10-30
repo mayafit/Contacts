@@ -5,7 +5,7 @@
  * @module Contacts/settings/SettingsPage
  */
 
-import React from 'react';
+import React, { useId } from 'react';
 import { useNavigate } from 'react-router';
 import {
   Box,
@@ -124,7 +124,7 @@ const NumberSetting: React.FC<{
   onChange: (v: number) => void;
 }> = ({ label, value, def, range, unit = 'px', onChange }) => {
   const [min, max, step] = RANGES[range];
-  const id = `n-${range}-${label}`.replace(/\W+/g, '-');
+  const id = useId();
   return (
     <Box
       sx={{
@@ -140,6 +140,7 @@ const NumberSetting: React.FC<{
       </Typography>
       <Slider
         aria-labelledby={id}
+        getAriaValueText={(v) => `${v}${unit}`}
         value={value}
         min={min}
         max={max}
@@ -183,7 +184,11 @@ const ColorSetting: React.FC<{
       {label}
     </Typography>
     {value !== def && (
-      <Button size="small" onClick={() => onChange(def)} aria-label={`Reset the ${label} colour`}>
+      <Button
+        size="small"
+        onClick={() => onChange(def)}
+        aria-label={`default: reset the ${label} colour`}
+      >
         default
       </Button>
     )}
@@ -194,15 +199,17 @@ const ColorSetting: React.FC<{
 const PatternSetting: React.FC<{
   label: string;
   value: LinePattern;
+  def: LinePattern;
   onChange: (v: LinePattern) => void;
-}> = ({ label, value, onChange }) => (
+}> = ({ label, value, def, onChange }) => (
   <TextField
     select
     size="small"
     label={label}
     value={value}
+    helperText={value === def ? 'default' : `default ${def}`}
     onChange={(e) => onChange(e.target.value as LinePattern)}
-    sx={{ minWidth: 120 }}
+    sx={{ minWidth: 140 }}
   >
     {PATTERNS.map((p) => (
       <MenuItem key={p} value={p}>
@@ -408,7 +415,7 @@ const SettingsPage: React.FC = () => {
         </Box>
         <Typography
           variant="body2"
-          role="status"
+          role={save.state === 'failed' ? 'alert' : undefined}
           sx={{ color: save.state === 'failed' ? tokens.attention : tokens.textSecondary, mb: 1.5 }}
         >
           {saveText(save)}
@@ -514,6 +521,9 @@ const SettingsPage: React.FC = () => {
               </ToggleButton>
             ))}
           </ToggleButtonGroup>
+          <Typography variant="caption" sx={{ color: tokens.textMuted, ml: 1 }}>
+            {ui.pointer.size === 'system' ? '(default)' : '(default: System)'}
+          </Typography>
           {ui.pointer.size !== 'system' && (
             <Box
               aria-label="Pointer preview"
@@ -675,14 +685,14 @@ const SettingsPage: React.FC = () => {
               </Typography>
               <Box sx={{ flex: 1, minWidth: 220 }}>
                 <NumberSetting
-                  label="Width"
+                  label={`${TYPE_LABELS[t]} width`}
                   value={ui.routes.types[t].width}
                   def={d.routes.types[t].width}
                   range="routes.width"
                   onChange={set(['routes', 'types', t, 'width'])}
                 />
                 <NumberSetting
-                  label="Opacity"
+                  label={`${TYPE_LABELS[t]} opacity`}
                   value={ui.routes.types[t].opacity}
                   def={d.routes.types[t].opacity}
                   range="routes.opacity"
@@ -691,8 +701,9 @@ const SettingsPage: React.FC = () => {
                 />
               </Box>
               <PatternSetting
-                label="Pattern"
+                label={`${TYPE_LABELS[t]} pattern`}
                 value={ui.routes.types[t].pattern}
+                def={d.routes.types[t].pattern}
                 onChange={set(['routes', 'types', t, 'pattern'])}
               />
             </Box>
@@ -740,6 +751,7 @@ const SettingsPage: React.FC = () => {
               <PatternSetting
                 label="Inferred pattern"
                 value={ui.routes.inferred.pattern}
+                def={d.routes.inferred.pattern}
                 onChange={set(['routes', 'inferred', 'pattern'])}
               />
             </Box>
@@ -756,6 +768,7 @@ const SettingsPage: React.FC = () => {
               <PatternSetting
                 label="Gap pattern"
                 value={ui.routes.gap.pattern}
+                def={d.routes.gap.pattern}
                 onChange={set(['routes', 'gap', 'pattern'])}
               />
             </Box>
@@ -778,7 +791,6 @@ const SettingsPage: React.FC = () => {
                 ['speed', 'Speed'],
                 ['elevation', 'Elevation'],
                 ['cadence', 'Cadence'],
-                ['heartRate', 'Heart rate'],
               ] as const
             ).map(([k, label]) => (
               <ColorSetting
@@ -799,6 +811,34 @@ const SettingsPage: React.FC = () => {
               />
             ))}
           </Box>
+          <Box
+            component="svg"
+            role="img"
+            aria-label="Chart lines preview"
+            viewBox="0 0 520 70"
+            sx={{
+              width: '100%',
+              maxWidth: 640,
+              bgcolor: tokens.surface,
+              borderRadius: 1,
+              display: 'block',
+              mt: 1.5,
+            }}
+          >
+            {(
+              [
+                [ui.charts.speed, 'M0 50 C80 20 160 60 260 30 S420 20 520 40'],
+                [ui.charts.elevation, 'M0 60 C120 55 200 25 300 35 S440 50 520 20'],
+                [ui.charts.cadence, 'M0 35 C100 40 180 30 280 45 S430 30 520 35'],
+                [ui.colors.health, 'M0 25 C90 10 200 40 300 15 S440 30 520 10'],
+              ] as const
+            ).map(([color, d]) => (
+              <path key={d} d={d} fill="none" stroke={color} strokeWidth={1.5} />
+            ))}
+          </Box>
+          <Typography variant="caption" component="div" sx={{ color: tokens.textMuted, mt: 0.5 }}>
+            Heart rate uses the heart rate and health colour (Colours).
+          </Typography>
           <Box
             role="img"
             aria-label="Zones preview"

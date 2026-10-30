@@ -310,7 +310,7 @@ const ContactsTable: React.FC<ContactsTableProps> = ({
               key={l}
               label={l}
               size="small"
-              sx={{ height: 22, fontSize: fs(13), bgcolor: tokens.raised }}
+              sx={{ minHeight: 22, height: 'auto', fontSize: fs(13), bgcolor: tokens.raised }}
             />
           ))}
           {labels.length > 2 && (

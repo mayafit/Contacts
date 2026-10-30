@@ -330,7 +330,7 @@ const ActivityCharts: React.FC<ActivityChartsProps> = ({
         <SyncedChart
           {...common}
           label="Heart rate"
-          color={ui.charts.heartRate}
+          color={ui.colors.health}
           series={hr}
           range={ensureSpan(hrRange, 10)}
           format={(v) => `${Math.round(v)} bpm`}

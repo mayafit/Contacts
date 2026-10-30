@@ -81,7 +81,6 @@ export interface UiSettings {
     speed: string;
     elevation: string;
     cadence: string;
-    heartRate: string;
     zones: [string, string, string, string, string];
   };
 }
@@ -153,7 +152,6 @@ export const DEFAULT_UI: UiSettings = {
     speed: '#3fb6ff',
     elevation: '#5bd16b',
     cadence: '#c9a7ff',
-    heartRate: '#ff4d6d',
     zones: ['#7aa7d9', '#5bd16b', '#f2d15c', '#ff8a3d', '#ff4d6d'],
   },
 };
@@ -295,7 +293,6 @@ export const mergeUi = (stored: unknown): UiSettings => {
       speed: colour(charts.speed, d.charts.speed),
       elevation: colour(charts.elevation, d.charts.elevation),
       cadence: colour(charts.cadence, d.charts.cadence),
-      heartRate: colour(charts.heartRate, d.charts.heartRate),
       zones: d.charts.zones.map((z, i) => colour(zones[i], z)) as UiSettings['charts']['zones'],
     },
   };
@@ -334,13 +331,14 @@ const scaled = (px: number, variable: string): string => `calc(${px}px * var(${v
 
 /**
  * A font size set outside the theme, following the kind of text it is by its default size:
- * up to 13.5 px small text, up to 16.5 px body text, larger headings (AD-41 rule 5).
+ * up to 13.5 px small text, up to 20.5 px body text (and the icons beside it), larger
+ * headings (AD-41 rule 5).
  * @param px - The size it had (today's Echo)
  * @returns A CSS size that follows the Owner's settings
  */
 export const fs = Object.assign(
   (px: number): string =>
-    scaled(px, px <= 13.5 ? '--ui-small' : px <= 16.5 ? '--ui-body' : '--ui-heading'),
+    scaled(px, px <= 13.5 ? '--ui-small' : px <= 20.5 ? '--ui-body' : '--ui-heading'),
   {
     /** Chart and timeline text */
     chart: (px: number): string => scaled(px, '--ui-chart'),
@@ -368,12 +366,16 @@ export const setCurrentUi = (s: UiSettings): void => {
 };
 
 /**
- * Called whenever the settings in effect change.
+ * Called whenever the settings in effect change (and at once, when they are not the defaults).
  * @param l - The listener
  * @returns Unsubscribe
  */
 export const onUiChange = (l: (s: UiSettings) => void): (() => void) => {
   listeners.add(l);
+  // A module loaded late starts from the settings in effect, not the defaults
+  if (current !== DEFAULT_UI) {
+    l(current);
+  }
   return () => {
     listeners.delete(l);
   };

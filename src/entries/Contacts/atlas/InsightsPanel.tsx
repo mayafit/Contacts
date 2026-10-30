@@ -841,7 +841,13 @@ const InsightsPanel: React.FC<InsightsPanelProps> = ({
                   onChange={(_, v: TrendMetric | null) => v && setMetric(v)}
                   aria-label="Trend measure"
                   sx={{
-                    '& .MuiToggleButton-root': { py: 0, px: 0.75, fontSize: fs(12), height: 22 },
+                    '& .MuiToggleButton-root': {
+                      py: 0,
+                      px: 0.75,
+                      fontSize: fs(12),
+                      minHeight: 22,
+                      height: 'auto',
+                    },
                   }}
                 >
                   <ToggleButton value="distance">km</ToggleButton>
@@ -975,7 +981,7 @@ const InsightsPanel: React.FC<InsightsPanelProps> = ({
                         <Chip
                           size="small"
                           label="new"
-                          sx={{ height: 18, fontSize: fs(12), flexShrink: 0 }}
+                          sx={{ minHeight: 18, height: 'auto', fontSize: fs(12), flexShrink: 0 }}
                           color="primary"
                           variant="outlined"
                         />

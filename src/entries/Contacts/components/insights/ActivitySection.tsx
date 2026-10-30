@@ -94,7 +94,7 @@ const PersonRow: React.FC<{
       py: 0.75,
       px: 1,
       borderRadius: '8px',
-      cursor: 'pointer',
+      cursor: 'var(--echo-hand, pointer)',
       '&:hover, &:focus-visible': { bgcolor: tokens.hover, outline: 'none' },
     }}
   >

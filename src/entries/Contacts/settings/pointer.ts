@@ -75,11 +75,30 @@ export const pointerCss = (size: PointerSize): string | null => {
     return null;
   }
   const c = (shape: keyof typeof SHAPES, fallback: string) => cursorValue(shape, size, fallback);
+  const off = ':not(:disabled):not([aria-disabled="true"]):not(.Mui-disabled)';
+  const hand = [
+    'a',
+    'button',
+    '[role="button"]',
+    '[role="tab"]',
+    '[role="menuitem"]',
+    '[role="option"]',
+    '[role="combobox"]',
+    'label[for]',
+    'select',
+    'summary',
+    '.MuiButtonBase-root',
+    '.MuiSlider-root',
+    '.MuiSelect-select',
+    '.leaflet-interactive',
+    '.leaflet-marker-icon',
+    '.leaflet-container a',
+  ];
   return [
+    // Code that sets a hand cursor itself uses var(--echo-hand, pointer)
+    `:root { --echo-hand: ${c('hand', 'pointer')}; }`,
     `html, body { cursor: ${c('arrow', 'default')}; }`,
-    `a, button, [role="button"], [role="tab"], [role="menuitem"], [role="option"], label[for], select, summary,` +
-      ` .MuiButtonBase-root, .leaflet-interactive, .leaflet-marker-icon, .leaflet-container a` +
-      ` { cursor: ${c('hand', 'pointer')} !important; }`,
+    `${hand.map((h) => `${h}${off}`).join(', ')} { cursor: ${c('hand', 'pointer')} !important; }`,
     `.leaflet-grab, .maplibregl-canvas-container.maplibregl-interactive { cursor: ${c('grab', 'grab')}; }`,
     `.leaflet-dragging .leaflet-grab, .leaflet-dragging .leaflet-grab .leaflet-interactive,` +
       ` .leaflet-dragging .leaflet-marker-draggable, .maplibregl-canvas-container.maplibregl-interactive:active` +
@@ -87,6 +106,7 @@ export const pointerCss = (size: PointerSize): string | null => {
     `.atlas-crosshair, .atlas-crosshair .leaflet-grab, .atlas-crosshair .leaflet-interactive, .leaflet-crosshair,` +
       ` .leaflet-crosshair .leaflet-interactive { cursor: ${c('crosshair', 'crosshair')} !important; }`,
     `input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]), textarea,` +
-      ` [contenteditable="true"] { cursor: ${c('text', 'text')}; }`,
+      ` [contenteditable="true"], .MuiInputBase-root:not(.MuiInputBase-readOnly):not(.Mui-disabled)` +
+      ` { cursor: ${c('text', 'text')}; }`,
   ].join('\n');
 };

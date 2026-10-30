@@ -80,7 +80,10 @@ const SiteShell: React.FC = () => {
           alignItems: 'center',
           justifyContent: { xs: 'space-around', sm: 'flex-start' },
           gap: { sm: 0.5 },
-          width: { xs: '100%', sm: 64 },
+          // Grows with the navigation text (AD-41): wider labels widen the rail
+          width: { xs: '100%', sm: 'auto' },
+          minWidth: { sm: 64 },
+          px: { sm: 0.5 },
           height: { xs: 56, sm: '100%' },
           pt: { sm: 1.5 },
           flexShrink: 0,
@@ -103,7 +106,8 @@ const SiteShell: React.FC = () => {
                 sx={{
                   flexDirection: 'column',
                   gap: 0.25,
-                  width: 56,
+                  minWidth: 56,
+                  px: 0.5,
                   mt: a.path === '/settings' ? { sm: 'auto' } : undefined,
                   mb: a.path === '/settings' ? { sm: 1.5 } : undefined,
                   py: 0.75,

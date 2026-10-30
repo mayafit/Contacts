@@ -55,17 +55,28 @@ public class OwnerSettingsService
             throw new ArgumentException($"Settings are larger than {MaxBytes / 1024} KB");
         }
 
-        var row = await _db.OwnerSettings.FirstOrDefaultAsync(s => s.OwnerId == owner && s.Kind == kind, ct);
-        if (row == null)
+        // Two first saves at once: the second finds the row the first added, and updates it
+        for (var attempt = 0; ; attempt++)
         {
-            row = new OwnerSetting { OwnerId = owner, Kind = kind };
-            _db.OwnerSettings.Add(row);
-        }
+            var row = await _db.OwnerSettings.FirstOrDefaultAsync(s => s.OwnerId == owner && s.Kind == kind, ct);
+            if (row == null)
+            {
+                row = new OwnerSetting { OwnerId = owner, Kind = kind };
+                _db.OwnerSettings.Add(row);
+            }
 
-        row.Json = text;
-        row.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync(ct);
-        return new OwnerSettingsDoc(json.Clone(), row.UpdatedAt);
+            row.Json = text;
+            row.UpdatedAt = DateTime.UtcNow;
+            try
+            {
+                await _db.SaveChangesAsync(ct);
+                return new OwnerSettingsDoc(json.Clone(), row.UpdatedAt);
+            }
+            catch (DbUpdateException ex) when (attempt == 0 && ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
+            {
+                _db.ChangeTracker.Clear();
+            }
+        }
     }
 
     /// <summary>Forgets the Owner's document of a kind (the defaults apply); true when there was one</summary>

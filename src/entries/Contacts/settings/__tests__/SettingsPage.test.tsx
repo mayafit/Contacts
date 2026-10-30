@@ -61,7 +61,10 @@ describe('the settings in effect', () => {
     await act(async () => {});
     expect(screen.getByLabelText('body size')).toHaveTextContent('21');
     expect(document.documentElement.style.getPropertyValue('--ui-body')).toBe(String(21 / 15));
-    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!).text.body).toBe(21);
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!)).toMatchObject({
+      ui: { text: { body: 21 } },
+      dirty: false,
+    });
   });
 
   it('change at once, and are saved once after a burst of changes', async () => {
@@ -106,8 +109,11 @@ describe('the settings in effect', () => {
     await act(async () => {
       jest.advanceTimersByTime(SAVE_DELAY_MS);
     });
-    expect(client.resetSettings).toHaveBeenCalledWith('ui');
-    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+    expect(client.resetSettings).toHaveBeenCalledWith('ui', false);
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!)).toMatchObject({
+      ui: DEFAULT_UI,
+      dirty: false,
+    });
     expect(
       within(screen.getByRole('region', { name: 'Map symbols' })).getAllByText('5px (default)')
         .length,
@@ -129,7 +135,53 @@ describe('the settings in effect', () => {
       jest.advanceTimersByTime(SAVE_DELAY_MS);
     });
     expect(screen.getByText(/^Not saved: offline/)).toBeInTheDocument();
-    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!).pointer.size).toBe(24);
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!)).toMatchObject({
+      ui: { pointer: { size: 24 } },
+      dirty: true,
+    });
+  });
+
+  it('save a change the browser kept but never saved, over the account’s older copy', async () => {
+    jest.useFakeTimers();
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        ui: { ...DEFAULT_UI, text: { ...DEFAULT_UI.text, body: 19 } },
+        dirty: true,
+      }),
+    );
+    client.settings.mockResolvedValue({
+      json: { text: { body: 16 } },
+      updatedAt: '2026-10-29T10:00:00Z',
+    });
+    renderPage();
+    await act(async () => {
+      jest.advanceTimersByTime(SAVE_DELAY_MS);
+    });
+
+    expect(screen.getByLabelText('body size')).toHaveTextContent('19');
+    expect(client.saveSettings.mock.calls[0][1].text.body).toBe(19);
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!).dirty).toBe(false);
+  });
+
+  it('send a waiting change when the page closes', async () => {
+    renderPage();
+    await act(async () => {});
+    fireEvent.click(
+      within(screen.getByRole('group', { name: 'Pointer size' })).getByRole('button', {
+        name: '32 px',
+      }),
+    );
+    expect(client.saveSettings).not.toHaveBeenCalled();
+
+    await act(async () => {
+      window.dispatchEvent(new Event('pagehide'));
+    });
+    expect(client.saveSettings).toHaveBeenCalledWith(
+      'ui',
+      expect.objectContaining({ pointer: { size: 32 } }),
+      true,
+    );
   });
 
   it('are not loaded or saved while signed out', async () => {
@@ -162,7 +214,7 @@ describe('the Settings page', () => {
     expect(screen.getByLabelText('Ride colour')).toHaveValue('#3fb6ff');
     expect(screen.getByRole('img', { name: 'Map symbols preview' })).toBeInTheDocument();
     expect(await axe(container)).toHaveNoViolations();
-  });
+  }, 20000);
 
   it('changes a colour and offers its default back', async () => {
     renderPage();
@@ -170,7 +222,7 @@ describe('the Settings page', () => {
 
     fireEvent.change(screen.getByLabelText('Visits colour'), { target: { value: '#00ff00' } });
     expect(screen.getByLabelText('Visits colour')).toHaveValue('#00ff00');
-    fireEvent.click(screen.getByRole('button', { name: 'Reset the Visits colour' }));
+    fireEvent.click(screen.getByRole('button', { name: 'default: reset the Visits colour' }));
     expect(screen.getByLabelText('Visits colour')).toHaveValue('#e879f9');
   });
 

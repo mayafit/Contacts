@@ -4,6 +4,8 @@
  * @module Contacts/atlas/AtlasFilterBar
  */
 
+import { useUi } from '../settings/SettingsProvider';
+import { withAlpha } from './densityGeo';
 import React from 'react';
 import { Box, Button, Chip, Tooltip, Typography } from '@mui/material';
 import {
@@ -58,19 +60,20 @@ export interface AtlasFilterBarProps {
   onClearAll: () => void;
 }
 
-/** Chip style of an active filter: the selection blue of the timeline and the area */
-const chipSx = {
+/** Chip style of an active filter: the Owner's area colour (AD-41), as the timeline and the area */
+const chipStyle = (color: string) => ({
   maxWidth: '100%',
-  height: 26,
-  bgcolor: 'rgba(57, 135, 229, 0.16)',
-  border: `1px solid ${FILTER_COLOR}`,
+  minHeight: 26,
+  height: 'auto',
+  bgcolor: withAlpha(color, 0.16),
+  border: `1px solid ${color}`,
   color: tokens.text,
   fontWeight: 500,
-  '& .MuiChip-icon': { color: FILTER_COLOR, fontSize: fs(16) },
+  '& .MuiChip-icon': { color, fontSize: fs(16) },
   '& .MuiChip-deleteIcon': { color: tokens.textSecondary, fontSize: fs(16) },
   '& .MuiChip-deleteIcon:hover': { color: tokens.text },
-  '&.MuiChip-clickable:hover': { bgcolor: 'rgba(57, 135, 229, 0.28)' },
-} as const;
+  '&.MuiChip-clickable:hover': { bgcolor: withAlpha(color, 0.28) },
+});
 
 /**
  * Filter bar.
@@ -96,6 +99,7 @@ const AtlasFilterBar: React.FC<AtlasFilterBarProps> = ({
   onClearRoad,
   onClearAll,
 }) => {
+  const chipSx = chipStyle(useUi().colors.area);
   const active =
     !!selection || !!area || types.length > 0 || text !== '' || conflictsOnly || road !== '';
   const count = loading ? 'Searching…' : result ? formatResultCount(result) : '';

@@ -192,6 +192,28 @@ const WaypointMarks: React.FC<{
 /** Source points are shown on a matched route from this zoom on */
 const SOURCE_DOTS_ZOOM = 14;
 
+/**
+ * The Owner's grab distance (AD-41 rule 6): the canvas renderer's tolerance, which circles
+ * read at every hit test; lines keep their hit area in bounds made when drawn, so those are
+ * made again
+ */
+const GrabDistance: React.FC<{ renderer: L.Canvas; tolerance: number }> = ({
+  renderer,
+  tolerance,
+}) => {
+  const map = useMap();
+  useEffect(() => {
+    if (renderer.options.tolerance === tolerance) {
+      return;
+    }
+    renderer.options.tolerance = tolerance;
+    map.eachLayer((layer) => {
+      (layer as unknown as { _updateBounds?: () => void })._updateBounds?.();
+    });
+  }, [map, renderer, tolerance]);
+  return null;
+};
+
 /** Props for SelectedRoute */
 interface SelectedRouteProps {
   runs: PieceLine[];
@@ -640,10 +662,8 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
   onUnmark,
 }) => {
   const ui = useUi();
-  // One canvas renderer: Leaflet reads its tolerance at every hit test, so the Owner's grab
-  // distance (AD-41 rule 6) is changed in place
-  const renderer = useMemo(() => L.canvas({ tolerance: ui.map.grab }), []);
-  renderer.options.tolerance = ui.map.grab;
+  // One canvas renderer, made once; GrabDistance keeps its tolerance (AD-41 rule 6)
+  const [renderer] = useState(() => L.canvas({ tolerance: ui.map.grab }));
   const visitBadgeIcon = useMemo(() => visitBadge(ui.colors.photo), [ui.colors.photo]);
   const areaLabelIcon = useMemo(() => areaLabel(ui.colors.area), [ui.colors.area]);
   const [mapStyle, setMapStyle] = useState<MapStyle>(loadMapStyle);
@@ -776,6 +796,7 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
         preferCanvas
         renderer={renderer}
       >
+        <GrabDistance renderer={renderer} tolerance={ui.map.grab} />
         <BaseMap style={mapStyle} />
         <FitResults
           activities={activities}

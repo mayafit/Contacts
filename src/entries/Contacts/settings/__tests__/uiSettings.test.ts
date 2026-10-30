@@ -61,7 +61,8 @@ describe('the appearance settings', () => {
     expect(fs(11)).toBe('calc(11px * var(--ui-small, 1))');
     expect(fs(13.5)).toBe('calc(13.5px * var(--ui-small, 1))');
     expect(fs(15)).toBe('calc(15px * var(--ui-body, 1))');
-    expect(fs(20)).toBe('calc(20px * var(--ui-heading, 1))');
+    expect(fs(20)).toBe('calc(20px * var(--ui-body, 1))');
+    expect(fs(24)).toBe('calc(24px * var(--ui-heading, 1))');
     expect(fs.chart(11)).toBe('calc(11px * var(--ui-chart, 1))');
     expect(fs.map(11)).toBe('calc(11px * var(--ui-map, 1))');
     expect(fs.nav(11.5)).toBe('calc(11.5px * var(--ui-nav, 1))');

@@ -149,7 +149,7 @@ const MemberRow: React.FC<{
             size="small"
             label="primary"
             color="primary"
-            sx={{ height: 18, fontSize: fs(12) }}
+            sx={{ minHeight: 18, height: 'auto', fontSize: fs(12) }}
           />
         )}
         {m.pointCount > 0 && (
@@ -157,7 +157,7 @@ const MemberRow: React.FC<{
             size="small"
             label="track"
             variant="outlined"
-            sx={{ height: 18, fontSize: fs(12) }}
+            sx={{ minHeight: 18, height: 'auto', fontSize: fs(12) }}
           />
         )}
       </Box>
@@ -428,7 +428,15 @@ const ActivityPanel: React.FC<ActivityPanelProps> = ({
               value={axis}
               onChange={(_, v: ChartAxis | null) => v && setAxis(v)}
               aria-label="Charts over"
-              sx={{ '& .MuiToggleButton-root': { py: 0, px: 0.75, fontSize: fs(12), height: 22 } }}
+              sx={{
+                '& .MuiToggleButton-root': {
+                  py: 0,
+                  px: 0.75,
+                  fontSize: fs(12),
+                  minHeight: 22,
+                  height: 'auto',
+                },
+              }}
             >
               <ToggleButton value="time">Time</ToggleButton>
               <ToggleButton value="distance">Distance</ToggleButton>

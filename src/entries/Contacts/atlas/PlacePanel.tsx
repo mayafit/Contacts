@@ -301,7 +301,7 @@ const CandidateRow: React.FC<{
                 size="small"
                 label={c.label}
                 variant="outlined"
-                sx={{ height: 18, fontSize: fs(12) }}
+                sx={{ minHeight: 18, height: 'auto', fontSize: fs(12) }}
               />
             )}
           </Box>

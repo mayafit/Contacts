@@ -11,7 +11,7 @@ Requirements: PRD FR-68 to FR-71 (`echo/prd.md` §4.14). Architecture: AD-41
 
 On 2026-10-30 the Owner found the map's points too small to grab, the pointer too
 small, and the text too small, but did not want everything simply enlarged. Today
-every size and colour is a constant: the theme's typography, about 120 font sizes
+every size and colour is a constant: the theme's typography, about 115 font sizes
 set outside it, every radius and line style in `AtlasMap.tsx` and `routeGeometry.ts`,
 the type colours in `types.ts`, the chart colours.
 
@@ -51,6 +51,20 @@ the type colours in `types.ts`, the chart colours.
 - [x] Sections Text, Pointer, Map symbols, Colours, Routes, Charts, Other settings;
   each control with its default; Reset per section and Reset everything; previews;
   the saving line.
+
+### 14.7 Review fixes — Phase 1
+
+- [x] A change the browser kept but never saved (failed save, closed tab) wins over the
+  account's older copy and is saved; a waiting save is sent on pagehide.
+- [x] Sizes and the pointer applied before the first paint; side effects out of the state
+  updater; the theme rebuilt only for text sizes; a late subscriber gets the settings.
+- [x] Filter chips follow the area colour; boxes with text grow (minHeight), the rail
+  widens; icons up to 20.5 px follow body text; one heart-rate colour.
+- [x] Pointer on sliders, selects, comboboxes and input roots, not on disabled
+  controls; `--echo-hand` for inline hands.
+- [x] Grab distance refreshes line bounds; Leaflet text keeps its rem/em sizes.
+- [x] Unique labels per route type, value text on sliders, defaults on every control,
+  the chart lines preview; two first saves at once on the server.
 
 ### 14.6 Tests — Phase 1
 

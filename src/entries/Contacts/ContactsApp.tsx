@@ -53,8 +53,20 @@ const ToHome: React.FC = () => {
 
 /** The theme from the Owner's text sizes (AD-41 rule 5), rebuilt when they change */
 const Themed: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const ui = useUi();
-  const theme = useMemo(() => createContactsTheme(ui.text), [ui.text]);
+  const t = useUi().text;
+  // Rebuilt only when a text size changes (not on every map or colour change)
+  const theme = useMemo(
+    () =>
+      createContactsTheme({
+        body: t.body,
+        small: t.small,
+        headings: t.headings,
+        charts: t.charts,
+        map: t.map,
+        navigation: t.navigation,
+      }),
+    [t.body, t.small, t.headings, t.charts, t.map, t.navigation],
+  );
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />

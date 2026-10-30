@@ -185,7 +185,7 @@ const ReachOutSection: React.FC<ReachOutSectionProps> = ({
                   gap: 1.25,
                   flex: 1,
                   minWidth: 0,
-                  cursor: 'pointer',
+                  cursor: 'var(--echo-hand, pointer)',
                 }}
               >
                 <ContactAvatar contact={item.contact} />

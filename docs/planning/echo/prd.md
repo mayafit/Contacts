@@ -772,13 +772,14 @@ The Owner finds some of Echo's text too small, the points on the map too small t
 
 - **Per Owner, on every device.** Settings are kept with the Owner's account, so another browser or the phone shows the same Echo. The browser also remembers the last settings, so Echo opens with them without a flash of the defaults; settings made in a browser before the account had any become the account's.
 - **Defaults are today's Echo.** Nothing changes until the Owner changes it.
-- **Bounded.** Every number has a sensible range (text from 9 to 32 px, map symbols up to five times their default), so a slip cannot make Echo unusable; **Reset** puts a section, or everything, back.
+- **Bounded.** Every number has a sensible range (text from 8 to 28 px by kind, map symbols up to between 2.4 and 5 times their default), so a slip cannot make Echo unusable; **Reset** puts a section, or everything, back.
 
 #### FR-68: The Settings page — Proposed
 - A **Settings** entry (a gear) at the bottom of the navigation rail opens `/settings`. It is not an Area: Echo never opens on it by itself.
 - Sections: **Text**, **Pointer**, **Map symbols**, **Colours**, **Routes**, **Charts**, and **Other settings** (where the other settings live: buttons that open Atlas's fusion settings and its imports and connected sources, and a link to the Google Account's third-party connections for Google permissions).
 - Each control shows its value and its default; a section's **Reset** puts the section back, and **Reset everything** all of them. Changes apply at once and are saved by themselves; a line says when they were saved, or that saving failed.
-- Each section has a small **preview**: sample text at each size, map symbols on a dark map background, route lines of each type and piece, chart lines.
+- Each section has a small **preview**: sample text at each size, Echo's pointers, map symbols on a dark map background (with the grab distance as a ring), route lines of each type and piece, chart lines and the zones.
+- Changes made in a browser are never lost: if saving fails, or the page is closed before saving, the browser keeps them and saves them the next time Echo opens.
 
 #### FR-69: Text sizes — Proposed
 The Owner sets, in pixels:
@@ -799,7 +800,7 @@ Every text in Echo belongs to one of these kinds, including the texts sized outs
 #### FR-71: Colours and route styles — Proposed
 - **Colours** of each activity type (ride, hike, run, walk, drive, transit, flight, ski, swim, other), visits, photos, heart rate and health, the area filter, the inferred pieces of a route, gaps, marked points, and the selected route's highlight. The density map, the legend, the lists, the charts and the panels use the same colours.
 - **Route styles**, for each activity type: line width, opacity, and pattern (solid, dashed, dotted). Also: the width of the selected route, the opacity of the others while one is selected, and the width and pattern of each piece of a road-matched route: observed, inferred (dashed by default) and gap (dotted by default).
-- **Charts**: the colours of speed, elevation, cadence and heart rate, and of the five heart-rate zones.
+- **Charts**: the colours of speed, elevation and cadence, and of the five heart-rate zones. Heart rate has one colour everywhere (the chart, the Insights trend, the map's hover marker): the heart rate and health colour.
 
 ## 5. Privacy Model
 

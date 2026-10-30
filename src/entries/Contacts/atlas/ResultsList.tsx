@@ -145,7 +145,7 @@ const ResultsList: React.FC<ResultsListProps> = ({
                         size="small"
                         label={`${it.a.memberCount} sources`}
                         variant="outlined"
-                        sx={{ height: 18, fontSize: fs(12), flexShrink: 0 }}
+                        sx={{ minHeight: 18, height: 'auto', fontSize: fs(12), flexShrink: 0 }}
                       />
                     </Tooltip>
                   )}

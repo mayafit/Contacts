@@ -1,7 +1,8 @@
 /**
  * @fileoverview The Owner's appearance settings in effect (AD-41 rules 3, 4, 5 and 7): the
- * browser's copy first, then the Owner's document; every change applied at once (the
- * text variables, the pointer, the store) and saved after a pause
+ * browser's copy first (applied before the first paint), then the Owner's document unless
+ * the browser holds changes not saved yet; every change applied at once (the text
+ * variables, the pointer, the store) and saved after a pause, or when the page closes
  * @module Contacts/settings/SettingsProvider
  */
 
@@ -10,16 +11,17 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from 'react';
 import { backendApiClient } from '../../../services/api/BackendApiClient';
 import { pointerCss } from './pointer';
-import { DEFAULT_UI, currentUi, mergeUi, setCurrentUi, textVariables } from './uiSettings';
+import { DEFAULT_UI, mergeUi, setCurrentUi, textVariables } from './uiSettings';
 import type { UiSettings } from './uiSettings';
 
-/** The browser's copy of the Owner's settings */
+/** The browser's copy of the Owner's settings: { ui, dirty } (dirty: not saved to the account yet) */
 export const STORAGE_KEY = 'settings.ui';
 
 /** A burst of changes is saved this long after the last one */
@@ -54,22 +56,26 @@ export const useSettings = (): UiContext => useContext(Context);
 /** The appearance settings in effect (a component that draws with them re-renders when they change) */
 export const useUi = (): UiSettings => useContext(Context).ui;
 
-const readKept = (): UiSettings => {
+/** The browser's copy, and whether it holds changes not saved to the account */
+const readKept = (): { ui: UiSettings; dirty: boolean } => {
   try {
     const kept = localStorage.getItem(STORAGE_KEY);
-    return kept ? mergeUi(JSON.parse(kept)) : DEFAULT_UI;
+    if (!kept) {
+      return { ui: DEFAULT_UI, dirty: false };
+    }
+    const doc = JSON.parse(kept) as { ui?: unknown; dirty?: unknown };
+    // An older copy is the settings themselves
+    return doc && typeof doc === 'object' && 'ui' in doc
+      ? { ui: mergeUi(doc.ui), dirty: doc.dirty === true }
+      : { ui: mergeUi(doc), dirty: false };
   } catch {
-    return DEFAULT_UI;
+    return { ui: DEFAULT_UI, dirty: false };
   }
 };
 
-const keep = (ui: UiSettings | null) => {
+const keep = (ui: UiSettings, dirty: boolean) => {
   try {
-    if (ui) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(ui));
-    } else {
-      localStorage.removeItem(STORAGE_KEY);
-    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ui, dirty }));
   } catch {
     // Not kept in this browser: the Owner's document still is
   }
@@ -78,7 +84,7 @@ const keep = (ui: UiSettings | null) => {
 const POINTER_STYLE_ID = 'echo-pointer';
 
 /** Applies what CSS carries: the text variables on the root, and the pointer's style sheet */
-const applyCss = (ui: UiSettings) => {
+export const applyCss = (ui: UiSettings): void => {
   const root = document.documentElement;
   Object.entries(textVariables(ui.text)).forEach(([k, v]) => root.style.setProperty(k, v));
   let sheet = document.getElementById(POINTER_STYLE_ID) as HTMLStyleElement | null;
@@ -107,47 +113,82 @@ export interface SettingsProviderProps {
  * @returns Provider
  */
 const SettingsProvider: React.FC<SettingsProviderProps> = ({ signedIn, children }) => {
-  const [ui, setUi] = useState<UiSettings>(() => {
-    const kept = readKept();
-    setCurrentUi(kept);
-    return kept;
-  });
+  const initial = useRef<{ ui: UiSettings; dirty: boolean } | null>(null);
+  if (!initial.current) {
+    // Before the first paint: the store, the text variables and the pointer
+    initial.current = readKept();
+    setCurrentUi(initial.current.ui);
+    applyCss(initial.current.ui);
+  }
+  const [ui, setUi] = useState<UiSettings>(initial.current.ui);
+  const uiRef = useRef(ui);
   const [save, setSave] = useState<SaveState>({ state: 'idle' });
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // What waits to be saved: the settings, or null for a reset
+  const pending = useRef<{ next: UiSettings | null } | null>(null);
+  const signedInRef = useRef(signedIn);
+  signedInRef.current = signedIn;
   // Changes made before the Owner's document arrived win over it
-  const changed = useRef(false);
+  const changed = useRef(initial.current.dirty);
 
-  const apply = useCallback((next: UiSettings) => {
-    setCurrentUi(next);
-    setUi(next);
-    keep(next);
+  useLayoutEffect(() => applyCss(ui), [ui]);
+
+  /** Sends what waits now (keepalive: it may outlive the page) */
+  const flush = useCallback((keepalive = false) => {
+    const item = pending.current;
+    if (timer.current) {
+      clearTimeout(timer.current);
+      timer.current = null;
+    }
+    if (!item || !signedInRef.current) {
+      return;
+    }
+    pending.current = null;
+    setSave({ state: 'saving' });
+    (item.next
+      ? backendApiClient.saveSettings('ui', item.next, keepalive)
+      : backendApiClient.resetSettings('ui', keepalive)
+    )
+      .then(() => {
+        // Saved: the browser's copy is no longer ahead (unless it changed meanwhile)
+        if (!pending.current) {
+          keep(uiRef.current, false);
+        }
+        setSave({ state: 'saved', at: new Date() });
+      })
+      .catch((e: Error) => setSave({ state: 'failed', message: e.message || 'Saving failed' }));
   }, []);
-
-  useEffect(() => applyCss(ui), [ui]);
 
   const schedule = useCallback(
     (next: UiSettings | null) => {
-      if (!signedIn) {
+      pending.current = { next };
+      if (!signedInRef.current) {
         return;
       }
       if (timer.current) {
         clearTimeout(timer.current);
       }
-      timer.current = setTimeout(() => {
-        setSave({ state: 'saving' });
-        (next ? backendApiClient.saveSettings('ui', next) : backendApiClient.resetSettings('ui'))
-          .then(() => setSave({ state: 'saved', at: new Date() }))
-          .catch((e: Error) => setSave({ state: 'failed', message: e.message || 'Saving failed' }));
-      }, SAVE_DELAY_MS);
+      timer.current = setTimeout(() => flush(), SAVE_DELAY_MS);
     },
-    [signedIn],
+    [flush],
   );
+
+  const apply = useCallback((next: UiSettings, dirty: boolean) => {
+    uiRef.current = next;
+    setCurrentUi(next);
+    keep(next, dirty);
+    setUi(next);
+  }, []);
 
   useEffect(() => {
     if (!signedIn) {
       return undefined;
     }
     let alive = true;
+    // Changes the browser holds and never saved go first (a failed save, a closed tab)
+    if (changed.current) {
+      schedule(uiRef.current);
+    }
     backendApiClient
       .settings('ui')
       .then((doc) => {
@@ -156,12 +197,12 @@ const SettingsProvider: React.FC<SettingsProviderProps> = ({ signedIn, children 
         }
         if (!doc.updatedAt) {
           // Nothing saved for the Owner yet: the browser's copy stays, and becomes theirs
-          if (JSON.stringify(currentUi()) !== JSON.stringify(DEFAULT_UI)) {
-            schedule(currentUi());
+          if (JSON.stringify(uiRef.current) !== JSON.stringify(DEFAULT_UI)) {
+            schedule(uiRef.current);
           }
           return;
         }
-        apply(mergeUi(doc.json));
+        apply(mergeUi(doc.json), false);
         setSave({ state: 'saved', at: new Date(doc.updatedAt) });
       })
       .catch(() => {
@@ -172,36 +213,31 @@ const SettingsProvider: React.FC<SettingsProviderProps> = ({ signedIn, children 
     };
   }, [signedIn, apply, schedule]);
 
-  useEffect(
-    () => () => {
-      if (timer.current) {
-        clearTimeout(timer.current);
-      }
-    },
-    [],
-  );
+  // Leaving the page: what waits is sent at once
+  useEffect(() => {
+    const leave = () => flush(true);
+    window.addEventListener('pagehide', leave);
+    return () => {
+      window.removeEventListener('pagehide', leave);
+      flush(true);
+    };
+  }, [flush]);
 
   const update = useCallback(
     (change: (current: UiSettings) => UiSettings) => {
       changed.current = true;
-      setUi((prev) => {
-        const next = mergeUi(change(prev));
-        setCurrentUi(next);
-        keep(next);
-        schedule(next);
-        return next;
-      });
+      const next = mergeUi(change(uiRef.current));
+      apply(next, true);
+      schedule(next);
     },
-    [schedule],
+    [apply, schedule],
   );
 
   const resetAll = useCallback(() => {
     changed.current = true;
-    setCurrentUi(DEFAULT_UI);
-    setUi(DEFAULT_UI);
-    keep(null);
+    apply(DEFAULT_UI, true);
     schedule(null);
-  }, [schedule]);
+  }, [apply, schedule]);
 
   const value = useMemo(() => ({ ui, update, resetAll, save }), [ui, update, resetAll, save]);
   return <Context.Provider value={value}>{children}</Context.Provider>;

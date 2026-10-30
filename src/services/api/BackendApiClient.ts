@@ -1200,12 +1200,14 @@ export class BackendApiClient {
    * Saves the Owner's settings document of a kind.
    * @param kind - ui
    * @param json - The document
+   * @param keepalive - Sent even if the page closes meanwhile
    */
-  async saveSettings(kind: 'ui', json: unknown): Promise<void> {
+  async saveSettings(kind: 'ui', json: unknown, keepalive = false): Promise<void> {
     unwrap(
       await this.request<unknown>(`/settings/${kind}`, {
         method: 'PUT',
         body: JSON.stringify(json),
+        keepalive,
       }),
       'Saving the settings failed',
     );
@@ -1214,10 +1216,11 @@ export class BackendApiClient {
   /**
    * Forgets the Owner's settings document of a kind (the defaults apply).
    * @param kind - ui
+   * @param keepalive - Sent even if the page closes meanwhile
    */
-  async resetSettings(kind: 'ui'): Promise<void> {
+  async resetSettings(kind: 'ui', keepalive = false): Promise<void> {
     unwrap(
-      await this.request<unknown>(`/settings/${kind}`, { method: 'DELETE' }),
+      await this.request<unknown>(`/settings/${kind}`, { method: 'DELETE', keepalive }),
       'Resetting the settings failed',
     );
   }
