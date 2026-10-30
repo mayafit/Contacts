@@ -51,12 +51,13 @@ public record ReviewAnswer(string Question, string Answer);
 /// <summary>A review as parsed from Reviews.json (published values, else the draft's)</summary>
 public record ReviewInput(
     string? ExternalId, string Name, string? Address, string? CountryCode, double Lat, double Lon, int? Rating, string? Text,
-    bool Published, DateTime ReviewedAt, string? MapsUrl, List<ReviewAnswer>? Answers);
+    bool Published, DateTime? ReviewedAt, string? MapsUrl, List<ReviewAnswer>? Answers);
 
 /// <summary>A review as shown</summary>
 /// <param name="PlaceId">The Atlas place it is about, when linked</param>
+/// <param name="Lat">Where to show it: the linked place's position, else the review's</param>
 public record PlaceReviewView(
-    Guid Id, string Name, string? Address, int? Rating, string? Text, bool Published, DateTime ReviewedAt, string? MapsUrl,
+    Guid Id, string Name, string? Address, int? Rating, string? Text, bool Published, DateTime? ReviewedAt, string? MapsUrl,
     List<ReviewAnswer> Answers, Guid? PlaceId, string? LinkedBy, double Lat, double Lon);
 
 /// <summary>

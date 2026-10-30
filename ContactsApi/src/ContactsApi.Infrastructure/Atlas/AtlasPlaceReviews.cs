@@ -8,8 +8,9 @@ using System.Text.RegularExpressions;
 
 namespace ContactsApi.Infrastructure.Atlas;
 
-/// <summary>A place as linking and reminders see it</summary>
-public record ReviewPlace(Guid Id, string Name, double Lat, double Lon);
+/// <summary>A place as linking sees it</summary>
+/// <param name="Taken">Another review is linked to it already</param>
+public record ReviewPlace(Guid Id, string Name, double Lat, double Lon, string? Category = null, bool Taken = false);
 
 /// <summary>What the reminder rules read about a place</summary>
 /// <param name="Visits">Its visits (start, end), any order</param>
@@ -96,15 +97,29 @@ public static partial class PlaceReviews
     public static HashSet<string> Words(string? name) =>
         NonWord().Split((name ?? string.Empty).ToLowerInvariant()).Where(w => w.Length >= MinWord).ToHashSet();
 
-    /// <summary>
-    /// The place a review is about (AD-39 rule 3): the nearest within <see cref="NameM"/>
-    /// sharing a word with its name ("name"); else the only one within <see cref="OnlyM"/>
-    /// ("only"); else the nearest within <see cref="NearestM"/> with no other within
-    /// <see cref="ClearM"/> ("nearest"); else none
-    /// </summary>
-    public static (Guid? PlaceId, string? By) Link(string name, double lat, double lon, IEnumerable<ReviewPlace> places)
+    /// <summary>Categories of the Owner's own places (from the Timeline's home and work)</summary>
+    public static readonly HashSet<string> HomeCategories = new(StringComparer.OrdinalIgnoreCase)
     {
-        var near = places.Select(p => (Place: p, M: Meters(lat, lon, p.Lat, p.Lon)))
+        "home", "work", "inferred_home", "inferred_work"
+    };
+
+    /// <summary>A place no review is about: the Owner's home or work, by name or category</summary>
+    public static bool Private(string name, string? category) =>
+        name.Trim().Equals("Home", StringComparison.OrdinalIgnoreCase) || name.Trim().Equals("Work", StringComparison.OrdinalIgnoreCase)
+        || (category != null && HomeCategories.Contains(category.Trim()));
+
+    /// <summary>
+    /// The place a review is about (AD-39 rule 3), never the Owner's home or work, and never
+    /// a place another review has: the nearest free place within <see cref="NameM"/> sharing a
+    /// word with its name ("name"); else, unless <paramref name="byNameOnly"/>, judged among
+    /// all places in reach (taken or not), the only one within <see cref="OnlyM"/> ("only"),
+    /// or the nearest within <see cref="NearestM"/> with no other within <see cref="ClearM"/>
+    /// ("nearest"), when that place is free; else none
+    /// </summary>
+    public static (Guid? PlaceId, string? By) Link(string name, double lat, double lon, IEnumerable<ReviewPlace> places, bool byNameOnly = false)
+    {
+        var near = places.Where(p => !Private(p.Name, p.Category))
+            .Select(p => (Place: p, M: Meters(lat, lon, p.Lat, p.Lon)))
             .Where(x => x.M <= NameM).OrderBy(x => x.M).ToList();
         if (near.Count == 0)
         {
@@ -112,24 +127,39 @@ public static partial class PlaceReviews
         }
 
         var words = Words(name);
-        var named = near.FirstOrDefault(x => words.Overlaps(Words(x.Place.Name)));
+        var named = near.FirstOrDefault(x => !x.Place.Taken && words.Overlaps(Words(x.Place.Name)));
         if (named.Place != null)
         {
             return (named.Place.Id, "name");
         }
 
+        if (byNameOnly)
+        {
+            return (null, null);
+        }
+
+        // A taken place still counts as there: it keeps a neighbour from looking like the only one
         var within = near.Where(x => x.M <= OnlyM).ToList();
         if (within.Count == 1)
         {
-            return (within[0].Place.Id, "only");
+            return within[0].Place.Taken ? (null, null) : (within[0].Place.Id, "only");
         }
 
         if (near[0].M <= NearestM && (near.Count == 1 || near[1].M > ClearM))
         {
-            return (near[0].Place.Id, "nearest");
+            return near[0].Place.Taken ? (null, null) : (near[0].Place.Id, "nearest");
         }
 
         return (null, null);
+    }
+
+    /// <summary>A link from an import, kept only when it is http or https (a link of another scheme could run script)</summary>
+    public static string? SafeUrl(string? url)
+    {
+        var u = url?.Trim();
+        return Uri.TryCreate(u, UriKind.Absolute, out var parsed) && (parsed.Scheme == Uri.UriSchemeHttps || parsed.Scheme == Uri.UriSchemeHttp)
+            ? u
+            : null;
     }
 
     /// <summary>

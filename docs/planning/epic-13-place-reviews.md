@@ -65,10 +65,21 @@ Acceptance criteria (FR-66, AD-39 rules 5 and 6):
 - [x] The Insights list and the place panel show the reminder with **Write a review**
   (the Maps URLs link with the Google place id).
 
+### 13.5 Review fixes — Phase 1
+
+- [x] Links by name before links by position (two passes); a taken place still counts
+  as there and is never taken again; home and work are never linked.
+- [x] Only http and https links kept (browser and server); a missing date stays none;
+  `[0, 0]` positions and non-text addresses skipped; localized Maps folders read.
+- [x] A concurrent choice stored once; a check constraint on the decisions; the
+  overview reads counts from small columns and shows a linked review at its place.
+
 ### 13.4 Tests — Phase 1
 
-- [x] Pure: the parser (published, draft, answers, the `location` array form, skips),
-  linking (each rule, the mall case, naming), eligibility (each rule), the keys.
+- [x] Pure: the parser (published, draft, answers, the `location` array form, skips,
+  unsafe links, no date, `[0, 0]`, localized folders), linking (each rule, the mall
+  case, naming, home and work, taken places, the name pass), eligibility (each rule),
+  the keys, safe links.
 - [x] Postgres: the upsert and its key, linking after reviews and after places, the
   place read, the overview, the decisions, a deleted place, the two-Owner isolation.
 - [x] Jest: the parser on a Takeout-shaped file, the panel block and its choices, the

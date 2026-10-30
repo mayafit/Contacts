@@ -95,6 +95,40 @@ describe('Google Maps reviews (Takeout)', () => {
     expect(isGoogleReviews(saved)).toBe(false);
   });
 
+  it('keeps only safe links, leaves out a missing date and skips a review with no position', () => {
+    const parsed = parseGoogleReviews({
+      type: 'FeatureCollection',
+      features: [
+        {
+          geometry: { coordinates: [34.8, 32.1] },
+          properties: {
+            five_star_rating_published: 4,
+            google_maps_url: 'javascript:alert(1)',
+            location: { name: 'Odd', address: { street: 'not text' } },
+          },
+        },
+        {
+          geometry: { coordinates: [0, 0] },
+          properties: { five_star_rating_published: 4, location: { name: 'Nowhere' } },
+        },
+      ],
+    });
+
+    expect(parsed.reviews).toEqual([
+      expect.objectContaining({ name: 'Odd', mapsUrl: null, reviewedAt: null, address: null }),
+    ]);
+  });
+
+  it('reads a reviews file under a Maps folder whatever its name (the export is localized)', async () => {
+    expect(kindOf('Takeout/מפות (המקומות שלך)/ביקורות.json')).toBe('json');
+    expect(kindOf('Takeout/Maps/Anything.json')).toBe('json');
+    const parsed = await parseFile({
+      path: 'Takeout/מפות (המקומות שלך)/ביקורות.json',
+      text: async () => JSON.stringify(REVIEWS),
+    });
+    expect(parsed?.reviews).toHaveLength(2);
+  });
+
   it('is parsed from a Takeout path and merged with other files', async () => {
     const parsed = await parseFile({
       path: 'Takeout/Maps (your places)/Reviews.json',

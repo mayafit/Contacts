@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { axe } from 'jest-axe';
 import PlaceReviewBlock from '../PlaceReview';
 import ReviewsSection from '../ReviewsSection';
-import { dueText, overviewText, reminderText, reviewedText } from '../reviewText';
+import { dueText, overviewText, reminderText, reviewedText, safeUrl } from '../reviewText';
 import type { PlaceDetail, PlaceReview, ReviewsOverview } from '../types';
 
 jest.mock('../../../../services/api/BackendApiClient', () => ({
@@ -87,6 +87,9 @@ describe('review texts', () => {
   it('says when, what is due, and the summary', () => {
     expect(reviewedText(review())).toMatch(/^Reviewed 3 Sept? 2025$/);
     expect(reviewedText(review({ published: false }))).toMatch(/^Draft, never published/);
+    expect(reviewedText(review({ reviewedAt: null }))).toBe('Reviewed');
+    expect(safeUrl('javascript:alert(1)')).toBeNull();
+    expect(safeUrl(' https://maps.google.com/?cid=1 ')).toBe('https://maps.google.com/?cid=1');
     expect(reminderText({ state: 'never', category: true })).toBe(
       'No review reminders for this kind of place',
     );

@@ -81,8 +81,8 @@ export interface ReviewInput {
   text?: string | null;
   /** False: only a draft was saved */
   published: boolean;
-  /** When it was written or last changed (ISO) */
-  reviewedAt: string;
+  /** When it was written or last changed (ISO); null when the export gives no date */
+  reviewedAt: string | null;
   mapsUrl?: string | null;
   answers?: ReviewAnswer[];
 }
@@ -460,12 +460,13 @@ export interface PlaceReview {
   text: string | null;
   /** False: a draft never published */
   published: boolean;
-  reviewedAt: string;
+  reviewedAt: string | null;
   mapsUrl: string | null;
   answers: ReviewAnswer[];
   /** The Atlas place it is about, when linked */
   placeId: string | null;
   linkedBy: string | null;
+  /** Where to show it: the linked place's position, else the review's */
   lat: number;
   lon: number;
 }

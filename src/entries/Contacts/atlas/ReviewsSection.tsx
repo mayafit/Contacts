@@ -10,7 +10,7 @@ import { MoreVert, RateReview } from '@mui/icons-material';
 import { backendApiClient } from '../../../services/api/BackendApiClient';
 import type { ReviewAction, ReviewDue, ReviewsOverview } from './types';
 import { Stars } from './PlaceReview';
-import { dueText, overviewText, reviewedText } from './reviewText';
+import { dueText, overviewText, reviewedText, safeUrl } from './reviewText';
 import { tokens } from '../theme/contactsTheme';
 
 export interface ReviewsSectionProps {
@@ -84,6 +84,7 @@ const ReviewsSection: React.FC<ReviewsSectionProps> = ({ onShowPlace }) => {
 
   const choose = async (due: ReviewDue, action: ReviewAction) => {
     setMenu(null);
+    setError(null);
     try {
       await backendApiClient.atlasReviewReminder(due.placeId, action);
       // A whole kind may go at once: the list comes again
@@ -163,9 +164,9 @@ const ReviewsSection: React.FC<ReviewsSectionProps> = ({ onShowPlace }) => {
               </ButtonBase>
             ) : (
               <Box key={r.id} sx={rowSx}>
-                {r.mapsUrl ? (
+                {safeUrl(r.mapsUrl) ? (
                   <Link
-                    href={r.mapsUrl}
+                    href={safeUrl(r.mapsUrl)!}
                     target="_blank"
                     rel="noopener noreferrer"
                     underline="none"

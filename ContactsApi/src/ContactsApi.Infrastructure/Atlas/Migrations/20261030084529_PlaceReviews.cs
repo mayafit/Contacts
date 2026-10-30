@@ -39,7 +39,7 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                     Rating = table.Column<int>(type: "integer", nullable: true),
                     Text = table.Column<string>(type: "character varying(10000)", maxLength: 10000, nullable: true),
                     Published = table.Column<bool>(type: "boolean", nullable: false),
-                    ReviewedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
+                    ReviewedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
                     MapsUrl = table.Column<string>(type: "character varying(1000)", maxLength: 1000, nullable: true),
                     Answers = table.Column<string>(type: "jsonb", nullable: false),
                     CreatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
@@ -73,6 +73,7 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_review_reminders", x => x.Id);
+                    table.CheckConstraint("CK_review_reminders_place_or_category", "(\"PlaceId\" IS NULL) <> (\"Category\" IS NULL)");
                     table.ForeignKey(
                         name: "FK_review_reminders_places_PlaceId",
                         column: x => x.PlaceId,

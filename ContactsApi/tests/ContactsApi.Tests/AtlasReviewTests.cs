@@ -71,6 +71,36 @@ public class PlaceReviewRuleTests
     }
 
     [Fact]
+    public void Home_and_work_are_never_linked_and_a_taken_place_still_counts_as_there()
+    {
+        var (lat, lon) = At(0);
+        // The cafe downstairs: home is the only place within 30 m
+        Assert.Equal((null, null), PlaceReviews.Link("Cafe", lat, lon, new[] { Place("Home", 20) }));
+        Assert.Equal((null, null), PlaceReviews.Link("Cafe", lat, lon, new[] { Place("Place", 20) with { Category = "inferred_work" } }));
+
+        // A place another review has: not taken again, and it keeps a neighbour from being "the only one"
+        var linked = Place("Place", 3) with { Taken = true };
+        var other = Place("Place", 20);
+        Assert.Equal((null, null), PlaceReviews.Link("Shoe shop", lat, lon, new[] { linked, other }));
+        Assert.Equal((null, null), PlaceReviews.Link("Shoe shop", lat, lon, new[] { linked }));
+        // A free place with the name still links by it
+        var named = Place("Shoe shop", 40);
+        Assert.Equal((named.Id, "name"), PlaceReviews.Link("Shoe shop", lat, lon, new[] { linked, named }));
+        // The first pass links by name only
+        Assert.Equal((null, null), PlaceReviews.Link("Shoe shop", lat, lon, new[] { other }, byNameOnly: true));
+    }
+
+    [Fact]
+    public void Only_http_links_are_kept()
+    {
+        Assert.Equal("http://maps.google.com/?cid=1", PlaceReviews.SafeUrl(" http://maps.google.com/?cid=1 "));
+        Assert.Equal("https://maps.app.goo.gl/x", PlaceReviews.SafeUrl("https://maps.app.goo.gl/x"));
+        Assert.Null(PlaceReviews.SafeUrl("javascript:alert(1)"));
+        Assert.Null(PlaceReviews.SafeUrl("maps.google.com/?cid=1"));
+        Assert.Null(PlaceReviews.SafeUrl(null));
+    }
+
+    [Fact]
     public void A_place_is_to_review_after_a_recent_real_visit_unless_a_rule_says_otherwise()
     {
         ReviewFacts F(string name = "Falafel Hakosem", string? category = "Restaurant", string state = "auto",
@@ -197,6 +227,36 @@ public class PlaceReviewDbTests
         var named = await db.Places.AsNoTracking().SingleAsync(p => p.Id == places["unnamed"].Id);
         Assert.Equal(("Hummus Abu Hassan", "Somewhere 1, Tel Aviv", "user", "review"),
             (named.Name, named.Address, named.IdentifyState, named.IdentifiedFrom));
+
+        // In one batch, a review by name wins its place over an older review only near it;
+        // a review by home is not linked; a link that is not http is dropped; no date stays none
+        var nero = At(0, 14000);
+        var home = At(0, 16000);
+        await svc.IngestAsync(owner, new IngestRequest
+        {
+            Source = "google-timeline",
+            Places = { P("nero", "Cafe Nero", nero, "Cafe"), P("home", "Home", home, "inferred_home") }
+        });
+        var batch = await svc.IngestAsync(owner, new IngestRequest
+        {
+            Source = "google-maps",
+            Reviews =
+            {
+                Review("Shoe shop", At(8, 14000), "5") with { ReviewedAt = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc) },
+                Review("Cafe Nero", At(30, 14000), "6"),
+                Review("Cafe downstairs", At(20, 16000), "7"),
+                Review("Odd link", At(9000, 9000), "8") with { MapsUrl = "javascript:alert(1)", ReviewedAt = null }
+            }
+        });
+        Assert.Equal(4, batch.Reviews);
+        var two = await db.Reviews.AsNoTracking().Where(r => r.OwnerId == owner).ToListAsync();
+        var neroId = (await db.Places.AsNoTracking().SingleAsync(p => p.OwnerId == owner && p.ExternalId == "nero")).Id;
+        Assert.Equal((neroId, "name"), (two.Single(r => r.ExternalId == "cid:6").PlaceId, two.Single(r => r.ExternalId == "cid:6").LinkedBy));
+        Assert.Null(two.Single(r => r.ExternalId == "cid:5").PlaceId);
+        Assert.Null(two.Single(r => r.ExternalId == "cid:7").PlaceId);
+        var odd = two.Single(r => r.Name == "Odd link");
+        Assert.Equal(((string?)null, (DateTime?)null), (odd.MapsUrl, odd.ReviewedAt));
+        await db.Reviews.Where(r => r.OwnerId == owner && r.ImportId == batch.ImportId).ExecuteDeleteAsync();
 
         // The same export again, with a changed text: updated, not added
         var again = await svc.IngestAsync(owner, new IngestRequest

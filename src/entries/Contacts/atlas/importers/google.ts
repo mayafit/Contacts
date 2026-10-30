@@ -7,6 +7,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- the export formats are loosely typed JSON */
 
 import { isSet } from '../types';
+import { safeUrl } from '../reviewText';
 
 import type {
   ActivityInput,
@@ -403,9 +404,10 @@ export const parseGoogleReviews = (json: unknown): ParsedData => {
   ((json as any)?.features ?? []).forEach((f: any) => {
     const p = f?.properties ?? {};
     const [lon, lat] = Array.isArray(f?.geometry?.coordinates) ? f.geometry.coordinates : [];
+    // Takeout writes [0, 0] for a place with no position
     const location = Array.isArray(p.location) ? p.location[0] : p.location;
     const name = typeof location?.name === 'string' ? location.name.trim() : '';
-    if (typeof lat !== 'number' || typeof lon !== 'number' || !name) {
+    if (typeof lat !== 'number' || typeof lon !== 'number' || (lat === 0 && lon === 0) || !name) {
       return;
     }
     const published = isSet(p.five_star_rating_published) || !!p.review_text_published;
@@ -418,15 +420,15 @@ export const parseGoogleReviews = (json: unknown): ParsedData => {
     }
     out.reviews!.push({
       name,
-      address: location?.address ?? null,
-      countryCode: location?.country_code ?? null,
+      address: typeof location?.address === 'string' ? location.address : null,
+      countryCode: typeof location?.country_code === 'string' ? location.country_code : null,
       lat,
       lon,
       rating: stars,
       text: words,
       published,
-      reviewedAt: iso(p.date) ?? new Date(0).toISOString(),
-      mapsUrl: typeof p.google_maps_url === 'string' ? p.google_maps_url : null,
+      reviewedAt: iso(p.date),
+      mapsUrl: safeUrl(p.google_maps_url),
       answers: (Array.isArray(p.questions) ? p.questions : [])
         .map((q: any) => ({ question: String(q?.question ?? '').trim(), answer: answerText(q) }))
         .filter((a: { question: string; answer: string | null }) => a.question && a.answer),

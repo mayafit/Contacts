@@ -717,7 +717,8 @@ The Owner writes reviews of places on Google Maps. Echo shows, for each place th
 
 #### FR-64: Import my reviews — Proposed
 The Owner imports the Takeout export as they import the Timeline: the zip, or the `Reviews.json` file on its own.
-- **What is kept**, for each review: the place's name, address, country and position as Google gives them; the stars (1 to 5); the text; the answers to Google's questions about the place ("Price per person", "Service: dine in"); the date the review was written or last changed; whether it is published or only a draft; and the review's link on Google Maps.
+- **What is kept**, for each review: the place's name, address, country and position as Google gives them; the stars (1 to 5); the text; the answers to Google's questions about the place ("Price per person", "Service: dine in"); the date the review was written or last changed (when the export has one); whether it is published or only a draft; and the review's link on Google Maps (only a web link is kept). A review with neither stars nor text, or without a position, is skipped.
+- **Any language.** Takeout names its files in the account's language; Echo reads the reviews file from the Maps folder whatever it is called, and recognises it by its content.
 - **Again and again.** Importing a newer export updates each review (matched by its Google Maps link) and adds new ones; a review missing from a newer export is kept (an import never deletes), and deleting an import removes what it brought (FR-17).
 - **Photos.** Google's documented export of reviews holds no photos (the Data Portability schema `maps.reviews` lists none). Echo therefore shows the Owner's **own photos taken at the place** (FR-27), and the review's link opens it on Google Maps, where the photos added to the review are. If the Owner's export turns out to include the review photos as files, a later story imports them.
 
@@ -729,7 +730,9 @@ The Owner imports the Takeout export as they import the Timeline: the zip, or th
   4. otherwise the review stays unlinked; it is still listed with the Owner's reviews.
 
   A place takes one review (Google keeps one review per place per person). Linking runs after every import of reviews, and again after every import of places, for the reviews not linked yet. A link stays until the place is deleted.
-- **A review names its place.** Many Timeline places have no name ("Place"). When a review is linked to such a place by position (rules 2 and 3), the place takes the review's name and address, unless the Owner named the place themselves.
+- **Never home or work.** A review is never linked to the Owner's home or work, so the café downstairs does not become the home.
+- **A review names its place.** Many Timeline places have no name ("Place"). When a review is linked to such a place by position (rules 2 and 3), the place takes the review's name, and its address when it has none, unless the Owner named the place themselves.
+- **Names first.** Reviews that a place's name matches are linked before those linked by position, so a review merely near a place never takes the place another review names.
 - **In the place panel.** A reviewed place shows the review: the stars, the date, the text, the answers, "Draft" when it was never published, and **Open on Google Maps** (the review's link). The Owner's own photos at the place are shown as before.
 - **In Insights.** A **Reviews** section shows how many reviews the Owner has written, their average stars, how many are linked to visited places, and the latest reviews; a click opens the place, or Google Maps for an unlinked review. It covers all reviews, whatever the current filters.
 

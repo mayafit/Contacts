@@ -14,8 +14,22 @@ const day = (iso: string): string =>
  * @param r - The review
  * @returns e.g. "Reviewed 3 Sep 2025", or "Draft, never published (3 Sep 2025)"
  */
-export const reviewedText = (r: PlaceReview): string =>
-  r.published ? `Reviewed ${day(r.reviewedAt)}` : `Draft, never published (${day(r.reviewedAt)})`;
+export const reviewedText = (r: PlaceReview): string => {
+  if (!r.reviewedAt) {
+    return r.published ? 'Reviewed' : 'Draft, never published';
+  }
+  return r.published
+    ? `Reviewed ${day(r.reviewedAt)}`
+    : `Draft, never published (${day(r.reviewedAt)})`;
+};
+
+/**
+ * A link from an import, only when it is http or https (another scheme could run script).
+ * @param url - The link
+ * @returns The link, or null
+ */
+export const safeUrl = (url: string | null | undefined): string | null =>
+  typeof url === 'string' && /^https?:\/\//i.test(url.trim()) ? url.trim() : null;
 
 /**
  * Stars as text, for labels.

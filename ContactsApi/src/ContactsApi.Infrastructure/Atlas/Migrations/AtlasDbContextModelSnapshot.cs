@@ -746,7 +746,7 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                     b.Property<int?>("Rating")
                         .HasColumnType("integer");
 
-                    b.Property<DateTime>("ReviewedAt")
+                    b.Property<DateTime?>("ReviewedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Source")
@@ -874,7 +874,10 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                         .IsUnique()
                         .HasFilter("\"PlaceId\" IS NOT NULL");
 
-                    b.ToTable("review_reminders", "atlas");
+                    b.ToTable("review_reminders", "atlas", t =>
+                        {
+                            t.HasCheckConstraint("CK_review_reminders_place_or_category", "(\"PlaceId\" IS NULL) <> (\"Category\" IS NULL)");
+                        });
                 });
 
             modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.SourceConnection", b =>

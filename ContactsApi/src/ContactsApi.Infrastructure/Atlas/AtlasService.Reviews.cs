@@ -21,6 +21,7 @@ public partial class AtlasService
     {
         var inputs = reviews
             .Where(r => !string.IsNullOrWhiteSpace(r.Name) && double.IsFinite(r.Lat) && double.IsFinite(r.Lon)
+                        && Math.Abs(r.Lat) <= 90 && Math.Abs(r.Lon) <= 180 && !(r.Lat == 0 && r.Lon == 0)
                         && (r.Rating is >= 1 and <= 5 || !string.IsNullOrWhiteSpace(r.Text)))
             .Select(r => (Key: Trim(r.ExternalId, 512) ?? Trim(PlaceReviews.Key(r.MapsUrl, r.Name, r.Lat, r.Lon), 512)!, Review: r))
             .DistinctBy(x => x.Key)
@@ -51,8 +52,8 @@ public partial class AtlasService
             row.Rating = r.Rating is >= 1 and <= 5 ? r.Rating : null;
             row.Text = Trim(r.Text, 10_000);
             row.Published = r.Published;
-            row.ReviewedAt = Utc(r.ReviewedAt);
-            row.MapsUrl = Trim(r.MapsUrl?.Trim(), 1000);
+            row.ReviewedAt = r.ReviewedAt.HasValue ? Utc(r.ReviewedAt.Value) : null;
+            row.MapsUrl = Trim(PlaceReviews.SafeUrl(r.MapsUrl), 1000);
             row.Answers = JsonSerializer.Serialize(
                 (r.Answers ?? new()).Where(a => !string.IsNullOrWhiteSpace(a.Question) && !string.IsNullOrWhiteSpace(a.Answer))
                 .Select(a => new ReviewAnswer(Trim(a.Question.Trim(), 300)!, Trim(a.Answer.Trim(), 1000)!)).ToList(), ReviewJson);
@@ -64,12 +65,15 @@ public partial class AtlasService
     }
 
     /// <summary>
-    /// Links the Owner's unlinked reviews to their places (AD-39 rule 3); a place takes one
-    /// review. A review linked by position gives an unnamed place its name. Returns how many were linked.
+    /// Links the Owner's unlinked reviews to their places (AD-39 rule 3) in two passes: every
+    /// link by name first, then by position, so a review never takes the place another review
+    /// names. A place takes one review. A review linked by position gives an unnamed place its
+    /// name. Returns how many were linked.
     /// </summary>
     public async Task<int> LinkReviewsAsync(string owner, CancellationToken ct = default)
     {
-        var reviews = await _db.Reviews.Where(r => r.OwnerId == owner && r.PlaceId == null).OrderBy(r => r.ReviewedAt).ToListAsync(ct);
+        var reviews = await _db.Reviews.Where(r => r.OwnerId == owner && r.PlaceId == null)
+            .OrderBy(r => r.ReviewedAt == null).ThenBy(r => r.ReviewedAt).ThenBy(r => r.Id).ToListAsync(ct);
         if (reviews.Count == 0)
         {
             return 0;
@@ -78,30 +82,33 @@ public partial class AtlasService
         var taken = (await _db.Reviews.Where(r => r.OwnerId == owner && r.PlaceId != null).Select(r => r.PlaceId!.Value).ToListAsync(ct))
             .ToHashSet();
         var places = await _db.Places.AsNoTracking().Where(p => p.OwnerId == owner)
-            .Select(p => new { p.Id, p.Name, p.Lat, p.Lon, p.UserEdited }).ToListAsync(ct);
+            .Select(p => new { p.Id, p.Name, p.Lat, p.Lon, p.Category, p.UserEdited }).ToListAsync(ct);
         var byId = places.ToDictionary(p => p.Id);
         var naming = new Dictionary<Guid, PlaceReview>();
         var linked = 0;
-        foreach (var r in reviews)
+        foreach (var byNameOnly in new[] { true, false })
         {
-            // Only the places around it (a box of about 110 m) are compared
-            var dLon = 0.001 / Math.Max(0.1, Math.Cos(r.Lat * Math.PI / 180));
-            var around = places.Where(p => !taken.Contains(p.Id) && Math.Abs(p.Lat - r.Lat) < 0.001 && Math.Abs(p.Lon - r.Lon) < dLon)
-                .Select(p => new ReviewPlace(p.Id, p.Name, p.Lat, p.Lon));
-            var (placeId, by) = PlaceReviews.Link(r.Name, r.Lat, r.Lon, around);
-            if (placeId == null)
+            foreach (var r in reviews.Where(r => r.PlaceId == null))
             {
-                continue;
-            }
+                // Only the places around it (a box of about 110 m) are compared
+                var dLon = 0.001 / Math.Max(0.1, Math.Cos(r.Lat * Math.PI / 180));
+                var around = places.Where(p => Math.Abs(p.Lat - r.Lat) < 0.001 && Math.Abs(p.Lon - r.Lon) < dLon)
+                    .Select(p => new ReviewPlace(p.Id, p.Name, p.Lat, p.Lon, p.Category, taken.Contains(p.Id)));
+                var (placeId, by) = PlaceReviews.Link(r.Name, r.Lat, r.Lon, around, byNameOnly);
+                if (placeId == null)
+                {
+                    continue;
+                }
 
-            r.PlaceId = placeId;
-            r.LinkedBy = by;
-            taken.Add(placeId.Value);
-            linked++;
-            var place = byId[placeId.Value];
-            if (by != "name" && !place.UserEdited && PlaceReviews.UnnamedNames.Contains(place.Name.Trim()))
-            {
-                naming[place.Id] = r;
+                r.PlaceId = placeId;
+                r.LinkedBy = by;
+                taken.Add(placeId.Value);
+                linked++;
+                var place = byId[placeId.Value];
+                if (by != "name" && !place.UserEdited && PlaceReviews.UnnamedNames.Contains(place.Name.Trim()))
+                {
+                    naming[place.Id] = r;
+                }
             }
         }
 
@@ -152,12 +159,20 @@ public partial class AtlasService
     /// <summary>The Owner's reviews and the places to review, all time (AD-39 rule 7)</summary>
     public async Task<ReviewsOverview> ReviewsOverviewAsync(string owner, CancellationToken ct = default)
     {
-        var reviews = await _db.Reviews.AsNoTracking().Where(r => r.OwnerId == owner).OrderByDescending(r => r.ReviewedAt).ToListAsync(ct);
-        var rated = reviews.Where(r => r.Rating.HasValue).Select(r => r.Rating!.Value).ToList();
-        var (due, total) = await DueAsync(owner, reviews.Where(r => r.PlaceId != null).Select(r => r.PlaceId!.Value).ToHashSet(), ct);
-        return new ReviewsOverview(reviews.Count, rated.Count > 0 ? Math.Round(rated.Average(), 1) : null,
-            reviews.Count(r => r.PlaceId != null), reviews.Count(r => r.PlaceId == null),
-            reviews.Take(PlaceReviews.RecentShown).Select(View).ToList(), due, total);
+        // Counts from the small columns; only the latest few are read whole
+        var all = await _db.Reviews.AsNoTracking().Where(r => r.OwnerId == owner).Select(r => new { r.Rating, r.PlaceId }).ToListAsync(ct);
+        var rated = all.Where(r => r.Rating.HasValue).Select(r => r.Rating!.Value).ToList();
+        var recent = await _db.Reviews.AsNoTracking().Where(r => r.OwnerId == owner)
+            .OrderBy(r => r.ReviewedAt == null).ThenByDescending(r => r.ReviewedAt).Take(PlaceReviews.RecentShown).ToListAsync(ct);
+        // A linked review is shown where its place is
+        var linkedIds = recent.Where(r => r.PlaceId != null).Select(r => r.PlaceId!.Value).ToList();
+        var at = await _db.Places.AsNoTracking().Where(p => p.OwnerId == owner && linkedIds.Contains(p.Id))
+            .Select(p => new { p.Id, p.Lat, p.Lon }).ToDictionaryAsync(p => p.Id, ct);
+        var (due, total) = await DueAsync(owner, all.Where(r => r.PlaceId != null).Select(r => r.PlaceId!.Value).ToHashSet(), ct);
+        return new ReviewsOverview(all.Count, rated.Count > 0 ? Math.Round(rated.Average(), 1) : null,
+            all.Count(r => r.PlaceId != null), all.Count(r => r.PlaceId == null),
+            recent.Select(r => r.PlaceId is { } id && at.TryGetValue(id, out var p) ? View(r) with { Lat = p.Lat, Lon = p.Lon } : View(r)).ToList(),
+            due, total);
     }
 
     /// <summary>The places to review (AD-39 rule 5), the most recently visited first; the first few and the total</summary>
@@ -247,7 +262,16 @@ public partial class AtlasService
                 throw new ArgumentException("action must be later, never, done, never_kind or clear");
         }
 
-        await _db.SaveChangesAsync(ct);
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
+        {
+            // The same choice made twice at once: the other one is stored
+            _db.ChangeTracker.Clear();
+        }
+
         return (await GetPlaceAsync(owner, place.Id, ct)).ReviewState!;
     }
 

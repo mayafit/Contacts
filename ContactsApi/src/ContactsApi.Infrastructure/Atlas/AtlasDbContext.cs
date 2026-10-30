@@ -181,6 +181,8 @@ public class AtlasDbContext : DbContext
             e.HasIndex(x => new { x.OwnerId, x.PlaceId }).IsUnique().HasFilter("\"PlaceId\" IS NOT NULL");
             e.HasIndex(x => new { x.OwnerId, x.Category }).IsUnique().HasFilter("\"Category\" IS NOT NULL");
             e.HasOne<AtlasPlace>().WithMany().HasForeignKey(x => x.PlaceId).OnDelete(DeleteBehavior.Cascade);
+            e.ToTable(t => t.HasCheckConstraint("CK_review_reminders_place_or_category",
+                "(\"PlaceId\" IS NULL) <> (\"Category\" IS NULL)"));
             e.Property(x => x.OwnerId).HasMaxLength(64);
             e.Property(x => x.Category).HasMaxLength(100);
             e.Property(x => x.Kind).HasMaxLength(16);

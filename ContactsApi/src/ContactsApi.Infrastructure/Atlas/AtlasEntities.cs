@@ -202,8 +202,8 @@ public class PlaceReview : ISourced
     public string? Text { get; set; }
     /// <summary>False: only a draft was saved</summary>
     public bool Published { get; set; } = true;
-    /// <summary>When it was written or last changed (UTC)</summary>
-    public DateTime ReviewedAt { get; set; }
+    /// <summary>When it was written or last changed (UTC); null when the export gives no date</summary>
+    public DateTime? ReviewedAt { get; set; }
     public string? MapsUrl { get; set; }
     /// <summary>JSON: [{question, answer}] (Google's questions about the place)</summary>
     public string Answers { get; set; } = "[]";

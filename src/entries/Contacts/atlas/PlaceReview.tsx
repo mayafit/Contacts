@@ -10,7 +10,7 @@ import { RateReview } from '@mui/icons-material';
 import { backendApiClient } from '../../../services/api/BackendApiClient';
 import type { PlaceDetail, ReviewAction, ReviewState } from './types';
 import PanelSection from './PanelSection';
-import { reminderText, reviewedText, starsLabel } from './reviewText';
+import { reminderText, reviewedText, safeUrl, starsLabel } from './reviewText';
 import { tokens } from '../theme/contactsTheme';
 
 /** The colour of a filled star */
@@ -71,7 +71,14 @@ const PlaceReviewBlock: React.FC<PlaceReviewBlockProps> = ({ place, onState }) =
   if (review) {
     const long = (review.text?.length ?? 0) > 280;
     return (
-      <PanelSection title="Your review" hint={<Stars rating={review.rating} />}>
+      <PanelSection
+        title="Your review"
+        hint={
+          <Box component="span" aria-hidden>
+            <Stars rating={review.rating} />
+          </Box>
+        }
+      >
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
           <Stars rating={review.rating} />
           <Typography variant="caption" sx={{ color: tokens.textMuted }}>
@@ -103,9 +110,9 @@ const PlaceReviewBlock: React.FC<PlaceReviewBlockProps> = ({ place, onState }) =
             {expanded ? 'less' : 'more'}
           </Link>
         )}
-        {review.answers.map((a) => (
+        {review.answers.map((a, i) => (
           <Typography
-            key={a.question}
+            key={`${i}-${a.question}`}
             variant="caption"
             component="div"
             dir="auto"
@@ -114,10 +121,10 @@ const PlaceReviewBlock: React.FC<PlaceReviewBlockProps> = ({ place, onState }) =
             {a.question}: {a.answer}
           </Typography>
         ))}
-        {review.mapsUrl && (
+        {safeUrl(review.mapsUrl) && (
           <Box sx={{ mt: 0.5 }}>
             <Link
-              href={review.mapsUrl}
+              href={safeUrl(review.mapsUrl)!}
               target="_blank"
               rel="noopener noreferrer"
               underline="hover"
