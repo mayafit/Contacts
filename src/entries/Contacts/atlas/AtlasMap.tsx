@@ -731,7 +731,16 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
         }),
     [activities],
   );
-  const selectedFlight = lines.find((l) => l.a.id === selectedId && l.flight);
+  // The selected flight's real path (AD-42) replaces its arc, so the flight is one line
+  // and its airport dots are the real airports
+  const shown = useMemo(
+    () =>
+      flightPath && flightPath.length > 1
+        ? lines.map((l) => (l.flight && l.a.id === selectedId ? { ...l, path: flightPath } : l))
+        : lines,
+    [lines, flightPath, selectedId],
+  );
+  const selectedFlight = shown.find((l) => l.a.id === selectedId && l.flight);
   // The selected matched route's runs, decoded once per route (not on hover)
   const routeRuns = useMemo(
     () =>
@@ -836,7 +845,7 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
         )}
         {density && <DensityLayer data={densityData} />}
         {!density &&
-          lines
+          shown
             // The selected matched route is drawn by its pieces (dashes would be hidden under it)
             .filter(({ a }) => !(routeRuns && a.id === selectedId))
             .map(({ a, path }) => {
@@ -871,7 +880,7 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
               );
             })}
         {!density &&
-          lines
+          shown
             .filter((l) => l.flight)
             .flatMap(({ a, path }) => [
               { key: `${a.id}-from`, at: path[0], color: typeColor(a.type) },
@@ -889,7 +898,7 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
             ))}
         {density ? null : selectedFlight ? (
           <Polyline
-            positions={flightPath ?? selectedFlight.path}
+            positions={selectedFlight.path}
             pathOptions={{
               color: highlightColor,
               weight: 2.5,

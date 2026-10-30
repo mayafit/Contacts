@@ -215,8 +215,11 @@ const AtlasHome: React.FC = () => {
     window.history.replaceState(null, '', window.location.pathname + (rest ? `?${rest}` : ''));
   }, []);
 
-  // The selected flight's path from its flight block (AD-42 rule 8)
-  const [flightPath, setFlightPath] = useState<[number, number][] | null>(null);
+  // The selected flight's path from its flight block (AD-42 rule 8), with the flight it is
+  // for: a path left over from the flight selected before is never drawn on the next
+  const [flightPath, setFlightPath] = useState<{ id: string; path: [number, number][] } | null>(
+    null,
+  );
 
   // Back from the Google sign-in that was asked to allow Drive (AD-40): the Google Drive tab
   const [driveAllowed, setDriveAllowed] = useState(false);
@@ -790,7 +793,7 @@ const AtlasHome: React.FC = () => {
                 selectedTrack={detail?.points}
                 selectedRoute={selectedRoute}
                 selectedId={detail?.summary.id}
-                flightPath={flightPath}
+                flightPath={flightPath?.id === detail?.summary.id ? flightPath?.path : null}
                 selectedVisitId={visit?.id}
                 area={area}
                 drawing={drawing}
@@ -895,7 +898,10 @@ const AtlasHome: React.FC = () => {
               <ActivityPanel
                 key={detail.summary.id}
                 detail={detail}
-                onFlightPath={setFlightPath}
+                onFlightPath={(path) => {
+                  const id = detail.summary.id;
+                  setFlightPath((cur) => (path ? { id, path } : cur?.id === id ? null : cur));
+                }}
                 onBack={() => {
                   setDetail(null);
                   setCursor(null);
