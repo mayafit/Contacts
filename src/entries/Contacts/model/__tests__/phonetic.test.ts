@@ -105,7 +105,11 @@ describe('phonetic fill (AD-43)', () => {
     expect(plan[1]).toMatchObject({ value: null, unknown: ['בר', 'לב'] });
     expect(wordsToAsk(plan)).toEqual(['בר', 'לב']);
 
-    plan = planFill(name, [], dict, { בר: 'Bar', לב: 'Lev' });
+    plan = planFill(name, [], dict, {
+      בר: { spelling: 'Bar', source: 'translate' },
+      לב: { spelling: 'Lev', source: 'gemini' },
+    });
+    // The weakest source names the part
     expect(plan[1]).toMatchObject({ value: 'Bar Lev', source: 'gemini' });
 
     // A filled phonetic part is left alone; a mixed part keeps its Latin word

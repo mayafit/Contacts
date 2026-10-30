@@ -20,6 +20,7 @@ import {
   splitFullName,
 } from '../../model/contactView';
 import { formatRelativeShort } from '../../model/activity';
+import { emailType } from '../../model/emailFind';
 
 /**
  * Replaces the first entry of a list group, adds one when the list is empty,
@@ -152,7 +153,12 @@ export const AVAILABLE_COLUMNS: ColumnDefinition[] = [
       fieldPath: 'emailAddresses',
       value: getPrimaryEmail,
       apply: (c, text) =>
-        replaceFirst(c.emailAddresses, text, (prev) => ({ ...prev, value: clean(text) })),
+        // A new address is typed by its domain, as the card's find in mail does (AD-43)
+        replaceFirst(c.emailAddresses, text, (prev) => ({
+          ...prev,
+          value: clean(text),
+          type: prev?.type ?? emailType(clean(text)),
+        })),
     },
   },
   {

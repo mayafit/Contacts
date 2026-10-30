@@ -62,6 +62,28 @@ public static class Transliteration
             : list;
     }
 
+    /// <summary>Words of a name sent for its context</summary>
+    public const int MaxNameWords = 10;
+
+    private static readonly Regex LatinWord = new(@"^[A-Za-z'\-]{1,40}$", RegexOptions.Compiled);
+
+    /// <summary>
+    /// The name's words, in order, sent to Google Translate for context: each a word of
+    /// <see cref="Check"/> or of Latin letters, apostrophes and hyphens; others are dropped
+    /// (the name is only context), and at most 10 are kept
+    /// </summary>
+    /// <param name="name">Requested name words</param>
+    /// <returns>The words, or null when none is left</returns>
+    public static List<string>? CheckName(IEnumerable<string>? name)
+    {
+        var list = (name ?? Enumerable.Empty<string>())
+            .Select(w => (w ?? string.Empty).Trim())
+            .Where(w => (Word.IsMatch(w) && HebrewLetter.IsMatch(w)) || LatinWord.IsMatch(w))
+            .Take(MaxNameWords)
+            .ToList();
+        return list.Count == 0 ? null : list;
+    }
+
     /// <summary>The generateContent request</summary>
     /// <param name="words">Checked words</param>
     /// <returns>Request body</returns>

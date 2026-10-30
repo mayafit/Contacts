@@ -13,12 +13,14 @@ import { Box, ButtonBase, Checkbox, Chip } from '@mui/material';
 import { ArrowDownward, ArrowUpward } from '@mui/icons-material';
 import type { Contact, ContactGroup } from '../../types/Contact';
 import { selectColumnConfig } from '../../redux/slices/ui/uiSlice';
+import { selectAllContacts } from '../../redux/slices/contacts/selectors';
 import { executeFieldUpdate } from '../../redux/thunks/syncThunks';
 import { useAppDispatch } from '../../types/hooks';
 import type { ActivityIndex } from '../../model/activity';
 import { AVAILABLE_COLUMNS } from '../../features/columnConfig/columnDefinitions';
 import type { ColumnDefinition } from '../../features/columnConfig/types';
 import { EditableCell } from '../EditableCell';
+import { cellAssistFor } from './cellAssist';
 import ContactAvatar from '../common/ContactAvatar';
 import AlphabetRail, { type RailEntry } from '../common/AlphabetRail';
 import {
@@ -96,6 +98,8 @@ const ContactsTable: React.FC<ContactsTableProps> = ({
   const dispatch = useAppDispatch();
   const lastChecked = useRef<string | null>(null);
   const columnConfig = useSelector(selectColumnConfig);
+  // All contacts, not the filtered rows: twins and spellings come from the whole list
+  const allContacts = useSelector(selectAllContacts);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [sort, setSort] = useState<SortState>({ columnId: 'displayName', desc: false });
   const [focusedCell, setFocusedCell] = useState<{ rowIndex: number; colIndex: number } | null>(
@@ -356,6 +360,7 @@ const ContactsTable: React.FC<ContactsTableProps> = ({
         onNavigate={(dir) => navigate(rowIndex, colIndex, dir)}
         autoEdit={focusedCell?.rowIndex === rowIndex && focusedCell?.colIndex === colIndex}
         onAutoEditConsumed={consumeAutoEdit}
+        assist={cellAssistFor(column.id, contact, allContacts)}
       />
     );
   };

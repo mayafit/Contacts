@@ -1547,16 +1547,29 @@ export class BackendApiClient {
   /**
    * Latin spellings of Hebrew name words, from Gemini (FR-77)
    * @param words - Hebrew words (at most 20)
-   * @returns Word → spelling, for the words Gemini spelled
+   * @param name - The whole name's words in order, for Google Translate's context
+   * @returns Word → spelling, and word → where it came from
    */
-  async transliterateNames(words: string[]): Promise<Record<string, string>> {
+  async transliterateNames(
+    words: string[],
+    name?: string[],
+  ): Promise<{
+    spellings: Record<string, string>;
+    sources?: Record<string, 'translate' | 'gemini'>;
+    /** Why some words were not spelled */
+    note?: string;
+  }> {
     return unwrap(
-      await this.request<{ spellings: Record<string, string> }>('/assistant/transliterate', {
+      await this.request<{
+        spellings: Record<string, string>;
+        sources?: Record<string, 'translate' | 'gemini'>;
+        note?: string;
+      }>('/assistant/transliterate', {
         method: 'POST',
-        body: JSON.stringify({ words }),
+        body: JSON.stringify({ words, name }),
       }),
       'Failed to spell the name',
-    ).spellings;
+    );
   }
 
   /**
