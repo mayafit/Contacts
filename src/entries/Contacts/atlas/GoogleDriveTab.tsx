@@ -16,6 +16,8 @@ export interface GoogleDriveTabProps {
   onChanged: () => void;
   /** Back from the Google sign-in that allowed Drive: connect right away */
   justAllowed?: boolean;
+  /** Called once the connection is made after the sign-in (so it is not made again) */
+  onConnected?: () => void;
 }
 
 /** The steps that schedule Takeout to Drive */
@@ -47,7 +49,12 @@ const STEPS = [
  * @param props - Component props
  * @returns Tab content
  */
-const GoogleDriveTab: React.FC<GoogleDriveTabProps> = ({ open, onChanged, justAllowed }) => {
+const GoogleDriveTab: React.FC<GoogleDriveTabProps> = ({
+  open,
+  onChanged,
+  justAllowed,
+  onConnected,
+}) => {
   const [status, setStatus] = useState<TakeoutDriveStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -62,15 +69,22 @@ const GoogleDriveTab: React.FC<GoogleDriveTabProps> = ({ open, onChanged, justAl
     [],
   );
 
-  const act = async (fn: () => Promise<TakeoutDriveStatus | void>) => {
+  // A check was asked for: the last check's time before it, polled until it changes (2 minutes at most)
+  const [waiting, setWaiting] = useState<{ since: string | null; tries: number } | null>(null);
+
+  const act = async (fn: () => Promise<TakeoutDriveStatus | void>, check = false) => {
     setBusy(true);
     setError(null);
+    const before = status?.connection?.lastSyncAt ?? null;
     try {
       const s = await fn();
       if (s) {
         setStatus(s);
       } else {
         await load();
+      }
+      if (check) {
+        setWaiting({ since: before, tries: 0 });
       }
       onChanged();
     } catch (e) {
@@ -87,22 +101,33 @@ const GoogleDriveTab: React.FC<GoogleDriveTabProps> = ({ open, onChanged, justAl
     if (justAllowed && !connecting.current) {
       // The sign-in now allows Drive: connect once
       connecting.current = true;
-      void act(() => backendApiClient.atlasTakeoutDriveConnect());
+      void act(() => backendApiClient.atlasTakeoutDriveConnect(), true).then(() => onConnected?.());
       return;
     }
     void load();
   }, [open, justAllowed]);
 
-  // While a check runs, look again every few seconds
+  // The asked-for check has run: its time moved on and it is no longer running
+  const conn = status?.connection ?? null;
   useEffect(() => {
-    if (!open || status?.connection?.status !== 'syncing') {
+    if (waiting && conn && conn.status !== 'syncing' && conn.lastSyncAt !== waiting.since) {
+      setWaiting(null);
+    }
+  }, [waiting, conn]);
+
+  // While a check runs (or one was asked for), look again every few seconds
+  const checking = conn?.status === 'syncing' || waiting !== null;
+  useEffect(() => {
+    if (!open || !checking) {
       return undefined;
     }
-    const t = setTimeout(() => void load(), 4000);
+    const t = setTimeout(() => {
+      void load();
+      setWaiting((w) => (w && w.tries < 30 ? { ...w, tries: w.tries + 1 } : null));
+    }, 4000);
     return () => clearTimeout(t);
-  }, [open, status, load]);
+  }, [open, checking, status, load]);
 
-  const conn = status?.connection ?? null;
   return (
     <Box>
       <Typography variant="body2" sx={{ color: tokens.textSecondary, mb: 1 }}>
@@ -132,7 +157,7 @@ const GoogleDriveTab: React.FC<GoogleDriveTabProps> = ({ open, onChanged, justAl
             )}
             <Chip
               size="small"
-              label={conn.status === 'syncing' ? 'checking…' : conn.status}
+              label={checking ? 'checking…' : conn.status}
               color={conn.status === 'expired' || conn.status === 'error' ? 'warning' : 'default'}
             />
           </Box>
@@ -166,8 +191,8 @@ const GoogleDriveTab: React.FC<GoogleDriveTabProps> = ({ open, onChanged, justAl
               <Button
                 size="small"
                 variant="outlined"
-                disabled={busy || conn.status === 'syncing'}
-                onClick={() => void act(() => backendApiClient.atlasTakeoutDriveSync())}
+                disabled={busy || checking}
+                onClick={() => void act(() => backendApiClient.atlasTakeoutDriveSync(), true)}
               >
                 Check now
               </Button>
@@ -201,7 +226,7 @@ const GoogleDriveTab: React.FC<GoogleDriveTabProps> = ({ open, onChanged, justAl
               disabled={busy}
               onClick={() =>
                 status.granted
-                  ? void act(() => backendApiClient.atlasTakeoutDriveConnect())
+                  ? void act(() => backendApiClient.atlasTakeoutDriveConnect(), true)
                   : backendApiClient.connectTakeoutDrive()
               }
             >

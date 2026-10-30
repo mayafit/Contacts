@@ -16,17 +16,27 @@ namespace ContactsApi.Infrastructure.Atlas;
 /// <summary>A Takeout export in Drive</summary>
 public record TakeoutFile(string Id, string Name, long? Size, DateTime Modified);
 
-/// <summary>A Drive call failed: Unauthorized when the token no longer allows it (signed out, or Drive not granted)</summary>
+/// <summary>
+/// A Drive call failed. Unauthorized: the token no longer allows Drive (sign in again).
+/// Transient: try again later (Google busy or unreachable). Otherwise the file itself cannot be read.
+/// </summary>
 public class GoogleDriveException : Exception
 {
     /// <summary>The Owner must sign in again and allow Drive</summary>
     public bool Unauthorized { get; }
 
+    /// <summary>Worth trying again later (5xx, 429, a timeout)</summary>
+    public bool Transient { get; }
+
     /// <summary>Creates the exception</summary>
-    public GoogleDriveException(string message, bool unauthorized = false) : base(message) => Unauthorized = unauthorized;
+    public GoogleDriveException(string message, bool unauthorized = false, bool transient = false) : base(message)
+    {
+        Unauthorized = unauthorized;
+        Transient = transient;
+    }
 }
 
-/// <summary>Google Drive API v3, read only: the Owner's Takeout zips, and their content</summary>
+/// <summary>Google Drive API v3, read only: the Owner's own Takeout zips, and their content</summary>
 public class GoogleDriveTakeout
 {
     /// <summary>Name of the HttpClient</summary>
@@ -34,16 +44,24 @@ public class GoogleDriveTakeout
 
     private const string Files = "https://www.googleapis.com/drive/v3/files";
 
-    /// <summary>Takeout zips, newest first (Takeout names each part takeout-&lt;time&gt;-&lt;n&gt;.zip)</summary>
-    public const string Query =
-        "name contains 'takeout-' and trashed = false and (mimeType = 'application/zip' or mimeType = 'application/x-zip-compressed')";
+    /// <summary>
+    /// The Owner's own files named like Takeout exports (takeout-&lt;time&gt;-&lt;n&gt;.zip), never
+    /// files others shared with them; the .zip ending is checked on the names returned
+    /// </summary>
+    public const string Query = "'me' in owners and name contains 'takeout-' and trashed = false";
+
+    /// <summary>A download that takes longer than this is given up (a stalled body)</summary>
+    public static readonly TimeSpan DownloadLimit = TimeSpan.FromMinutes(20);
+
+    /// <summary>The message of a file over the size limit</summary>
+    public const string TooLarge = "The export is larger than allowed.";
 
     private readonly HttpClient _http;
 
     /// <summary>Creates the client</summary>
     public GoogleDriveTakeout(HttpClient http) => _http = http;
 
-    /// <summary>The newest Takeout zips in the Owner's Drive (at most 50)</summary>
+    /// <summary>The Owner's newest Takeout zips (at most 50)</summary>
     /// <exception cref="GoogleDriveException">The call failed</exception>
     public async Task<List<TakeoutFile>> ListAsync(string accessToken, CancellationToken ct)
     {
@@ -51,61 +69,107 @@ public class GoogleDriveTakeout
                   "&fields=files(id%2Cname%2Csize%2CmodifiedTime)&spaces=drive";
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-        using var res = await _http.SendAsync(req, ct);
-        await EnsureAsync(res, ct);
-        using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync(ct));
-        var list = new List<TakeoutFile>();
-        if (!doc.RootElement.TryGetProperty("files", out var files) || files.ValueKind != JsonValueKind.Array)
+        using var res = await SendAsync(req, HttpCompletionOption.ResponseContentRead, ct);
+        await EnsureAsync(res, true, ct);
+        JsonDocument doc;
+        try
         {
-            return list;
+            doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync(ct));
+        }
+        catch (JsonException)
+        {
+            throw new GoogleDriveException("Google Drive gave an unreadable list.", transient: true);
         }
 
-        foreach (var f in files.EnumerateArray())
+        using (doc)
         {
-            var id = f.TryGetProperty("id", out var i) ? i.GetString() : null;
-            var name = f.TryGetProperty("name", out var n) ? n.GetString() : null;
-            if (id == null || name == null)
+            var list = new List<TakeoutFile>();
+            if (!doc.RootElement.TryGetProperty("files", out var files) || files.ValueKind != JsonValueKind.Array)
             {
-                continue;
+                return list;
             }
 
-            long? size = f.TryGetProperty("size", out var s) && long.TryParse(s.GetString(), out var bytes) ? bytes : null;
-            var modified = f.TryGetProperty("modifiedTime", out var m)
-                           && DateTime.TryParse(m.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var t)
-                ? t
-                : DateTime.MinValue;
-            list.Add(new TakeoutFile(id, name, size, DateTime.SpecifyKind(modified, DateTimeKind.Utc)));
-        }
+            foreach (var f in files.EnumerateArray())
+            {
+                var id = f.TryGetProperty("id", out var i) ? i.GetString() : null;
+                var name = f.TryGetProperty("name", out var n) ? n.GetString() : null;
+                if (id == null || name == null || !name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
 
-        return list;
+                long? size = f.TryGetProperty("size", out var s) && long.TryParse(s.GetString(), out var bytes) ? bytes : null;
+                var modified = f.TryGetProperty("modifiedTime", out var m)
+                               && DateTime.TryParse(m.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var t)
+                    ? t
+                    : DateTime.MinValue;
+                list.Add(new TakeoutFile(id, name, size, DateTime.SpecifyKind(modified, DateTimeKind.Utc)));
+            }
+
+            return list;
+        }
     }
 
-    /// <summary>Streams a file's content to a local path, stopping past <paramref name="maxBytes"/></summary>
+    /// <summary>Streams a file's content to a local path, stopping past <paramref name="maxBytes"/> or <see cref="DownloadLimit"/></summary>
     /// <exception cref="GoogleDriveException">The call failed, or the file is larger than allowed</exception>
     public async Task DownloadAsync(string accessToken, string id, string path, long maxBytes, CancellationToken ct)
     {
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        limit.CancelAfter(DownloadLimit);
         using var req = new HttpRequestMessage(HttpMethod.Get, $"{Files}/{Uri.EscapeDataString(id)}?alt=media");
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-        using var res = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
-        await EnsureAsync(res, ct);
-        await using var source = await res.Content.ReadAsStreamAsync(ct);
-        await using var target = File.Create(path);
-        var buffer = new byte[81920];
-        long total = 0;
-        int read;
-        while ((read = await source.ReadAsync(buffer, ct)) > 0)
+        try
         {
-            total += read;
-            if (total > maxBytes)
+            using var res = await SendAsync(req, HttpCompletionOption.ResponseHeadersRead, limit.Token);
+            await EnsureAsync(res, false, limit.Token);
+            await using var source = await res.Content.ReadAsStreamAsync(limit.Token);
+            await using var target = File.Create(path);
+            var buffer = new byte[81920];
+            long total = 0;
+            int read;
+            while ((read = await source.ReadAsync(buffer, limit.Token)) > 0)
             {
-                throw new GoogleDriveException("The export is larger than allowed.");
-            }
+                total += read;
+                if (total > maxBytes)
+                {
+                    throw new GoogleDriveException(TooLarge);
+                }
 
-            await target.WriteAsync(buffer.AsMemory(0, read), ct);
+                await target.WriteAsync(buffer.AsMemory(0, read), limit.Token);
+            }
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            throw new GoogleDriveException("The download took too long.", transient: true);
+        }
+        catch (HttpRequestException)
+        {
+            throw new GoogleDriveException("The download broke off.", transient: true);
         }
     }
 
-    private static async Task EnsureAsync(HttpResponseMessage res, CancellationToken ct)
+    private async Task<HttpResponseMessage> SendAsync(HttpRequestMessage req, HttpCompletionOption option, CancellationToken ct)
+    {
+        try
+        {
+            return await _http.SendAsync(req, option, ct);
+        }
+        catch (HttpRequestException)
+        {
+            throw new GoogleDriveException("Google Drive could not be reached.", transient: true);
+        }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        {
+            throw new GoogleDriveException("Google Drive did not answer in time.", transient: true);
+        }
+    }
+
+    /// <summary>
+    /// Throws for a failed answer. Lost access: 401, or a 403 whose reason is an insufficient
+    /// scope (or, on the listing, insufficient permissions); a 403 on one file is that file's
+    /// (not downloadable). Rate limits, 429 and 5xx are transient.
+    /// </summary>
+    private static async Task EnsureAsync(HttpResponseMessage res, bool listing, CancellationToken ct)
     {
         if (res.IsSuccessStatusCode)
         {
@@ -113,11 +177,61 @@ public class GoogleDriveTakeout
         }
 
         var body = await res.Content.ReadAsStringAsync(ct);
-        // 401: the token is not accepted; 403 with an insufficient scope: Drive was not granted
-        var unauthorized = res.StatusCode == HttpStatusCode.Unauthorized
-                           || (res.StatusCode == HttpStatusCode.Forbidden
-                               && (body.Contains("insufficient", StringComparison.OrdinalIgnoreCase) || body.Contains("ACCESS_TOKEN_SCOPE", StringComparison.Ordinal)));
-        throw new GoogleDriveException($"Google Drive answered {(int)res.StatusCode}.", unauthorized);
+        var code = (int)res.StatusCode;
+        if (res.StatusCode == HttpStatusCode.Unauthorized)
+        {
+            throw new GoogleDriveException("Google Drive did not accept the sign-in.", unauthorized: true);
+        }
+
+        if (res.StatusCode == HttpStatusCode.Forbidden)
+        {
+            var reasons = Reasons(body);
+            if (reasons.Contains("ACCESS_TOKEN_SCOPE_INSUFFICIENT") || (listing && reasons.Contains("insufficientPermissions")))
+            {
+                throw new GoogleDriveException("Drive access is not allowed.", unauthorized: true);
+            }
+
+            if (reasons.Contains("rateLimitExceeded") || reasons.Contains("userRateLimitExceeded"))
+            {
+                throw new GoogleDriveException("Google Drive asked to slow down.", transient: true);
+            }
+        }
+
+        throw new GoogleDriveException($"Google Drive answered {code}.", transient: code == 429 || code >= 500);
+    }
+
+    /// <summary>The reasons of a Google error: error.errors[].reason and error.details[].reason</summary>
+    internal static HashSet<string> Reasons(string body)
+    {
+        var reasons = new HashSet<string>(StringComparer.Ordinal);
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (!doc.RootElement.TryGetProperty("error", out var error) || error.ValueKind != JsonValueKind.Object)
+            {
+                return reasons;
+            }
+
+            foreach (var list in new[] { "errors", "details" })
+            {
+                if (error.TryGetProperty(list, out var items) && items.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var item in items.EnumerateArray())
+                    {
+                        if (item.ValueKind == JsonValueKind.Object && item.TryGetProperty("reason", out var r) && r.GetString() is { } reason)
+                        {
+                            reasons.Add(reason);
+                        }
+                    }
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            // Not JSON: no reasons
+        }
+
+        return reasons;
     }
 }
 
@@ -164,11 +278,31 @@ public static partial class GoogleReviewsParser
                 continue;
             }
 
-            using var stream = e.Open();
             JsonDocument doc;
             try
             {
-                doc = JsonDocument.Parse(stream);
+                // At most the limit is read, whatever the entry claims (a zip bomb lies about its size)
+                using var stream = e.Open();
+                using var bounded = new MemoryStream();
+                var buffer = new byte[81920];
+                int read;
+                while ((read = stream.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    if (bounded.Length + read > MaxEntryBytes)
+                    {
+                        throw new InvalidDataException("too large");
+                    }
+
+                    bounded.Write(buffer, 0, read);
+                }
+
+                bounded.Position = 0;
+                doc = JsonDocument.Parse(bounded);
+            }
+            catch (InvalidDataException)
+            {
+                note = $"{e.Name} is larger than {MaxEntryBytes / 1024 / 1024} MB or damaged";
+                continue;
             }
             catch (JsonException)
             {

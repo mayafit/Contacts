@@ -1081,6 +1081,7 @@ const AtlasHome: React.FC = () => {
         onChanged={changed}
         initialTab={importTab}
         driveAllowed={driveAllowed}
+        onDriveConnected={() => setDriveAllowed(false)}
       />
       <PhotoViewer
         photos={viewer?.photos ?? []}

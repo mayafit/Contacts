@@ -97,6 +97,13 @@ public class AuthController : ControllerBase
                 HttpContext.Session.SetString(AfterLoginKey, "/contacts?connected=signatures");
             }
 
+            // Drive is asked on top of a known account's opt-ins; signed out, they are not known
+            // and a consent for Drive alone would drop them
+            if (takeout && userId == null)
+            {
+                return RedirectToFrontend("/login?error=session");
+            }
+
             if (takeout)
             {
                 optIns.Takeout = true;

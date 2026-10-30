@@ -102,35 +102,44 @@ public class TakeoutDriveDbTests
     {
         public bool Granted = true;
         public string? Token = "token";
+        public bool Refused;
         public Task<bool> GrantedAsync(string owner) => Task.FromResult(Granted);
-        public Task<string?> AccessTokenAsync(string owner) => Task.FromResult(Token);
+        public Task<(string? Token, bool Refused)> AccessTokenAsync(string owner) => Task.FromResult((Token, Refused));
     }
 
-    /// <summary>A Drive holding some files; downloads counted</summary>
+    /// <summary>A Drive holding some files; downloads counted; failures on demand</summary>
     private sealed class Drive : HttpMessageHandler
     {
         public readonly List<(string Id, string Name, DateTime Modified, byte[] Bytes, long? Size)> Files = new();
         public readonly List<string> Downloads = new();
-        public HttpStatusCode? Fail;
+        public readonly Dictionary<string, (HttpStatusCode Status, string Body)> DownloadFails = new();
+        public (HttpStatusCode Status, string Body)? ListFail;
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
-            if (Fail is { } status)
-            {
-                return Task.FromResult(new HttpResponseMessage(status)
-                    { Content = new StringContent("""{"error":{"status":"PERMISSION_DENIED","details":[{"reason":"ACCESS_TOKEN_SCOPE_INSUFFICIENT"}]}}""") });
-            }
-
             Assert.Equal("Bearer token", request.Headers.Authorization?.ToString());
             var url = request.RequestUri!.ToString();
             if (url.Contains("alt=media"))
             {
                 var id = request.RequestUri!.AbsolutePath.Split('/').Last();
                 Downloads.Add(id);
+                if (DownloadFails.TryGetValue(id, out var fail))
+                {
+                    return Task.FromResult(new HttpResponseMessage(fail.Status) { Content = new StringContent(fail.Body) });
+                }
+
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(Files.Single(f => f.Id == id).Bytes) });
             }
 
-            Assert.Contains("name contains 'takeout-'", Uri.UnescapeDataString(request.RequestUri!.AbsoluteUri));
+            if (ListFail is { } lf)
+            {
+                return Task.FromResult(new HttpResponseMessage(lf.Status) { Content = new StringContent(lf.Body) });
+            }
+
+            // Only the Owner's own files, never shared ones
+            var query = Uri.UnescapeDataString(request.RequestUri!.AbsoluteUri);
+            Assert.Contains("'me' in owners", query);
+            Assert.Contains("name contains 'takeout-'", query);
             var body = JsonSerializer.Serialize(new
             {
                 files = Files.OrderByDescending(f => f.Modified).Select(f => new
@@ -147,6 +156,9 @@ public class TakeoutDriveDbTests
         public HttpClient CreateClient(string name) => new(h, false);
     }
 
+    private const string ScopeDenied = """{"error":{"code":403,"details":[{"reason":"ACCESS_TOKEN_SCOPE_INSUFFICIENT"}]}}""";
+    private const string FileDenied = """{"error":{"code":403,"errors":[{"reason":"cannotDownloadFile"}]}}""";
+
     private static AtlasDbContext? Db()
     {
         var cs = Environment.GetEnvironmentVariable("ATLAS_TEST_DB");
@@ -161,8 +173,12 @@ public class TakeoutDriveDbTests
         return db;
     }
 
+    private static byte[] WithReviews() => TakeoutDriveTests.Zip(("Takeout/Maps (your places)/Reviews.json", TakeoutDriveTests.Reviews));
+
+    private static byte[] Without() => TakeoutDriveTests.Zip(("Takeout/Fit/x.json", "{}"));
+
     [Fact]
-    public async Task New_exports_are_picked_up_once_oversized_and_empty_ones_noted_and_lost_access_expires()
+    public async Task Exports_are_picked_up_once_and_failures_are_told_apart()
     {
         await using var db = Db();
         if (db == null)
@@ -176,62 +192,111 @@ public class TakeoutDriveDbTests
         var queue = new TakeoutDriveQueue();
         var svc = new TakeoutDriveService(db, new AtlasService(db, NullLogger<AtlasService>.Instance), tokens, new Factory(drive), queue,
             Options.Create(new TakeoutOptions { MaxZipMb = 1 }), NullLogger<TakeoutDriveService>.Instance);
+        async Task<TakeoutDriveStatus> Status() => await svc.StatusAsync(owner, default);
 
         // Not allowed yet: no connection
-        Assert.False((await svc.StatusAsync(owner, default)).Granted);
+        Assert.False((await Status()).Granted);
         await Assert.ThrowsAsync<ArgumentException>(() => svc.ConnectAsync(owner, "me@example.com", default));
         tokens.Granted = true;
         var connected = await svc.ConnectAsync(owner, "me@example.com", default);
         Assert.Equal(("idle", "me@example.com"), (connected.Connection!.Status, connected.Connection.Account));
         Assert.Equal(owner, await queue.NextAsync(TimeSpan.Zero, default));
 
-        // Two exports: one with reviews, one without; and one too large
+        // The first check takes only the newest export (both its parts), not an older one
         var t0 = new DateTime(2026, 6, 1, 0, 0, 0, DateTimeKind.Utc);
-        drive.Files.Add(("z1", "takeout-20260901T000000Z-001.zip", t0,
-            TakeoutDriveTests.Zip(("Takeout/Maps (your places)/Reviews.json", TakeoutDriveTests.Reviews)), null));
-        drive.Files.Add(("z2", "takeout-20260902T000000Z-001.zip", t0.AddDays(1), TakeoutDriveTests.Zip(("Takeout/Fit/x.json", "{}")), null));
-        drive.Files.Add(("z3", "takeout-20260903T000000Z-001.zip", t0.AddDays(2), new byte[10], 5L * 1024 * 1024));
+        drive.Files.Add(("old", "takeout-20260401T000000Z-001.zip", t0.AddDays(-60), WithReviews(), null));
+        drive.Files.Add(("a1", "takeout-20260601T000000Z-001.zip", t0, WithReviews(), null));
+        drive.Files.Add(("a2", "takeout-20260601T000000Z-002.zip", t0.AddMinutes(1), Without(), null));
+        // Not a zip by name: never listed as an export
+        drive.Files.Add(("tgz", "takeout-20260601T000000Z-001.tgz", t0, new byte[3], null));
         await svc.CheckAsync(owner, default);
 
-        Assert.Equal(new[] { "z1", "z2" }, drive.Downloads);
+        Assert.Equal(new[] { "a1", "a2" }, drive.Downloads);
         Assert.Equal(2, await db.Reviews.CountAsync(r => r.OwnerId == owner));
-        Assert.Equal("Drive: takeout-20260901T000000Z-001.zip",
+        Assert.Equal("Drive: takeout-20260601T000000Z-001.zip",
             (await db.Imports.SingleAsync(i => i.OwnerId == owner && i.Source == "google-maps")).FileName);
-        var status = await svc.StatusAsync(owner, default);
+        var status = await Status();
         Assert.Equal(("idle", 2), (status.Connection!.Status, status.Connection.ItemsImported));
-        Assert.Contains("larger than 1 MB", status.Connection.LastError);
-        Assert.Equal(("z3", (int?)null), (status.LastExport!.Id, status.LastExport.Reviews));
+        Assert.Equal("takeout-20260601T000000Z-002.zip: no Maps (your places) reviews in it", status.Connection.LastError);
+        Assert.Equal("a2", status.LastExport!.Id);
         Assert.True(status.Stale);
 
-        // Again: nothing new, nothing downloaded
+        // Nothing new: nothing downloaded, and the old note goes
         await svc.CheckAsync(owner, default);
         Assert.Equal(2, drive.Downloads.Count);
+        Assert.Null((await Status()).Connection!.LastError);
 
-        // Drive taken away: expired, and no longer checked
-        drive.Files.Add(("z4", "takeout-20261101T000000Z-001.zip", DateTime.UtcNow, TakeoutDriveTests.Zip(), null));
-        drive.Fail = HttpStatusCode.Forbidden;
+        // Next: too large (skipped, seen), a passing failure (left for later), a file not downloadable
+        drive.Files.Add(("big", "takeout-20260801T000000Z-001.zip", t0.AddDays(60), new byte[10], 5L * 1024 * 1024));
+        drive.Files.Add(("busy", "takeout-20260901T000000Z-001.zip", t0.AddDays(90), WithReviews(), null));
+        drive.Files.Add(("denied", "takeout-20261001T000000Z-001.zip", t0.AddDays(120), WithReviews(), null));
+        drive.DownloadFails["busy"] = (HttpStatusCode.ServiceUnavailable, "{}");
+        drive.DownloadFails["denied"] = (HttpStatusCode.Forbidden, FileDenied);
         await svc.CheckAsync(owner, default);
-        status = await svc.StatusAsync(owner, default);
+        status = await Status();
+        Assert.Equal("error", status.Connection!.Status);
+        Assert.Contains("takeout-20260901T000000Z-001.zip: Google Drive answered 503", status.Connection.LastError);
+        Assert.DoesNotContain("big", drive.Downloads);
+        Assert.DoesNotContain("denied", drive.Downloads);
+
+        // The passing failure is tried again; the same reviews again add none; the denied file is noted, not lost access
+        drive.DownloadFails.Remove("busy");
+        await svc.CheckAsync(owner, default);
+        status = await Status();
+        Assert.Equal(("idle", 2), (status.Connection!.Status, status.Connection.ItemsImported));
+        Assert.Contains("busy", drive.Downloads);
+        Assert.Contains("takeout-20261001T000000Z-001.zip: Google Drive answered 403", status.Connection.LastError);
+        Assert.False(status.Stale);
+
+        // Google not reachable to renew the sign-in: an error, not lost access
+        drive.Files.Add(("n1", "takeout-20261101T000000Z-001.zip", DateTime.UtcNow, WithReviews(), null));
+        tokens.Token = null;
+        await svc.CheckAsync(owner, default);
+        Assert.Equal("error", (await Status()).Connection!.Status);
+
+        // Drive no longer allowed: expired, and not checked again until connected
+        tokens.Token = "token";
+        drive.ListFail = (HttpStatusCode.Forbidden, ScopeDenied);
+        await svc.CheckAsync(owner, default);
+        status = await Status();
         Assert.Equal(("expired", TakeoutDriveService.SignInAgain), (status.Connection!.Status, status.Connection.LastError));
-        drive.Fail = null;
+        drive.ListFail = null;
         await svc.CheckAsync(owner, default);
-        Assert.DoesNotContain("z4", drive.Downloads);
-
-        // Connecting again resumes; the new export is seen
+        Assert.DoesNotContain("n1", drive.Downloads);
         await svc.ConnectAsync(owner, "me@example.com", default);
         await svc.CheckAsync(owner, default);
-        Assert.Contains("z4", drive.Downloads);
-        Assert.False((await svc.StatusAsync(owner, default)).Stale);
+        Assert.Contains("n1", drive.Downloads);
 
-        // Signed out entirely
+        // A refused sign-in expires it too
         tokens.Token = null;
-        drive.Files.Add(("z5", "takeout-20261102T000000Z-001.zip", DateTime.UtcNow, TakeoutDriveTests.Zip(), null));
+        tokens.Refused = true;
         await svc.CheckAsync(owner, default);
-        Assert.Equal("expired", (await svc.StatusAsync(owner, default)).Connection!.Status);
+        Assert.Equal("expired", (await Status()).Connection!.Status);
+
+        // A check already running (another pod) is not run twice; a claim left by a crash is taken after an hour
+        await svc.ConnectAsync(owner, "me@example.com", default);
+        tokens.Token = "token";
+        tokens.Refused = false;
+        await db.Connections.Where(c => c.OwnerId == owner).ExecuteUpdateAsync(s => s.SetProperty(c => c.Status, "syncing"));
+        var downloads = drive.Downloads.Count;
+        drive.Files.Add(("n2", "takeout-20261102T000000Z-001.zip", DateTime.UtcNow, Without(), null));
+        await svc.CheckAsync(owner, default);
+        Assert.Equal(downloads, drive.Downloads.Count);
+        await db.Connections.Where(c => c.OwnerId == owner).ExecuteUpdateAsync(s => s.SetProperty(c => c.UpdatedAt, DateTime.UtcNow.AddHours(-2)));
+        await svc.CheckAsync(owner, default);
+        Assert.Contains("n2", drive.Downloads);
 
         // Another Owner has nothing to check
         await Assert.ThrowsAsync<AtlasNotFoundException>(() => svc.SyncAsync("takeout-other-" + Guid.NewGuid(), default));
         Assert.True(await svc.DisconnectAsync(owner, default));
-        Assert.Null((await svc.StatusAsync(owner, default)).Connection);
+        Assert.Null((await Status()).Connection);
+    }
+
+    [Fact]
+    public void An_export_s_parts_belong_to_one_set()
+    {
+        Assert.Equal("takeout-20260601T000000Z", TakeoutDriveService.ExportSet("takeout-20260601T000000Z-001.zip"));
+        Assert.Equal("takeout-20260601T000000Z", TakeoutDriveService.ExportSet("takeout-20260601T000000Z-012.zip"));
+        Assert.Equal("takeout", TakeoutDriveService.ExportSet("takeout.zip"));
     }
 }

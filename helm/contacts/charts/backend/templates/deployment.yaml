@@ -89,4 +89,6 @@ spec:
               mountPath: /tmp
       volumes:
         - name: tmp
-          emptyDir: {}
+          # Takeout exports are downloaded here for as long as their reviews are read (AD-40)
+          emptyDir:
+            sizeLimit: 1Gi

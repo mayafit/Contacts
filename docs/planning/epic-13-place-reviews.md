@@ -92,6 +92,18 @@ Acceptance criteria (FR-67, AD-40):
 - [x] Tests: the parser (C#) on a Takeout-shaped zip; the check against a fake Drive
   (new, seen, oversized, no reviews, lost access); the opt-in scopes; the tab (Jest).
 
+### 13.7 Takeout pickup review fixes — Phase 1
+
+- [x] Only the Owner's own files; `.zip` by name, no MIME filter.
+- [x] A check claims its connection (one at a time, also across pods) and always ends
+  with a status; dead claims reset at start.
+- [x] Refused sign-in (expired) told from Google unreachable (error); a 403 on one
+  file is that file's note; passing failures retried, lasting ones seen.
+- [x] The first check takes only the newest export; new reviews counted, not all.
+- [x] Download time limit, bounded zip entry read, `/tmp` capped at 1 GiB.
+- [x] The tab polls after Check now and connect, and connects once after the sign-in;
+  the opt-in is refused while signed out.
+
 ### 13.4 Tests — Phase 1
 
 - [x] Pure: the parser (published, draft, answers, the `location` array form, skips,

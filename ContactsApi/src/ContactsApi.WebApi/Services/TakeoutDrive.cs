@@ -38,8 +38,8 @@ public interface ITakeoutTokens
     /// <summary>The stored sign-in allows reading Drive</summary>
     Task<bool> GrantedAsync(string owner);
 
-    /// <summary>An access token, or null when the Owner must sign in again</summary>
-    Task<string?> AccessTokenAsync(string owner);
+    /// <summary>An access token; without one, whether the sign-in was refused (sign in again) rather than Google unreachable</summary>
+    Task<(string? Token, bool Refused)> AccessTokenAsync(string owner);
 }
 
 /// <summary>The Owner's stored Google sign-in (the refresh token the login keeps)</summary>
@@ -54,7 +54,7 @@ public class GoogleTakeoutTokens : ITakeoutTokens
     public async Task<bool> GrantedAsync(string owner) => (await _tokens.StoredGrantScopesAsync(owner))?.Contains(TakeoutScopes.Drive) == true;
 
     /// <inheritdoc />
-    public Task<string?> AccessTokenAsync(string owner) => _tokens.GetAccessTokenForUserAsync(owner);
+    public Task<(string? Token, bool Refused)> AccessTokenAsync(string owner) => _tokens.GetAccessTokenOrWhyAsync(owner);
 }
 
 /// <summary>Owners waiting for a Drive check</summary>
@@ -129,8 +129,9 @@ public class TakeoutDriveService
     /// <summary>Whether the Owner's sign-in allows Drive, the connection, and the last export</summary>
     public async Task<TakeoutDriveStatus> StatusAsync(string owner, CancellationToken ct)
     {
-        var granted = await _tokens.GrantedAsync(owner);
         var conn = await _db.Connections.AsNoTracking().FirstOrDefaultAsync(c => c.OwnerId == owner && c.Provider == Provider, ct);
+        // Google is asked only when it matters (not connected, or access lost), not on every poll
+        var granted = conn != null && conn.Status != "expired" || await _tokens.GrantedAsync(owner);
         if (conn == null)
         {
             return new TakeoutDriveStatus(granted, null, null, false);
@@ -185,74 +186,152 @@ public class TakeoutDriveService
         await _db.Connections.Where(c => c.OwnerId == owner && c.Provider == Provider).ExecuteDeleteAsync(ct) > 0;
 
     /// <summary>
-    /// One check of the Owner's Drive (AD-40 rule 4): new Takeout zips, oldest first, each
-    /// read for its reviews once; lost access marks the connection expired
+    /// One check of the Owner's Drive (AD-40 rule 4). The check claims the connection first
+    /// (one at a time, also across pods), and always ends with a status: idle, error, or
+    /// expired when the sign-in no longer allows Drive. New Takeout zips are read oldest
+    /// first; an export whose outcome would not change (read, too large, no reviews, not a
+    /// zip) is seen and never read again; one that failed for a passing reason is left for
+    /// the next check.
     /// </summary>
     public async Task CheckAsync(string owner, CancellationToken ct)
     {
-        var conn = await _db.Connections.FirstOrDefaultAsync(c => c.OwnerId == owner && c.Provider == Provider, ct);
-        if (conn == null || conn.Status == "expired")
+        var now = DateTime.UtcNow;
+        var stuck = now - ClaimTimeout;
+        var claimed = await _db.Connections
+            .Where(c => c.OwnerId == owner && c.Provider == Provider && c.Status != "expired" && (c.Status != "syncing" || c.UpdatedAt < stuck))
+            .ExecuteUpdateAsync(s => s.SetProperty(c => c.Status, "syncing").SetProperty(c => c.UpdatedAt, now), ct);
+        if (claimed == 0)
         {
             return;
         }
 
-        conn.Status = "syncing";
-        conn.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync(ct);
-        var cursor = Cursor(conn);
+        // The claim was written past the change tracker: read the row afresh
+        _db.ChangeTracker.Clear();
+        var conn = await _db.Connections.FirstOrDefaultAsync(c => c.OwnerId == owner && c.Provider == Provider, ct);
+        if (conn == null)
+        {
+            return;
+        }
+
+        var status = "idle";
+        string? error = null;
         try
         {
-            var token = await _tokens.AccessTokenAsync(owner) ?? throw new GoogleDriveException(SignInAgain, true);
+            var (token, refused) = await _tokens.AccessTokenAsync(owner);
+            if (token == null)
+            {
+                throw refused
+                    ? new GoogleDriveException(SignInAgain, unauthorized: true)
+                    : new GoogleDriveException("Google could not be reached to renew the sign-in.", transient: true);
+            }
+
+            var cursor = Cursor(conn);
             var seen = cursor.Seen.Select(s => s.Id).ToHashSet();
             var fresh = (await _drive.ListAsync(token, ct)).Where(f => !seen.Contains(f.Id)).OrderBy(f => f.Modified).ToList();
+            // The first check takes only the newest export (its parts): older ones are not downloaded
+            if (cursor.Seen.Count == 0 && conn.LastSyncAt == null && fresh.Count > 0)
+            {
+                var newest = ExportSet(fresh[^1].Name);
+                foreach (var old in fresh.Where(f => ExportSet(f.Name) != newest))
+                {
+                    cursor.Seen.Add(new TakeoutSeen(old.Id, old.Name, old.Modified, null, "older than the first export picked up"));
+                }
+
+                fresh = fresh.Where(f => ExportSet(f.Name) == newest).ToList();
+                Save(conn, cursor);
+            }
+
             string? lastNote = null;
             foreach (var file in fresh)
             {
-                var (reviews, note) = await ReadAsync(owner, token, file, ct);
-                cursor.Seen.Insert(0, new TakeoutSeen(file.Id, file.Name, file.Modified, reviews, note));
-                lastNote = note == null ? null : $"{file.Name}: {note}";
-                if (reviews > 0)
+                var read = await ReadAsync(owner, token, file, ct);
+                if (read.Retry)
                 {
-                    conn.ItemsImported += reviews.Value;
+                    // A passing failure: left unseen for the next check
+                    status = "error";
+                    error = $"{file.Name}: {read.Note} It is tried again at the next check.";
+                    break;
+                }
+
+                cursor.Seen.Add(new TakeoutSeen(file.Id, file.Name, file.Modified, read.Reviews, read.Note));
+                conn.ItemsImported += read.Added;
+                if (read.Note != null)
+                {
+                    lastNote = $"{file.Name}: {read.Note}";
                 }
 
                 // Saved after every export: a restart never imports one twice
-                conn.Cursor = JsonSerializer.Serialize(new TakeoutCursor(cursor.Seen.OrderByDescending(s => s.Modified).Take(SeenKept).ToList()), Json);
-                conn.UpdatedAt = DateTime.UtcNow;
+                Save(conn, cursor);
                 await _db.SaveChangesAsync(ct);
             }
 
-            conn.Status = "idle";
-            conn.LastError = fresh.Count > 0 ? lastNote : conn.LastError;
-            conn.LastSyncAt = DateTime.UtcNow;
+            error ??= lastNote;
         }
         catch (GoogleDriveException ex)
         {
-            conn.Status = ex.Unauthorized ? "expired" : "error";
-            conn.LastError = ex.Unauthorized ? SignInAgain : ex.Message;
-            conn.LastSyncAt = DateTime.UtcNow;
-            _logger.LogWarning("Takeout on Drive: the check failed ({Unauthorized}): {Message}", ex.Unauthorized, ex.Message);
+            status = ex.Unauthorized ? "expired" : "error";
+            error = ex.Unauthorized ? SignInAgain : $"{ex.Message} It is tried again at the next check.";
+            _logger.LogWarning("Takeout on Drive: the check failed (unauthorized {Unauthorized}): {Message}", ex.Unauthorized, ex.Message);
         }
-        catch (HttpRequestException ex)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            conn.Status = "error";
-            conn.LastError = "Google Drive could not be reached.";
-            conn.LastSyncAt = DateTime.UtcNow;
-            _logger.LogWarning(ex, "Takeout on Drive: Google Drive could not be reached");
+            // Shutting down: the next start resets the claim
+            return;
+        }
+        catch (Exception ex)
+        {
+            status = "error";
+            error = "The check failed. It is tried again at the next check.";
+            _logger.LogError(ex, "Takeout on Drive: the check failed");
         }
 
-        conn.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync(ct);
+        try
+        {
+            conn.Status = status;
+            conn.LastError = error;
+            conn.LastSyncAt = DateTime.UtcNow;
+            conn.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync(CancellationToken.None);
+        }
+        catch (DbUpdateException ex)
+        {
+            // Disconnected meanwhile: nothing to record
+            _logger.LogInformation(ex, "Takeout on Drive: the connection went during a check");
+        }
     }
 
+    /// <summary>A claim older than this is a check that died (a crash): it may be claimed again</summary>
+    public static readonly TimeSpan ClaimTimeout = TimeSpan.FromHours(1);
+
+    /// <summary>The export a part belongs to: takeout-&lt;time&gt; of takeout-&lt;time&gt;-&lt;n&gt;.zip</summary>
+    public static string ExportSet(string name)
+    {
+        var stem = Path.GetFileNameWithoutExtension(name);
+        var dash = stem.LastIndexOf('-');
+        return dash > "takeout".Length ? stem[..dash] : stem;
+    }
+
+    private static void Save(SourceConnection conn, TakeoutCursor cursor)
+    {
+        conn.Cursor = JsonSerializer.Serialize(new TakeoutCursor(cursor.Seen.OrderByDescending(s => s.Modified).Take(SeenKept).ToList()), Json);
+        conn.UpdatedAt = DateTime.UtcNow;
+    }
+
+    /// <summary>What reading one export gave</summary>
+    /// <param name="Reviews">Reviews read (null when none could be)</param>
+    /// <param name="Added">Reviews that were new</param>
+    /// <param name="Retry">A passing failure: try the export again later</param>
+    private sealed record ExportRead(int? Reviews, int Added, string? Note, bool Retry = false);
+
     /// <summary>One export: downloaded to a temporary file, its reviews read and imported, the file deleted</summary>
-    /// <returns>The reviews read (null when none could be), and why not</returns>
-    private async Task<(int? Reviews, string? Note)> ReadAsync(string owner, string token, TakeoutFile file, CancellationToken ct)
+    /// <exception cref="GoogleDriveException">The sign-in no longer allows Drive</exception>
+    private async Task<ExportRead> ReadAsync(string owner, string token, TakeoutFile file, CancellationToken ct)
     {
         var max = (long)_options.MaxZipMb * 1024 * 1024;
+        var tooLarge = $"larger than {_options.MaxZipMb} MB; choose only \"Maps (your places)\" for this schedule";
         if (file.Size > max)
         {
-            return (null, $"larger than {_options.MaxZipMb} MB; choose only \"Maps (your places)\" for this schedule");
+            return new ExportRead(null, 0, tooLarge);
         }
 
         var path = Path.Combine(Path.GetTempPath(), $"takeout-{Guid.NewGuid():N}.zip");
@@ -264,9 +343,14 @@ public class TakeoutDriveService
             }
             catch (GoogleDriveException ex) when (!ex.Unauthorized)
             {
-                return (null, ex.Message.Contains("larger", StringComparison.Ordinal)
-                    ? $"larger than {_options.MaxZipMb} MB; choose only \"Maps (your places)\" for this schedule"
-                    : ex.Message);
+                return ex.Message == GoogleDriveTakeout.TooLarge
+                    ? new ExportRead(null, 0, tooLarge)
+                    : new ExportRead(null, 0, ex.Message, ex.Transient);
+            }
+            catch (IOException)
+            {
+                // The temporary disk is full or failing: a passing reason
+                return new ExportRead(null, 0, "The download could not be stored.", true);
             }
 
             List<ReviewInput>? reviews;
@@ -278,14 +362,16 @@ public class TakeoutDriveService
             }
             catch (InvalidDataException)
             {
-                return (null, "not a readable zip");
+                return new ExportRead(null, 0, "not a readable zip");
             }
 
             if (reviews == null)
             {
-                return (null, note);
+                return new ExportRead(null, 0, note);
             }
 
+            // Every export holds all the reviews: only the new ones are counted
+            var before = await _db.Reviews.CountAsync(r => r.OwnerId == owner && r.Source == "google-maps", ct);
             Guid? importId = null;
             foreach (var chunk in reviews.Chunk(Batch))
             {
@@ -296,8 +382,9 @@ public class TakeoutDriveService
                 importId = result.ImportId;
             }
 
-            _logger.LogInformation("Takeout on Drive: {Count} reviews from an export", reviews.Count);
-            return (reviews.Count, null);
+            var added = await _db.Reviews.CountAsync(r => r.OwnerId == owner && r.Source == "google-maps", ct) - before;
+            _logger.LogInformation("Takeout on Drive: {Count} reviews from an export, {Added} new", reviews.Count, added);
+            return new ExportRead(reviews.Count, Math.Max(0, added), null);
         }
         finally
         {
@@ -307,7 +394,7 @@ public class TakeoutDriveService
             }
             catch (IOException)
             {
-                // Gone already, or still held: the emptyDir goes with the pod
+                // Still held or already gone: the emptyDir goes with the pod
             }
         }
     }
@@ -357,6 +444,7 @@ public class TakeoutDriveWorker : BackgroundService
             await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
         }
 
+        await ResetClaimsAsync(stoppingToken);
         await EnqueueDueAsync(stoppingToken);
         var nextRound = DateTime.UtcNow + Round;
         while (!stoppingToken.IsCancellationRequested)
@@ -384,6 +472,23 @@ public class TakeoutDriveWorker : BackgroundService
                 _logger.LogError(ex, "Takeout on Drive: a check failed");
                 await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
             }
+        }
+    }
+
+    /// <summary>A check cut short by a restart left its connection syncing: idle again, so it is checked</summary>
+    private async Task ResetClaimsAsync(CancellationToken ct)
+    {
+        try
+        {
+            using var scope = _scopes.CreateScope();
+            var stuck = DateTime.UtcNow - TakeoutDriveService.ClaimTimeout;
+            await scope.ServiceProvider.GetRequiredService<AtlasDbContext>().Connections
+                .Where(c => c.Provider == TakeoutDriveService.Provider && c.Status == "syncing" && c.UpdatedAt < stuck)
+                .ExecuteUpdateAsync(s => s.SetProperty(c => c.Status, "idle").SetProperty(c => c.LastSyncAt, (DateTime?)null), ct);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            _logger.LogError(ex, "Takeout on Drive: resetting cut-short checks failed");
         }
     }
 

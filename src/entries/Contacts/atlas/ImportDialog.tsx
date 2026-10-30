@@ -45,6 +45,8 @@ export interface ImportDialogProps {
   initialTab?: ImportTab;
   /** Back from the Google sign-in that allowed Drive (AD-40): the Google Drive tab connects */
   driveAllowed?: boolean;
+  /** The Google Drive tab connected after the sign-in */
+  onDriveConnected?: () => void;
 }
 
 /** The dialog's tabs */
@@ -177,6 +179,7 @@ const ImportDialog: React.FC<ImportDialogProps> = ({
   onChanged,
   initialTab = 'files',
   driveAllowed = false,
+  onDriveConnected,
 }) => {
   const [tab, setTab] = useState<ImportTab>(initialTab);
   useEffect(() => {
@@ -311,7 +314,12 @@ const ImportDialog: React.FC<ImportDialogProps> = ({
           <OneDriveTab open={open} onChanged={onChanged} />
         </Box>
         {tab === 'google-drive' && (
-          <GoogleDriveTab open={open} onChanged={onChanged} justAllowed={driveAllowed} />
+          <GoogleDriveTab
+            open={open}
+            onChanged={onChanged}
+            justAllowed={driveAllowed}
+            onConnected={onDriveConnected}
+          />
         )}
         {tab === 'files' && (
           <>

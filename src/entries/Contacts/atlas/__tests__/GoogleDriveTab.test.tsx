@@ -85,10 +85,12 @@ describe('the Google Drive tab', () => {
       status({ connection: conn({ status: 'syncing' }) }),
     );
     const onChanged = jest.fn();
-    render(<GoogleDriveTab open onChanged={onChanged} justAllowed />);
+    const onConnected = jest.fn();
+    render(<GoogleDriveTab open onChanged={onChanged} justAllowed onConnected={onConnected} />);
     await act(async () => {});
 
     expect(client.atlasTakeoutDriveConnect).toHaveBeenCalledTimes(1);
+    expect(onConnected).toHaveBeenCalledTimes(1);
     expect(screen.getByText('me@example.com')).toBeInTheDocument();
     expect(screen.getByText(/12 reviews$/)).toBeInTheDocument();
     await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Check now' })));
