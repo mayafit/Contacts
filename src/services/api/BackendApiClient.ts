@@ -28,6 +28,9 @@ import type {
   ParsedData,
   PlaceAssociation,
   PlaceDetail,
+  ReviewAction,
+  ReviewState,
+  ReviewsOverview,
   PlacePatch,
   SearchResult,
   SeriesPoint,
@@ -1178,6 +1181,35 @@ export class BackendApiClient {
     return unwrap(
       await this.request<PhotoSummary[]>(`/atlas/visits/${id}/photos`),
       'Loading the photos failed',
+    );
+  }
+
+  /** The Owner's Google Maps reviews and the places to review (AD-39) */
+  async atlasReviews(): Promise<ReviewsOverview> {
+    return unwrap(
+      await this.request<ReviewsOverview>('/atlas/reviews'),
+      'Loading the reviews failed',
+    );
+  }
+
+  /**
+   * Sets a place's review reminder aside, or brings it back (AD-39 rule 6).
+   * @param placeId - The place
+   * @param action - later, never, done, never_kind, or clear
+   * @param kind - With clear: its category's decision too
+   * @returns Where the place stands now
+   */
+  async atlasReviewReminder(
+    placeId: string,
+    action: ReviewAction,
+    kind = false,
+  ): Promise<ReviewState> {
+    return unwrap(
+      await this.request<ReviewState>('/atlas/reviews/reminders', {
+        method: 'POST',
+        body: JSON.stringify({ placeId, action, kind }),
+      }),
+      'Saving the choice failed',
     );
   }
 

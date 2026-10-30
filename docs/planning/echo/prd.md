@@ -23,7 +23,7 @@ Echo is not greenfield. Two Areas already run in production at https://contacts.
 
 The rest of this document works as follows:
 - The Glossary (§3) fixes the vocabulary.
-- Features (§4) nest globally numbered requirements, FR-01 to FR-63. FR-51 to FR-54 were added after the Owner's answers of 2026-10-28, so they sit in the section they belong to, not in id order. FR-55 to FR-60 (route quality, §4.12) follow them. FR-61 (roads travelled), FR-62 (rebuild from similar drives) and FR-63 (mark the way) were added to §4.12 on 2026-10-29.
+- Features (§4) nest globally numbered requirements, FR-01 to FR-66. FR-51 to FR-54 were added after the Owner's answers of 2026-10-28, so they sit in the section they belong to, not in id order. FR-55 to FR-60 (route quality, §4.12) follow them. FR-61 (roads travelled), FR-62 (rebuild from similar drives) and FR-63 (mark the way) were added to §4.12 on 2026-10-29. FR-64 to FR-66 (place reviews, §4.13) were added on 2026-10-30.
 - Cross-cutting quality requirements are NFR-01 to NFR-21 (§6).
 - Inferences are tagged `[ASSUMPTION]` and indexed in §13.
 - Technical "how" (mechanisms, storage, pipelines, remediation steps, and implementation details of Built behaviour such as error codes, scope names and thresholds) is in [prd-addendum.md](prd-addendum.md) for the architect.
@@ -706,6 +706,54 @@ Activities outside the map data that Echo holds are flagged "outside map coverag
 - Each Owner sees which regions hold the most of their own such Activities.
 - Regions are added **on demand**: the operator adds regions from the "outside coverage" list, ranked by activity count. The admin sees only per-region counts summed over all Owners, never whose Activities they are, like the usage counters (FR-51).
 - Map data for a region is added as a published artifact (AD-32), never fetched by the cluster at run time, and Activities there are then matched like the rest.
+
+### 4.13 Atlas: Place Reviews (Proposed)
+
+The Owner writes reviews of places on Google Maps. Echo shows, for each place they have been to, whether they reviewed it, what they wrote and how many stars they gave, and it reminds them of the places they went to and have not reviewed yet. Google offers no API for a person's own reviews, so the reviews come from the Owner's **Google Takeout** export ("Maps (your places)" → `Reviews.json`), imported like the Timeline (FR-17).
+
+- The reviews are the Owner's own **source data** (P-1): kept as imported, never edited by Echo, removed with the import that brought them, and erased with the Owner (FR-49).
+- Nothing leaves Echo: no Google API is called for a review. The links Echo shows open Google Maps in the Owner's browser.
+- **Per Owner**, like the rest of Atlas (§2.2, NFR-07).
+
+#### FR-64: Import my reviews — Proposed
+The Owner imports the Takeout export as they import the Timeline: the zip, or the `Reviews.json` file on its own.
+- **What is kept**, for each review: the place's name, address, country and position as Google gives them; the stars (1 to 5); the text; the answers to Google's questions about the place ("Price per person", "Service: dine in"); the date the review was written or last changed (when the export has one); whether it is published or only a draft; and the review's link on Google Maps (only a web link is kept). A review with neither stars nor text, or without a position, is skipped.
+- **Any language.** Takeout names its files in the account's language; Echo reads the reviews file from the Maps folder whatever it is called, and recognises it by its content.
+- **Again and again.** Importing a newer export updates each review (matched by its Google Maps link) and adds new ones; a review missing from a newer export is kept (an import never deletes), and deleting an import removes what it brought (FR-17).
+- **Photos.** Google's documented export of reviews holds no photos (the Data Portability schema `maps.reviews` lists none). Echo therefore shows the Owner's **own photos taken at the place** (FR-27), and the review's link opens it on Google Maps, where the photos added to the review are. If the Owner's export turns out to include the review photos as files, a later story imports them.
+
+#### FR-65: My review on each place — Proposed
+- **Linked to the place.** Each review is linked to the place in Atlas that it is about, when one is clear:
+  1. a place within 75 m whose name shares a word with the review's place name (a word of 3 letters or more, in any script, ignoring case and punctuation): the nearest such;
+  2. otherwise the only place within 30 m;
+  3. otherwise the nearest place within 10 m, when no other place is within 25 m;
+  4. otherwise the review stays unlinked; it is still listed with the Owner's reviews.
+
+  A place takes one review (Google keeps one review per place per person). Linking runs after every import of reviews, and again after every import of places, for the reviews not linked yet. A link stays until the place is deleted.
+- **Never home or work.** A review is never linked to the Owner's home or work, so the café downstairs does not become the home.
+- **A review names its place.** Many Timeline places have no name ("Place"). When a review is linked to such a place by position (rules 2 and 3), the place takes the review's name, and its address when it has none, unless the Owner named the place themselves.
+- **Names first.** Reviews that a place's name matches are linked before those linked by position, so a review merely near a place never takes the place another review names.
+- **In the place panel.** A reviewed place shows the review: the stars, the date, the text, the answers, "Draft" when it was never published, and **Open on Google Maps** (the review's link). The Owner's own photos at the place are shown as before.
+- **In Insights.** A **Reviews** section shows how many reviews the Owner has written, their average stars, how many are linked to visited places, and the latest reviews; a click opens the place, or Google Maps for an unlinked review. It covers all reviews, whatever the current filters.
+
+#### FR-66: Reminders to review — Proposed
+Echo reminds the Owner of places they went to and have not reviewed.
+- **Which places.** A place is *to review* when all of these hold:
+  - it has a real identity: a name that is not generic ("Place", "Home", "Work", "Saved place", "Searched place"), identified automatically or by the Owner (FR-24);
+  - its category is not an errand or a private place: fuel stations, buildings, offices and companies, works and industry, banks, post offices, public offices (town hall, court, police, embassy), stops and stations, health care (clinics, doctors, hospitals, pharmacies), schools, places of worship, car repair, homes and workplaces (the full list is in the architecture, AD-39);
+  - the Owner stayed there **at least 10 minutes** on a visit that ended within the last **180 days**;
+  - it is not a routine place: visited on **30 days or fewer** in all;
+  - no review is linked to it;
+  - the Owner has not set it aside (below).
+- **Where.** The Insights **Reviews** section lists the places to review, the most recently visited first (up to 30, with the total), each with the last visit, the number of visits, and **Write a review**, which opens the place on Google Maps, where the review is written. The place panel of a place to review says "You have not reviewed this place" with the same link.
+- **Setting aside.** For each reminder, the Owner can choose:
+  - **Later**: hidden for 30 days;
+  - **Not this one**: never again for this place;
+  - **Not this kind**: never again for places of this category;
+  - **I reviewed it**: hidden; the next import brings the review itself.
+
+  Each choice is a decision of the Owner (P-5), kept across imports and undone from the place panel ("Remind me again").
+- In the first Owner's data on 2026-10-30, 393 of 4,403 places have a real identity, and 43 of them had a visit of 10 minutes or more in the last 180 days; the reminders are meant to be a short list.
 
 ## 5. Privacy Model
 

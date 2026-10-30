@@ -29,6 +29,8 @@ public class AtlasDbContext : DbContext
     public DbSet<FusionSetting> FusionSettings => Set<FusionSetting>();
     public DbSet<ActivityEffort> Efforts => Set<ActivityEffort>();
     public DbSet<AtlasPhoto> Photos => Set<AtlasPhoto>();
+    public DbSet<PlaceReview> Reviews => Set<PlaceReview>();
+    public DbSet<ReviewReminder> ReviewReminders => Set<ReviewReminder>();
 
     /// <inheritdoc />
     protected override void OnModelCreating(ModelBuilder b)
@@ -151,6 +153,39 @@ public class AtlasDbContext : DbContext
             e.Property(x => x.Type).HasMaxLength(48);
             e.Property(x => x.OwnerId).HasMaxLength(64);
             e.Property(x => x.Source).HasMaxLength(64);
+        });
+
+        b.Entity<PlaceReview>(e =>
+        {
+            e.ToTable("place_reviews");
+            e.HasIndex(x => new { x.OwnerId, x.Source, x.ExternalId }).IsUnique().HasFilter("\"ExternalId\" IS NOT NULL");
+            e.HasIndex(x => new { x.OwnerId, x.PlaceId });
+            e.HasIndex(x => new { x.OwnerId, x.ReviewedAt });
+            e.HasIndex(x => x.ImportId);
+            e.HasOne<AtlasPlace>().WithMany().HasForeignKey(x => x.PlaceId).OnDelete(DeleteBehavior.SetNull);
+            e.Property(x => x.OwnerId).HasMaxLength(64);
+            e.Property(x => x.Source).HasMaxLength(64);
+            e.Property(x => x.ExternalId).HasMaxLength(512);
+            e.Property(x => x.LinkedBy).HasMaxLength(16);
+            e.Property(x => x.Name).HasMaxLength(300);
+            e.Property(x => x.Address).HasMaxLength(500);
+            e.Property(x => x.CountryCode).HasMaxLength(8);
+            e.Property(x => x.Text).HasMaxLength(10_000);
+            e.Property(x => x.MapsUrl).HasMaxLength(1000);
+            e.Property(x => x.Answers).HasColumnType("jsonb");
+        });
+
+        b.Entity<ReviewReminder>(e =>
+        {
+            e.ToTable("review_reminders");
+            e.HasIndex(x => new { x.OwnerId, x.PlaceId }).IsUnique().HasFilter("\"PlaceId\" IS NOT NULL");
+            e.HasIndex(x => new { x.OwnerId, x.Category }).IsUnique().HasFilter("\"Category\" IS NOT NULL");
+            e.HasOne<AtlasPlace>().WithMany().HasForeignKey(x => x.PlaceId).OnDelete(DeleteBehavior.Cascade);
+            e.ToTable(t => t.HasCheckConstraint("CK_review_reminders_place_or_category",
+                "(\"PlaceId\" IS NULL) <> (\"Category\" IS NULL)"));
+            e.Property(x => x.OwnerId).HasMaxLength(64);
+            e.Property(x => x.Category).HasMaxLength(100);
+            e.Property(x => x.Kind).HasMaxLength(16);
         });
 
         b.Entity<ImportRun>(e =>

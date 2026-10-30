@@ -393,6 +393,16 @@ public class AtlasController : ControllerBase
     public Task<IActionResult> DeleteVisit(Guid id) =>
         Run(async (svc, owner) => { await svc.DeleteVisitAsync(owner, id, HttpContext.RequestAborted); return new { deleted = id }; });
 
+    /// <summary>The Owner's Google Maps reviews and the places to review (AD-39)</summary>
+    [HttpGet("reviews")]
+    public Task<IActionResult> Reviews() =>
+        Run((svc, owner) => svc.ReviewsOverviewAsync(owner, HttpContext.RequestAborted));
+
+    /// <summary>Sets a place's review reminder aside, or brings it back (AD-39 rule 6)</summary>
+    [HttpPost("reviews/reminders")]
+    public Task<IActionResult> ReviewReminder([FromBody] ReviewReminderRequest request) =>
+        Run((svc, owner) => svc.SetReviewReminderAsync(owner, request, HttpContext.RequestAborted));
+
     /// <summary>Deletes an import and what it brought in</summary>
     [HttpDelete("imports/{id:guid}")]
     public Task<IActionResult> DeleteImport(Guid id) =>

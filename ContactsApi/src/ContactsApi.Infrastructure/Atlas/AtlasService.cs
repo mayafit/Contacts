@@ -350,7 +350,14 @@ public partial class AtlasService
             await _db.SaveChangesAsync(ct);
         }
 
-        return new IngestResult(run.Id, req.Activities.Count, req.Places.Count, req.Visits.Count, health);
+        // Reviews (AD-39): stored, then linked to places, as are reviews waiting for the places a batch brought
+        var reviews = req.Reviews.Count > 0 ? await UpsertReviewsAsync(owner, source, run, req.Reviews, ct) : 0;
+        if (req.Reviews.Count > 0 || req.Places.Count > 0)
+        {
+            await LinkReviewsAsync(owner, ct);
+        }
+
+        return new IngestResult(run.Id, req.Activities.Count, req.Places.Count, req.Visits.Count, health, reviews);
     }
 
     // ---------------------------------------------------------------- queries
@@ -1111,12 +1118,14 @@ public partial class AtlasService
             details = new();
         }
 
+        var (review, reviewState) = await PlaceReviewAsync(owner, p, visits.Select(v => (v.StartTime, v.EndTime)).ToList(), ct);
         return new PlaceDetail(p.Id, p.Name, p.Address, p.Category, p.Lat, p.Lon, p.Notes, p.Source, p.LinkedRef, p.Website, p.Phone,
             p.OpeningHours, details, visits.Count,
             visits.Count > 0 ? visits.Min(v => v.StartTime) : null,
             visits.Count > 0 ? visits.Max(v => v.EndTime) : null,
             Math.Round(visits.Sum(v => Math.Max(0, (v.EndTime - v.StartTime).TotalHours)), 1),
-            p.IdentifyState, p.IdentifyState == "ambiguous" ? CandidatesOf(p) : new List<LocationCandidate>(), p.IdentifiedFrom);
+            p.IdentifyState, p.IdentifyState == "ambiguous" ? CandidatesOf(p) : new List<LocationCandidate>(), p.IdentifiedFrom,
+            review, reviewState);
     }
 
     /// <summary>
@@ -1197,6 +1206,7 @@ public partial class AtlasService
         var removed = await _db.Visits.Where(x => x.OwnerId == owner && x.ImportId == importId).ExecuteDeleteAsync(ct);
         removed += await _db.Activities.Where(x => x.OwnerId == owner && x.ImportId == importId).ExecuteDeleteAsync(ct);
         removed += await _db.HealthSamples.Where(x => x.OwnerId == owner && x.ImportId == importId).ExecuteDeleteAsync(ct);
+        removed += await _db.Reviews.Where(x => x.OwnerId == owner && x.ImportId == importId).ExecuteDeleteAsync(ct);
         removed += await _db.Places.Where(x => x.OwnerId == owner && x.ImportId == importId).ExecuteDeleteAsync(ct);
         await _db.Imports.Where(i => i.Id == importId && i.OwnerId == owner).ExecuteDeleteAsync(ct);
         // Records whose fused activity's primary was deleted stand alone until re-fused
