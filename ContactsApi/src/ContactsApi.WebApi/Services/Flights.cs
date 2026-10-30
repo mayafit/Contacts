@@ -584,7 +584,7 @@ public class FlightService
             var lookups = new Dictionary<string, string?>(StringComparer.Ordinal);
             if (!flights.Any(f => FlightNumbers.Matches(f.Callsign, number, icaos)))
             {
-                foreach (var cs in FlightMatch.ToLookUp(flights, arrivals, anchor))
+                foreach (var cs in FlightMatch.ToLookUp(flights, arrivals, anchor, sched, icaos))
                 {
                     lookups[cs] = (await CallsignAsync(cs, ct))?.FlightNumber;
                 }
@@ -599,7 +599,8 @@ public class FlightService
 
             if (match == null)
             {
-                details.Candidates = await CandidatesAsync(FlightMatch.RouteFits(flights, arrivals, sched, start, end, icaos).Take(FlightMatch.SuggestionCount)
+                details.Candidates = await CandidatesAsync(FlightMatch.RouteFits(flights, arrivals, sched, start, end, icaos, lookups, number)
+                    .OrderBy(f => f.Arrival == null).Take(FlightMatch.SuggestionCount)
                     .Select(f => (f, 0)), ct);
                 row.Status = FlightStatus.MailOnly;
                 row.Note = details.Candidates.Count > 0

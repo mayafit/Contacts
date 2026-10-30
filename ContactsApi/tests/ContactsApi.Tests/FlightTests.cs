@@ -199,6 +199,14 @@ public class FlightTests
         var open = F("ETD434", null, sched.AddMinutes(10), sched.AddHours(1), "o");
         var otherAirline = F("UAE1", null, sched.AddMinutes(12), sched.AddHours(1), "u");
         Assert.Equal(("o", "route"), Pick(FlightMatch.ByNumber(no, new[] { "ETD" }, new[] { open, otherAirline }, arrivals, sched, sched, sched, none)));
+        // Other flights of the airline that adsbdb names are not it; a pseudo-number ("EY5SM") rules nothing out
+        var ey394 = F("ETD394", null, sched.AddMinutes(1), sched.AddHours(1), "x");
+        Assert.Equal(("o", "route"), Pick(FlightMatch.ByNumber(no, new[] { "ETD" }, new[] { open, ey394 }, arrivals, sched, sched, sched,
+            new Dictionary<string, string?> { ["ETD394"] = "EY394" })));
+        Assert.Equal(new[] { "ETD434", "ETD5SM" }, FlightMatch.ToLookUp(new[] { a, open }, arrivals, sched, sched, new[] { "ETD" }));
+        // Seen landing at the arrival airport wins over a flight whose landing nobody saw
+        Assert.Equal(("a", "route"), Pick(FlightMatch.ByNumber(no, new[] { "ETD" }, new[] { a, open, b }, arrivals, sched, sched, sched,
+            new Dictionary<string, string?> { ["ETD5SM"] = "EY5SM", ["ETD607"] = "EY607" })));
         // Without a schedule it is not enough
         Assert.Empty(FlightMatch.RouteFits(new[] { open }, arrivals, null, sched, sched, new[] { "ETD" }));
         // Too late after the schedule
