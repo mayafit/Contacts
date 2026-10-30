@@ -34,6 +34,7 @@ import { thinTrack, trackLength } from './geo';
 import SportsTrackerTab from './SportsTrackerTab';
 import GoogleDriveTab from './GoogleDriveTab';
 import OneDriveTab from './OneDriveTab';
+import { fs } from '../settings/uiSettings';
 
 /** Props for ImportDialog */
 export interface ImportDialogProps {
@@ -329,7 +330,7 @@ const ImportDialog: React.FC<ImportDialogProps> = ({
             </Typography>
             <Box
               component="ul"
-              sx={{ m: 0, pl: 2.5, color: tokens.textSecondary, fontSize: 14, mb: 1.5 }}
+              sx={{ m: 0, pl: 2.5, color: tokens.textSecondary, fontSize: fs(14), mb: 1.5 }}
             >
               <li>
                 <strong>Google Timeline</strong>: <code>Timeline.json</code> exported from the phone
@@ -429,7 +430,7 @@ const ImportDialog: React.FC<ImportDialogProps> = ({
                 sx={{
                   maxHeight: 160,
                   overflowY: 'auto',
-                  fontSize: 13,
+                  fontSize: fs(13),
                   fontFamily: 'monospace',
                   color: tokens.textSecondary,
                   bgcolor: tokens.page,

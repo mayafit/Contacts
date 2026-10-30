@@ -11,6 +11,7 @@ import L from 'leaflet';
 import type { GeoJSONSource, Map as GlMap } from 'maplibre-gl';
 import type { DensityData } from './types';
 import { tracksGeoJson, typeColorExpression, visitHeatColor, visitsGeoJson } from './densityGeo';
+import { useUi } from '../settings/SettingsProvider';
 import { logger } from '../../../shared/logger';
 
 /** Props for DensityLayer */
@@ -123,6 +124,17 @@ const DensityLayer: React.FC<DensityLayerProps> = ({ data }) => {
     (gl.getSource(TRACKS) as GeoJSONSource | undefined)?.setData(tracksGeoJson(data?.tracks ?? []));
     (gl.getSource(VISITS) as GeoJSONSource | undefined)?.setData(visitsGeoJson(data?.visits ?? []));
   }, [ready, data]);
+
+  // The Owner's colours (AD-41): the paint follows them
+  const ui = useUi();
+  useEffect(() => {
+    const gl = glRef.current;
+    if (!ready || !gl) {
+      return;
+    }
+    gl.setPaintProperty(TRACKS, 'line-color', typeColorExpression() as never);
+    gl.setPaintProperty(VISITS, 'heatmap-color', visitHeatColor() as never);
+  }, [ready, ui.colors]);
 
   return null;
 };

@@ -1111,6 +1111,7 @@ export interface AccessTokenInfo {
   lastUsedAt?: string | null;
 }
 
+import { DEFAULT_UI, STYLED_TYPES, onUiChange } from '../settings/uiSettings';
 /** Activity types with their colour on the map */
 export const ACTIVITY_TYPES: Record<string, { label: string; color: string }> = {
   ride: { label: 'Ride', color: '#3fb6ff' },
@@ -1129,16 +1130,28 @@ export const ACTIVITY_TYPES: Record<string, { label: string; color: string }> = 
 export const typeColor = (type: string): string =>
   ACTIVITY_TYPES[type]?.color ?? ACTIVITY_TYPES.other.color;
 
+// The Owner's colours (AD-41): live bindings the settings update
 /** Place visits: a colour no activity type uses */
-export const VISIT_COLOR = '#e879f9';
+export let VISIT_COLOR = DEFAULT_UI.colors.visit;
 /** A matched route's inferred stretch (road with no GPS points): amber, readable on every map style */
-export const INFERRED_COLOR = '#ffb020';
+export let INFERRED_COLOR = DEFAULT_UI.colors.inferred;
 /** The dark casing under an inferred stretch, so the dashes stand out on light streets and imagery */
 export const INFERRED_CASING = '#1f2937';
 /** The active filters: time selection, area rectangle and the filter bar's chips */
-export const FILTER_COLOR = '#3987e5';
+export let FILTER_COLOR = DEFAULT_UI.colors.area;
 /** Health data (heart rate) */
-export const HEALTH_COLOR = '#ff4d6d';
+export let HEALTH_COLOR = DEFAULT_UI.colors.health;
+
+// The Owner's colours replace these whenever the settings change
+onUiChange((s) => {
+  STYLED_TYPES.forEach((t) => {
+    ACTIVITY_TYPES[t].color = s.colors[t];
+  });
+  VISIT_COLOR = s.colors.visit;
+  INFERRED_COLOR = s.colors.inferred;
+  FILTER_COLOR = s.colors.area;
+  HEALTH_COLOR = s.colors.health;
+});
 
 /** Colour of a timeline/map kind: an activity type, 'visit' or 'health' */
 export const kindColor = (kind: string): string =>

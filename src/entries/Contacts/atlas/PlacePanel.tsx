@@ -70,6 +70,7 @@ import PlaceReviewBlock from './PlaceReview';
 import PhotoStrip, { PhotosLink } from './PhotoStrip';
 import { PANEL_PHOTOS_MAX, placePhotosText } from './photos';
 import { tokens } from '../theme/contactsTheme';
+import { fs } from '../settings/uiSettings';
 
 /** Props for PlacePanel */
 export interface PlacePanelProps {
@@ -159,9 +160,9 @@ const CoordinatesLine: React.FC<{ lat: number; lon: number }> = ({ lat, lon }) =
           sx={{ p: 0.25 }}
         >
           {copied ? (
-            <Check sx={{ fontSize: 14, color: tokens.accent }} />
+            <Check sx={{ fontSize: fs(14), color: tokens.accent }} />
           ) : (
-            <ContentCopy sx={{ fontSize: 14 }} />
+            <ContentCopy sx={{ fontSize: fs(14) }} />
           )}
         </IconButton>
       </Tooltip>
@@ -300,7 +301,7 @@ const CandidateRow: React.FC<{
                 size="small"
                 label={c.label}
                 variant="outlined"
-                sx={{ height: 18, fontSize: 12 }}
+                sx={{ minHeight: 18, height: 'auto', fontSize: fs(12) }}
               />
             )}
           </Box>
@@ -324,14 +325,14 @@ const CandidateRow: React.FC<{
               rel="noopener noreferrer"
               aria-label={`Website of ${c.name}`}
             >
-              <Language sx={{ fontSize: 16 }} />
+              <Language sx={{ fontSize: fs(16) }} />
             </IconButton>
           </Tooltip>
         )}
         {tel && (
           <Tooltip title={c.phone ?? ''}>
             <IconButton size="small" component="a" href={tel} aria-label={`Call ${c.name}`}>
-              <Phone sx={{ fontSize: 16 }} />
+              <Phone sx={{ fontSize: fs(16) }} />
             </IconButton>
           </Tooltip>
         )}
@@ -460,7 +461,7 @@ const AutoIdentity: React.FC<{
       bgcolor: tokens.page,
     }}
   >
-    <AutoAwesome sx={{ fontSize: 14, color: tokens.textMuted }} />
+    <AutoAwesome sx={{ fontSize: fs(14), color: tokens.textMuted }} />
     <Typography variant="caption" sx={{ color: tokens.textSecondary, flex: 1, minWidth: 0 }}>
       {note}
     </Typography>
@@ -1057,7 +1058,7 @@ const PlacePanel: React.FC<PlacePanelProps> = ({
                 }
               }}
               aria-label="Search radius"
-              sx={{ '& .MuiToggleButton-root': { py: 0, px: 0.75, fontSize: 12 } }}
+              sx={{ '& .MuiToggleButton-root': { py: 0, px: 0.75, fontSize: fs(12) } }}
             >
               {RADII.map((r) => (
                 <ToggleButton key={r} value={r}>

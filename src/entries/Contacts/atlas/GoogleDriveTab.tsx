@@ -10,6 +10,7 @@ import { backendApiClient } from '../../../services/api/BackendApiClient';
 import type { TakeoutDriveStatus } from './types';
 import { takeoutLastText, takeoutStatusText } from './reviewText';
 import { tokens } from '../theme/contactsTheme';
+import { fs } from '../settings/uiSettings';
 
 export interface GoogleDriveTabProps {
   open: boolean;
@@ -137,7 +138,7 @@ const GoogleDriveTab: React.FC<GoogleDriveTabProps> = ({
       </Typography>
       <Box
         component="ol"
-        sx={{ m: 0, pl: 2.5, color: tokens.textSecondary, fontSize: 14, mb: 1.5 }}
+        sx={{ m: 0, pl: 2.5, color: tokens.textSecondary, fontSize: fs(14), mb: 1.5 }}
       >
         {STEPS.map((s, i) => (
           <li key={i}>{s}</li>

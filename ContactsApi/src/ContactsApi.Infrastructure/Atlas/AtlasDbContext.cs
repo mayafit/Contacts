@@ -29,6 +29,7 @@ public class AtlasDbContext : DbContext
     public DbSet<FusionSetting> FusionSettings => Set<FusionSetting>();
     public DbSet<ActivityEffort> Efforts => Set<ActivityEffort>();
     public DbSet<AtlasPhoto> Photos => Set<AtlasPhoto>();
+    public DbSet<OwnerSetting> OwnerSettings => Set<OwnerSetting>();
     public DbSet<PlaceReview> Reviews => Set<PlaceReview>();
     public DbSet<ReviewReminder> ReviewReminders => Set<ReviewReminder>();
 
@@ -76,6 +77,15 @@ public class AtlasDbContext : DbContext
             e.ToTable("fusion_queue");
             e.HasIndex(x => new { x.OwnerId, x.Id });
             e.Property(x => x.OwnerId).HasMaxLength(64);
+        });
+
+        b.Entity<OwnerSetting>(e =>
+        {
+            e.ToTable("owner_settings");
+            e.HasKey(x => new { x.OwnerId, x.Kind });
+            e.Property(x => x.OwnerId).HasMaxLength(64);
+            e.Property(x => x.Kind).HasMaxLength(32);
+            e.Property(x => x.Json).HasColumnType("jsonb");
         });
 
         b.Entity<FusionSetting>(e =>

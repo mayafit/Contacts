@@ -8,6 +8,7 @@
 import React from 'react';
 import { Box, ButtonBase } from '@mui/material';
 import { tokens } from '../../theme/contactsTheme';
+import { fs } from '../../settings/uiSettings';
 
 /** One letter and the first row index filed under it */
 export interface RailEntry {
@@ -91,7 +92,7 @@ const AlphabetRail: React.FC<AlphabetRailProps> = ({ entries, activeLetter, onJu
                 width: 22,
                 minHeight: 16,
                 borderRadius: '6px',
-                fontSize: 12,
+                fontSize: fs(12),
                 lineHeight: '16px',
                 fontWeight: active ? 700 : 500,
                 color: active ? '#fff' : tokens.textSecondary,

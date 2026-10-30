@@ -58,6 +58,9 @@ import {
   Typography,
 } from '@mui/material';
 import { CenterFocusStrong, PhotoCamera } from '@mui/icons-material';
+import { useUi } from '../settings/SettingsProvider';
+import { dashArray } from '../settings/uiSettings';
+import type { StyledType, UiSettings } from '../settings/uiSettings';
 import { logger } from '../../../shared/logger';
 import { backendApiClient } from '../../../services/api/BackendApiClient';
 import DensityLayer from './DensityLayer';
@@ -71,6 +74,7 @@ import {
   splitPieces,
   type PieceLine,
 } from './routeGeometry';
+import { fs } from '../settings/uiSettings';
 
 /** A rectangle on the map */
 export interface Box {
@@ -123,16 +127,13 @@ export interface AtlasMapProps {
   onUnmark?: (index: number) => void;
 }
 
-/** Colour of the points marked for a rebuild */
-const MARK_COLOR = '#d946ef';
-
-/** A numbered marked point */
-const markIcon = (n: number) =>
+/** A numbered marked point, at the Owner's size and colour (AD-41) */
+const markIcon = (n: number, size: number, color: string) =>
   L.divIcon({
     className: '',
-    iconSize: [20, 20],
-    iconAnchor: [10, 10],
-    html: `<div style="width:20px;height:20px;border-radius:50%;background:${MARK_COLOR};color:#fff;border:2px solid #fff;box-shadow:0 0 2px rgba(0,0,0,.6);font:600 11px/16px sans-serif;text-align:center">${n}</div>`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+    html: `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${color};color:#fff;border:2px solid #fff;box-shadow:0 0 2px rgba(0,0,0,.6);font:600 calc(11px * var(--ui-map, 1))/${size - 4}px sans-serif;text-align:center;box-sizing:border-box">${n}</div>`,
   });
 
 /**
@@ -145,15 +146,20 @@ const WaypointMarks: React.FC<{
   onUnmark: (index: number) => void;
 }> = ({ points, onMark, onUnmark }) => {
   const map = useMap();
+  const ui = useUi();
   useMapEvents({
     click(e: LeafletMouseEvent) {
       onMark(e.latlng.lat, e.latlng.lng);
     },
   });
   useEffect(() => {
-    map.getContainer().style.cursor = 'crosshair';
+    // The class carries the Owner's pointer (AD-41 rule 7); the inline cursor the system's
+    const el = map.getContainer();
+    el.style.cursor = 'crosshair';
+    el.classList.add('atlas-crosshair');
     return () => {
-      map.getContainer().style.cursor = '';
+      el.style.cursor = '';
+      el.classList.remove('atlas-crosshair');
     };
   }, [map]);
   return (
@@ -162,14 +168,14 @@ const WaypointMarks: React.FC<{
         <Polyline
           positions={points}
           interactive={false}
-          pathOptions={{ color: MARK_COLOR, weight: 2, opacity: 0.8, dashArray: '4 6' }}
+          pathOptions={{ color: ui.colors.waypoint, weight: 2, opacity: 0.8, dashArray: '4 6' }}
         />
       )}
       {points.map((p, i) => (
         <Marker
           key={`${i}-${p[0]}-${p[1]}`}
           position={p}
-          icon={markIcon(i + 1)}
+          icon={markIcon(i + 1, ui.map.waypoint, ui.colors.waypoint)}
           title={`Point ${i + 1}: click to remove`}
           eventHandlers={{
             click: (e) => {
@@ -186,17 +192,41 @@ const WaypointMarks: React.FC<{
 /** Source points are shown on a matched route from this zoom on */
 const SOURCE_DOTS_ZOOM = 14;
 
+/**
+ * The Owner's grab distance (AD-41 rule 6): the canvas renderer's tolerance, which circles
+ * read at every hit test; lines keep their hit area in bounds made when drawn, so those are
+ * made again
+ */
+const GrabDistance: React.FC<{ renderer: L.Canvas; tolerance: number }> = ({
+  renderer,
+  tolerance,
+}) => {
+  const map = useMap();
+  useEffect(() => {
+    if (renderer.options.tolerance === tolerance) {
+      return;
+    }
+    renderer.options.tolerance = tolerance;
+    map.eachLayer((layer) => {
+      (layer as unknown as { _updateBounds?: () => void })._updateBounds?.();
+    });
+  }, [map, renderer, tolerance]);
+  return null;
+};
+
 /** Props for SelectedRoute */
 interface SelectedRouteProps {
   runs: PieceLine[];
   color: string;
+  /** The Owner's route styles (AD-41) */
+  styles: UiSettings['routes'];
 }
 
 /**
  * The selected activity's matched route: observed pieces solid, inferred amber dashes
  * on a dark casing, gaps faint dotted (memoised: hovering the charts does not redraw it)
  */
-const SelectedRouteLines: React.FC<SelectedRouteProps> = ({ runs, color }) => (
+const SelectedRouteLines: React.FC<SelectedRouteProps> = ({ runs, color, styles }) => (
   <>
     {runs.map((r, i) =>
       r.kind === 'inferred' ? (
@@ -204,12 +234,12 @@ const SelectedRouteLines: React.FC<SelectedRouteProps> = ({ runs, color }) => (
           <Polyline
             positions={r.positions}
             interactive={false}
-            pathOptions={inferredCasingStyle()}
+            pathOptions={inferredCasingStyle(styles)}
           />
           <Polyline
             positions={r.positions}
             interactive={false}
-            pathOptions={pieceStyle(r.kind, color)}
+            pathOptions={pieceStyle(r.kind, color, styles)}
           />
         </React.Fragment>
       ) : (
@@ -217,7 +247,7 @@ const SelectedRouteLines: React.FC<SelectedRouteProps> = ({ runs, color }) => (
           key={`${r.kind}-${i}`}
           positions={r.positions}
           interactive={false}
-          pathOptions={pieceStyle(r.kind, color)}
+          pathOptions={pieceStyle(r.kind, color, styles)}
         />
       ),
     )}
@@ -229,13 +259,14 @@ const SelectedRoute = React.memo(SelectedRouteLines);
 interface SourceDotsProps {
   points: [number, number][];
   color: string;
+  radius: number;
 }
 
 /**
  * The recorded points under a matched route, as small dots, only when zoomed in
  * (its own zoom state: zooming re-renders only the dots)
  */
-const SourceDotsLayer: React.FC<SourceDotsProps> = ({ points, color }) => {
+const SourceDotsLayer: React.FC<SourceDotsProps> = ({ points, color, radius }) => {
   const map = useMap();
   const [zoom, setZoom] = useState(() => map.getZoom());
   useMapEvents({ zoomend: () => setZoom(map.getZoom()) });
@@ -248,7 +279,7 @@ const SourceDotsLayer: React.FC<SourceDotsProps> = ({ points, color }) => {
         <CircleMarker
           key={i}
           center={p}
-          radius={2}
+          radius={radius}
           interactive={false}
           pathOptions={{ color, weight: 1, fillColor: color, fillOpacity: 0.9, opacity: 0.9 }}
         />
@@ -363,32 +394,34 @@ const usePhotoLayer = (active: boolean, query: AtlasQuery | undefined, reloadKey
 const PHOTO_PINS = 40;
 
 /** A photo's thumbnail as a map pin */
-const photoPin = (p: PhotoSummary): L.DivIcon =>
+const photoPin = (p: PhotoSummary, size: number, color: string): L.DivIcon =>
   L.divIcon({
     className: 'atlas-photo-pin',
-    html: `<img src="${backendApiClient.atlasPhotoUrl(p.id, 'small')}" alt="" loading="lazy" style="width:34px;height:34px;object-fit:cover;border-radius:6px;border:2px solid ${PHOTO_COLOR};box-shadow:0 1px 4px rgba(0,0,0,.5);display:block" />`,
-    iconSize: [34, 34],
-    iconAnchor: [17, 17],
+    html: `<img src="${backendApiClient.atlasPhotoUrl(p.id, 'small')}" alt="" loading="lazy" style="width:${size}px;height:${size}px;object-fit:cover;border-radius:6px;border:2px solid ${color};box-shadow:0 1px 4px rgba(0,0,0,.5);display:block" />`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
   });
 
 /**
  * The small "has photos" dot beside a visit's circle (top-right, so the circle
  * stays clickable); tracks get theirs on the canvas
  */
-const VISIT_BADGE = L.divIcon({
-  className: 'atlas-photo-badge',
-  html: `<div style="width:7px;height:7px;border-radius:50%;background:${PHOTO_COLOR};border:1px solid #0e1116"></div>`,
-  iconSize: [9, 9],
-  iconAnchor: [-2, 10],
-});
+const visitBadge = (color: string) =>
+  L.divIcon({
+    className: 'atlas-photo-badge',
+    html: `<div style="width:7px;height:7px;border-radius:50%;background:${color};border:1px solid #0e1116"></div>`,
+    iconSize: [9, 9],
+    iconAnchor: [-2, 10],
+  });
 
 /** The small permanent label at the area filter's top-left corner */
-const AREA_LABEL = L.divIcon({
-  className: 'atlas-area-label',
-  html: `<div style="display:inline-block;white-space:nowrap;padding:1px 6px;border-radius:4px;background:${FILTER_COLOR};color:#fff;font:600 11px/16px system-ui,sans-serif;box-shadow:0 1px 3px rgba(0,0,0,.4)">Area filter</div>`,
-  iconSize: [70, 18],
-  iconAnchor: [-4, -4],
-});
+const areaLabel = (color: string) =>
+  L.divIcon({
+    className: 'atlas-area-label',
+    html: `<div style="display:inline-block;white-space:nowrap;padding:1px 6px;border-radius:4px;background:${color};color:#fff;font:600 calc(11px * var(--ui-map, 1))/1.45 system-ui,sans-serif;box-shadow:0 1px 3px rgba(0,0,0,.4)">Area filter</div>`,
+    iconSize: [70, 18],
+    iconAnchor: [-4, -4],
+  });
 
 /** Fits the map to the area filter when asked (focus changes) */
 const FocusArea: React.FC<{ area: Box | null; focus: number }> = ({ area, focus }) => {
@@ -580,6 +613,7 @@ const AreaDraw: React.FC<{ drawing: boolean; onDone: (b: Box) => void }> = ({
   });
   useEffect(() => {
     map.getContainer().style.cursor = drawing ? 'crosshair' : '';
+    map.getContainer().classList.toggle('atlas-crosshair', drawing);
     if (!drawing) {
       return undefined;
     }
@@ -627,6 +661,11 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
   onMark,
   onUnmark,
 }) => {
+  const ui = useUi();
+  // One canvas renderer, made once; GrabDistance keeps its tolerance (AD-41 rule 6)
+  const [renderer] = useState(() => L.canvas({ tolerance: ui.map.grab }));
+  const visitBadgeIcon = useMemo(() => visitBadge(ui.colors.photo), [ui.colors.photo]);
+  const areaLabelIcon = useMemo(() => areaLabel(ui.colors.area), [ui.colors.area]);
   const [mapStyle, setMapStyle] = useState<MapStyle>(loadMapStyle);
   const [mode, setMode] = useState<MapMode>(loadMapMode);
   const density = mode === 'density';
@@ -640,9 +679,9 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
     return spread(placed, PHOTO_PINS).map((p) => ({
       p,
       index: (photos ?? []).indexOf(p),
-      icon: photoPin(p),
+      icon: photoPin(p, ui.map.photoPin, ui.colors.photo),
     }));
-  }, [photos]);
+  }, [photos, ui.map.photoPin, ui.colors.photo]);
   // The layer's markers are built when its photos change, not on every render (thousands)
   const openPhotoRef = useRef(onOpenPhoto);
   openPhotoRef.current = onOpenPhoto;
@@ -654,7 +693,7 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
               <CircleMarker
                 key={p.id}
                 center={[p.lat, p.lon]}
-                radius={4}
+                radius={ui.map.photo}
                 pathOptions={{
                   color: '#0e1116',
                   weight: 1,
@@ -668,13 +707,13 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
             ) : null,
           )
         : null,
-    [photoLayer, layerPhotos],
+    [photoLayer, layerPhotos, ui.map.photo, ui.colors.photo],
   );
   // Bumped by the "Show all results" button
   const [fitAll, setFitAll] = useState(0);
   const styleDef = MAP_STYLES.find((m) => m.value === mapStyle) ?? MAP_STYLES[0];
   // On a light map the selected track is drawn dark (white would vanish)
-  const highlightColor = styleDef.light ? '#111827' : '#ffffff';
+  const highlightColor = styleDef.light ? ui.colors.highlightLight : ui.colors.highlightDark;
 
   // Flights as the arc from departure to arrival: the positions a phone records
   // in the air are rough guesses, and a straight line through them misleads
@@ -701,7 +740,7 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
   const routeColor = useMemo(() => {
     const a = activities.find((x) => x.id === selectedId);
     return a ? typeColor(a.type) : highlightColor;
-  }, [activities, selectedId, highlightColor]);
+  }, [activities, selectedId, highlightColor, ui.colors]);
   const sourceDots = useMemo(
     () =>
       routeRuns && selectedTrack
@@ -755,7 +794,9 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
         worldCopyJump
         style={{ height: '100%', width: '100%', background: '#0e1116' }}
         preferCanvas
+        renderer={renderer}
       >
+        <GrabDistance renderer={renderer} tolerance={ui.map.grab} />
         <BaseMap style={mapStyle} />
         <FitResults
           activities={activities}
@@ -784,7 +825,7 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
             />
             <Marker
               position={[area.maxLat, area.minLon]}
-              icon={AREA_LABEL}
+              icon={areaLabelIcon}
               interactive={false}
               keyboard={false}
             />
@@ -795,22 +836,37 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
           lines
             // The selected matched route is drawn by its pieces (dashes would be hidden under it)
             .filter(({ a }) => !(routeRuns && a.id === selectedId))
-            .map(({ a, path, flight }) => (
-              <Polyline
-                key={a.id}
-                positions={path}
-                pathOptions={{
-                  color: typeColor(a.type),
-                  // Many tracks at once: thinner and lighter, so the streets stay readable
-                  weight: a.id === selectedId ? 5 : crowded ? 1.5 : flight ? 2 : 2.5,
-                  opacity: selectedId && a.id !== selectedId ? 0.3 : crowded ? 0.5 : 0.9,
-                  dashArray: flight ? '8 6' : undefined,
-                }}
-                eventHandlers={{ click: () => onSelectActivity(a.id) }}
-              >
-                <Tooltip sticky>{describeActivity(a)}</Tooltip>
-              </Polyline>
-            ))}
+            .map(({ a, path }) => {
+              // The Owner's style of the type (AD-41): many tracks at once are thinner and
+              // lighter, so the streets stay readable
+              const st = ui.routes.types[a.type as StyledType] ?? ui.routes.types.other;
+              const weight =
+                a.id === selectedId
+                  ? ui.routes.selectedWidth
+                  : crowded
+                    ? ui.routes.crowdedWidth
+                    : st.width;
+              return (
+                <Polyline
+                  key={a.id}
+                  positions={path}
+                  pathOptions={{
+                    color: typeColor(a.type),
+                    weight,
+                    opacity:
+                      selectedId && a.id !== selectedId
+                        ? ui.routes.dimmedOpacity
+                        : crowded
+                          ? Math.min(st.opacity, 0.5)
+                          : st.opacity,
+                    dashArray: dashArray(st.pattern, weight),
+                  }}
+                  eventHandlers={{ click: () => onSelectActivity(a.id) }}
+                >
+                  <Tooltip sticky>{describeActivity(a)}</Tooltip>
+                </Polyline>
+              );
+            })}
         {!density &&
           lines
             .filter((l) => l.flight)
@@ -823,7 +879,7 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
               <CircleMarker
                 key={m.key}
                 center={m.at}
-                radius={3.5}
+                radius={ui.map.airport}
                 interactive={false}
                 pathOptions={{ color: '#0e1116', weight: 1, fillColor: m.color, fillOpacity: 1 }}
               />
@@ -831,12 +887,19 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
         {density ? null : selectedFlight ? (
           <Polyline
             positions={selectedFlight.path}
-            pathOptions={{ color: highlightColor, weight: 2.5, opacity: 0.95, dashArray: '8 6' }}
+            pathOptions={{
+              color: highlightColor,
+              weight: 2.5,
+              opacity: 0.95,
+              dashArray: dashArray(ui.routes.types.flight.pattern, 2.5),
+            }}
           />
         ) : routeRuns ? (
           <>
-            <SelectedRoute runs={routeRuns} color={routeColor} />
-            {sourceDots && <SourceDots points={sourceDots} color={highlightColor} />}
+            <SelectedRoute runs={routeRuns} color={routeColor} styles={ui.routes} />
+            {sourceDots && (
+              <SourceDots points={sourceDots} color={highlightColor} radius={ui.map.trackPoint} />
+            )}
           </>
         ) : (
           selectedTrack &&
@@ -852,7 +915,7 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
             <CircleMarker
               key={v.id}
               center={[v.lat, v.lon]}
-              radius={v.id === selectedVisitId ? 8 : 5}
+              radius={v.id === selectedVisitId ? ui.map.visitSelected : ui.map.visit}
               pathOptions={{
                 color: v.id === selectedVisitId ? '#ffffff' : VISIT_COLOR,
                 fillColor: VISIT_COLOR,
@@ -890,7 +953,7 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
               <Marker
                 key={`badge-${b.id}`}
                 position={b.at}
-                icon={VISIT_BADGE}
+                icon={visitBadgeIcon}
                 interactive={false}
                 keyboard={false}
               />
@@ -909,7 +972,7 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
         {cursor && (
           <CircleMarker
             center={cursor}
-            radius={7}
+            radius={ui.map.hover}
             pathOptions={{ color: '#fff', fillColor: HEALTH_COLOR, fillOpacity: 1, weight: 2 }}
           />
         )}
@@ -972,13 +1035,13 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
               bgcolor: 'rgba(14, 17, 22, 0.85)',
               py: 0.4,
               px: 1,
-              fontSize: 13,
+              fontSize: fs.map(13),
               textTransform: 'none',
               gap: 0.5,
               '&.Mui-selected': { color: PHOTO_COLOR },
             }}
           >
-            <PhotoCamera sx={{ fontSize: 16 }} />
+            <PhotoCamera sx={{ fontSize: fs.map(16) }} />
             Photos
           </ToggleButton>
         </MuiTooltip>
@@ -995,7 +1058,12 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
           aria-label="Map mode"
           sx={{
             bgcolor: 'rgba(14, 17, 22, 0.85)',
-            '& .MuiToggleButton-root': { py: 0.4, px: 1, fontSize: 13, textTransform: 'none' },
+            '& .MuiToggleButton-root': {
+              py: 0.4,
+              px: 1,
+              fontSize: fs.map(13),
+              textTransform: 'none',
+            },
           }}
         >
           <ToggleButton value="items">Items</ToggleButton>
@@ -1019,7 +1087,7 @@ const AtlasMap: React.FC<AtlasMapProps> = ({
           sx={{
             bgcolor: 'rgba(14, 17, 22, 0.85)',
             borderRadius: 1,
-            '& .MuiSelect-select': { fontSize: 13, py: 0.6 },
+            '& .MuiSelect-select': { fontSize: fs.map(13), py: 0.6 },
           }}
         >
           {MAP_STYLES.map((m) => (

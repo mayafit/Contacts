@@ -16,6 +16,7 @@ import { formatTimeFilter } from './filters';
 import { START_RANGES, type StartRange } from './startRange';
 import { backendApiClient } from '../../../services/api/BackendApiClient';
 import { tokens } from '../theme/contactsTheme';
+import { fs } from '../settings/uiSettings';
 
 /** A time range */
 export interface Range {
@@ -140,7 +141,6 @@ const AtlasTimeline: React.FC<AtlasTimelineProps> = ({
       alive = false;
       clearTimeout(t);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view.from, view.to, bucket, reloadKey, JSON.stringify(filter ?? {})]);
 
   const x = (t: number) => ((t - view.from) / (view.to - view.from)) * width;
@@ -322,7 +322,11 @@ const AtlasTimeline: React.FC<AtlasTimelineProps> = ({
               }}
               sx={{
                 mr: 1,
-                '& .MuiSelect-select': { fontSize: 13, color: tokens.textSecondary, py: 0.25 },
+                '& .MuiSelect-select': {
+                  fontSize: fs.chart(13),
+                  color: tokens.textSecondary,
+                  py: 0.25,
+                },
               }}
             >
               {START_RANGES.map((r) => (
@@ -484,7 +488,7 @@ const AtlasTimeline: React.FC<AtlasTimelineProps> = ({
               <text
                 x={yr.x + 3}
                 y={HEIGHT + YEAR_ROW - 3}
-                fontSize={12}
+                style={{ fontSize: fs.chart(12) }}
                 fontWeight={600}
                 fill={tokens.textSecondary}
               >
@@ -501,7 +505,12 @@ const AtlasTimeline: React.FC<AtlasTimelineProps> = ({
                 y2={HEIGHT - AXIS + 4}
                 stroke={tokens.textMuted}
               />
-              <text x={x(t.t) + 3} y={HEIGHT - 4} fontSize={11} fill={tokens.textMuted}>
+              <text
+                x={x(t.t) + 3}
+                y={HEIGHT - 4}
+                style={{ fontSize: fs.chart(11) }}
+                fill={tokens.textMuted}
+              >
                 {t.label}
               </text>
             </g>

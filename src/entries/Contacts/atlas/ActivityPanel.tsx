@@ -65,6 +65,7 @@ import { tokens } from '../theme/contactsTheme';
 import RouteLine, { type RouteView } from './RouteLine';
 import RouteRoads from './RouteRoads';
 import RouteRebuild, { type RouteRebuildProps } from './RouteRebuild';
+import { fs } from '../settings/uiSettings';
 
 /** Props for ActivityPanel */
 export interface ActivityPanelProps {
@@ -98,9 +99,9 @@ export interface ActivityPanelProps {
 
 /** Icon and text of a linked place's role */
 const ROLE: Record<LinkedPlace['role'], { label: string; icon: React.ReactElement }> = {
-  start: { label: 'Start', icon: <TripOrigin sx={{ fontSize: 15 }} /> },
-  end: { label: 'End', icon: <SportsScore sx={{ fontSize: 15 }} /> },
-  during: { label: 'Stop', icon: <Place sx={{ fontSize: 15 }} /> },
+  start: { label: 'Start', icon: <TripOrigin sx={{ fontSize: fs(15) }} /> },
+  end: { label: 'End', icon: <SportsScore sx={{ fontSize: fs(15) }} /> },
+  during: { label: 'Stop', icon: <Place sx={{ fontSize: fs(15) }} /> },
 };
 
 /** Time of day, e.g. 14:05 */
@@ -144,10 +145,20 @@ const MemberRow: React.FC<{
           {m.name ? ` · ${m.name}` : ''}
         </Typography>
         {m.primary && (
-          <Chip size="small" label="primary" color="primary" sx={{ height: 18, fontSize: 12 }} />
+          <Chip
+            size="small"
+            label="primary"
+            color="primary"
+            sx={{ minHeight: 18, height: 'auto', fontSize: fs(12) }}
+          />
         )}
         {m.pointCount > 0 && (
-          <Chip size="small" label="track" variant="outlined" sx={{ height: 18, fontSize: 12 }} />
+          <Chip
+            size="small"
+            label="track"
+            variant="outlined"
+            sx={{ minHeight: 18, height: 'auto', fontSize: fs(12) }}
+          />
         )}
       </Box>
       <Typography variant="caption" sx={{ color: tokens.textMuted }}>
@@ -417,7 +428,15 @@ const ActivityPanel: React.FC<ActivityPanelProps> = ({
               value={axis}
               onChange={(_, v: ChartAxis | null) => v && setAxis(v)}
               aria-label="Charts over"
-              sx={{ '& .MuiToggleButton-root': { py: 0, px: 0.75, fontSize: 12, height: 22 } }}
+              sx={{
+                '& .MuiToggleButton-root': {
+                  py: 0,
+                  px: 0.75,
+                  fontSize: fs(12),
+                  minHeight: 22,
+                  height: 'auto',
+                },
+              }}
             >
               <ToggleButton value="time">Time</ToggleButton>
               <ToggleButton value="distance">Distance</ToggleButton>

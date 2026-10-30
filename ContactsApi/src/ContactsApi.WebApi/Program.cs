@@ -109,6 +109,8 @@ builder.Services.AddHostedService<PhotoSyncWorker>();
 // Reviews from a scheduled Takeout on Drive (AD-40): the Owner's Google sign-in, with the Drive opt-in
 builder.Services.Configure<TakeoutOptions>(builder.Configuration.GetSection("Takeout"));
 builder.Services.AddHttpClient(ContactsApi.Infrastructure.Atlas.GoogleDriveTakeout.HttpClientName, c => c.Timeout = TimeSpan.FromMinutes(15));
+// The Owner's settings documents (AD-41)
+builder.Services.AddScoped<ContactsApi.Infrastructure.Atlas.OwnerSettingsService>();
 builder.Services.AddSingleton<TakeoutDriveQueue>();
 builder.Services.AddSingleton<ITakeoutTokens, GoogleTakeoutTokens>();
 builder.Services.AddScoped<TakeoutDriveService>();

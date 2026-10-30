@@ -29,6 +29,7 @@ import {
 import { getDisplayName } from '../../model/contactView';
 import ContactAvatar from '../common/ContactAvatar';
 import { tokens } from '../../theme/contactsTheme';
+import { fs } from '../../settings/uiSettings';
 
 /** Props for ActivitySection */
 export interface ActivitySectionProps {
@@ -93,7 +94,7 @@ const PersonRow: React.FC<{
       py: 0.75,
       px: 1,
       borderRadius: '8px',
-      cursor: 'pointer',
+      cursor: 'var(--echo-hand, pointer)',
       '&:hover, &:focus-visible': { bgcolor: tokens.hover, outline: 'none' },
     }}
   >
@@ -277,7 +278,7 @@ const ActivitySection: React.FC<ActivitySectionProps> = ({
                 <Typography variant="caption" sx={{ color: tokens.textSecondary }}>
                   {t.label}
                 </Typography>
-                <Typography sx={{ fontSize: 26, fontWeight: 600, lineHeight: 1.2 }}>
+                <Typography sx={{ fontSize: fs(26), fontWeight: 600, lineHeight: 1.2 }}>
                   {fmt.format(t.value)}
                 </Typography>
                 {t.value > 0 && (
@@ -391,8 +392,8 @@ const ActivitySection: React.FC<ActivitySectionProps> = ({
               mt: 1.5,
             }}
           >
-            <Event sx={{ fontSize: 15 }} /> A meeting counts as three emails. Events with more than
-            20 guests are not counted.
+            <Event sx={{ fontSize: fs(15) }} /> A meeting counts as three emails. Events with more
+            than 20 guests are not counted.
           </Typography>
         </>
       )}

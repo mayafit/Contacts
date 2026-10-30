@@ -8,12 +8,14 @@ import React, { useEffect } from 'react';
 import { useSelector } from 'react-redux';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router';
 import { Box, ButtonBase, Tooltip, Typography } from '@mui/material';
-import { ContactPhone, Map as MapIcon } from '@mui/icons-material';
+import { ContactPhone, Map as MapIcon, Settings as SettingsIcon } from '@mui/icons-material';
 import { selectIsAuthenticated } from '../redux/slices/auth/selectors';
 import SignedOutHome from './SignedOutHome';
 import { ContactsWorkspace } from './ContactsHome';
 import AtlasHome from '../atlas/AtlasHome';
+import SettingsPage from '../settings/SettingsPage';
 import { tokens } from '../theme/contactsTheme';
+import { fs } from '../settings/uiSettings';
 
 const AREAS = [
   { path: '/contacts', label: 'Contacts', icon: <ContactPhone /> },
@@ -78,7 +80,10 @@ const SiteShell: React.FC = () => {
           alignItems: 'center',
           justifyContent: { xs: 'space-around', sm: 'flex-start' },
           gap: { sm: 0.5 },
-          width: { xs: '100%', sm: 64 },
+          // Grows with the navigation text (AD-41): wider labels widen the rail
+          width: { xs: '100%', sm: 'auto' },
+          minWidth: { sm: 64 },
+          px: { sm: 0.5 },
           height: { xs: 56, sm: '100%' },
           pt: { sm: 1.5 },
           flexShrink: 0,
@@ -87,8 +92,12 @@ const SiteShell: React.FC = () => {
           borderTop: { xs: `1px solid ${tokens.border}`, sm: 'none' },
         }}
       >
-        {AREAS.map((a) => {
-          const active = current?.path === a.path;
+        {[
+          ...AREAS,
+          // Settings sit apart at the end of the rail; not an Area, so never a landing page (FR-68)
+          { path: '/settings', label: 'Settings', icon: <SettingsIcon /> },
+        ].map((a) => {
+          const active = location.pathname.startsWith(a.path);
           return (
             <Tooltip key={a.path} title={a.label} placement="right">
               <ButtonBase
@@ -97,7 +106,10 @@ const SiteShell: React.FC = () => {
                 sx={{
                   flexDirection: 'column',
                   gap: 0.25,
-                  width: 56,
+                  minWidth: 56,
+                  px: 0.5,
+                  mt: a.path === '/settings' ? { sm: 'auto' } : undefined,
+                  mb: a.path === '/settings' ? { sm: 1.5 } : undefined,
                   py: 0.75,
                   borderRadius: '10px',
                   color: active ? tokens.accent : tokens.textSecondary,
@@ -106,7 +118,7 @@ const SiteShell: React.FC = () => {
                 }}
               >
                 {a.icon}
-                <Typography sx={{ fontSize: 11.5, fontWeight: 600 }}>{a.label}</Typography>
+                <Typography sx={{ fontSize: fs.nav(11.5), fontWeight: 600 }}>{a.label}</Typography>
               </ButtonBase>
             </Tooltip>
           );
@@ -116,6 +128,7 @@ const SiteShell: React.FC = () => {
         <Routes>
           <Route path="/contacts" element={<ContactsWorkspace />} />
           <Route path="/atlas" element={<AtlasHome />} />
+          <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<LastArea />} />
         </Routes>
       </Box>

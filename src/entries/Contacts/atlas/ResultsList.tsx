@@ -12,6 +12,7 @@ import { formatDistance, formatDuration, formatWhen } from './geo';
 import { identifyMark } from './placeText';
 import { photoCountText } from './photos';
 import { tokens } from '../theme/contactsTheme';
+import { fs } from '../settings/uiSettings';
 
 /** Read by screen readers, not shown */
 const HIDDEN = {
@@ -29,7 +30,7 @@ const PhotoMark: React.FC<{ count?: number }> = ({ count }) =>
   count ? (
     <Box component="span" title={photoCountText(count) ?? undefined} sx={{ whiteSpace: 'nowrap' }}>
       {' · '}
-      <PhotoCameraOutlined sx={{ fontSize: 12, verticalAlign: '-2px' }} /> {count}
+      <PhotoCameraOutlined sx={{ fontSize: fs(12), verticalAlign: '-2px' }} /> {count}
       {/* Read out as "12 photos" (the icon is hidden from screen readers) */}
       <Box component="span" sx={HIDDEN}>
         {count === 1 ? ' photo' : ' photos'}
@@ -144,7 +145,7 @@ const ResultsList: React.FC<ResultsListProps> = ({
                         size="small"
                         label={`${it.a.memberCount} sources`}
                         variant="outlined"
-                        sx={{ height: 18, fontSize: 12, flexShrink: 0 }}
+                        sx={{ minHeight: 18, height: 'auto', fontSize: fs(12), flexShrink: 0 }}
                       />
                     </Tooltip>
                   )}
@@ -152,7 +153,7 @@ const ResultsList: React.FC<ResultsListProps> = ({
                     <Tooltip title="The sources disagree on some values">
                       <WarningAmber
                         aria-label="The sources disagree"
-                        sx={{ fontSize: 16, color: tokens.attention, flexShrink: 0 }}
+                        sx={{ fontSize: fs(16), color: tokens.attention, flexShrink: 0 }}
                       />
                     </Tooltip>
                   )}
@@ -186,7 +187,7 @@ const ResultsList: React.FC<ResultsListProps> = ({
                 borderBottom: `1px solid ${tokens.border}`,
               }}
             >
-              <Place sx={{ fontSize: 16, mt: 0.25, color: VISIT_COLOR }} />
+              <Place sx={{ fontSize: fs(16), mt: 0.25, color: VISIT_COLOR }} />
               <Box sx={{ minWidth: 0 }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0 }}>
                   <Typography

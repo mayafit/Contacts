@@ -10,6 +10,7 @@ import type { ContactFilter, ContactStats } from '../../model/stats';
 import type { DomainInsight } from '../../model/organizations';
 import { BarList, ColumnChart, percent } from './charts';
 import { tokens } from '../../theme/contactsTheme';
+import { fs } from '../../settings/uiSettings';
 
 /** Props for InsightsView */
 export interface InsightsViewProps {
@@ -82,7 +83,7 @@ const Tile: React.FC<{
     </Typography>
     <Typography
       sx={{
-        fontSize: 32,
+        fontSize: fs(32),
         fontWeight: 600,
         lineHeight: 1.2,
         mt: 0.75,
@@ -145,7 +146,9 @@ const InsightsView: React.FC<InsightsViewProps> = ({
   return (
     <Box sx={{ p: { xs: 2, md: 3 }, overflowY: 'auto', flex: 1 }}>
       <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 2, mb: 3, flexWrap: 'wrap' }}>
-        <Typography sx={{ fontSize: 56, fontWeight: 600, lineHeight: 1, letterSpacing: '-0.02em' }}>
+        <Typography
+          sx={{ fontSize: fs(56), fontWeight: 600, lineHeight: 1, letterSpacing: '-0.02em' }}
+        >
           {fmt.format(stats.total)}
         </Typography>
         <Typography variant="body1" sx={{ color: tokens.textSecondary }}>

@@ -8,7 +8,8 @@ import React, { useMemo } from 'react';
 import { Box, Typography } from '@mui/material';
 import { Favorite } from '@mui/icons-material';
 import type { ActivityAnalysis, ActivityDetail } from './types';
-import { HEALTH_COLOR, isSet } from './types';
+import { isSet } from './types';
+import { useUi } from '../settings/SettingsProvider';
 import {
   ZONE_COLORS,
   cadenceUnit,
@@ -30,6 +31,7 @@ import {
 } from './analysis';
 import { formatDistance } from './geo';
 import { tokens } from '../theme/contactsTheme';
+import { fs } from '../settings/uiSettings';
 
 /** Width of the charts' coordinate space (they stretch to the panel) */
 const VB_W = 1000;
@@ -37,10 +39,6 @@ const VB_W = 1000;
 const CHART_H = 76;
 /** Room above and below the line */
 const PAD = 5;
-
-const SPEED_COLOR = '#3fb6ff';
-const ELEVATION_COLOR = '#5bd16b';
-const CADENCE_COLOR = '#c9a7ff';
 
 /** A horizontal background stripe of a chart (heart-rate zones) */
 interface ChartBand {
@@ -123,7 +121,7 @@ const SyncedChart: React.FC<SyncedChartProps> = ({
     position: 'absolute',
     left: 2,
     px: 0.25,
-    fontSize: 11,
+    fontSize: fs.chart(11),
     lineHeight: '13px',
     color: tokens.textMuted,
     bgcolor: `${tokens.surface}b8`,
@@ -265,6 +263,8 @@ const ActivityCharts: React.FC<ActivityChartsProps> = ({
   cursorT,
   onHoverX,
 }) => {
+  // The Owner's chart colours (AD-41)
+  const ui = useUi();
   const s = detail.summary;
   const pace = analysis?.pace ?? false;
   const start = Date.parse(s.startTime);
@@ -330,7 +330,7 @@ const ActivityCharts: React.FC<ActivityChartsProps> = ({
         <SyncedChart
           {...common}
           label="Heart rate"
-          color={HEALTH_COLOR}
+          color={ui.colors.health}
           series={hr}
           range={ensureSpan(hrRange, 10)}
           format={(v) => `${Math.round(v)} bpm`}
@@ -342,8 +342,8 @@ const ActivityCharts: React.FC<ActivityChartsProps> = ({
           variant="caption"
           sx={{ display: 'flex', alignItems: 'center', gap: 0.5, color: tokens.textMuted, mt: 1 }}
         >
-          <Favorite sx={{ fontSize: 15 }} /> No heart rate in the track or in your health data for
-          this time.
+          <Favorite sx={{ fontSize: fs(15) }} /> No heart rate in the track or in your health data
+          for this time.
         </Typography>
       )}
       {detail.heartRateSource === 'health' && (
@@ -355,7 +355,7 @@ const ActivityCharts: React.FC<ActivityChartsProps> = ({
         <SyncedChart
           {...common}
           label={pace ? 'Pace' : 'Speed'}
-          color={SPEED_COLOR}
+          color={ui.charts.speed}
           series={speed}
           range={pace ? ensureSpan(speedR, 30) : ensureSpan(speedR, 2)}
           format={pace ? (v) => formatPace(v) : (v) => `${v.toFixed(1)} km/h`}
@@ -371,7 +371,7 @@ const ActivityCharts: React.FC<ActivityChartsProps> = ({
         <SyncedChart
           {...common}
           label="Elevation"
-          color={ELEVATION_COLOR}
+          color={ui.charts.elevation}
           series={ele}
           range={ensureSpan(eleRange, 10)}
           format={(v) => `${Math.round(v)} m`}
@@ -383,7 +383,7 @@ const ActivityCharts: React.FC<ActivityChartsProps> = ({
         <SyncedChart
           {...common}
           label="Cadence"
-          color={CADENCE_COLOR}
+          color={ui.charts.cadence}
           series={cad}
           range={ensureSpan(cadRange, 10)}
           format={(v) => `${Math.round(v)} ${unit}`}
@@ -395,7 +395,7 @@ const ActivityCharts: React.FC<ActivityChartsProps> = ({
           display: 'flex',
           justifyContent: 'space-between',
           mt: 0.25,
-          fontSize: 11,
+          fontSize: fs.chart(11),
           color: tokens.textMuted,
         }}
       >
