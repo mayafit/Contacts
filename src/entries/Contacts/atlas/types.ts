@@ -150,10 +150,12 @@ export interface RebuildBasis {
   reversed: boolean;
   /** Share of this drive's own points along the similar one (0-1) */
   fit: number;
-  /** Drives between the same places that were scored */
+  /** Drives near this drive's points that were scored */
   candidates: number;
   /** Of those, the ones this drive's points follow */
   agreeing: number;
+  /** Of the best of those, the ones that take the basis's way */
+  sameWay?: number;
   examples: { activityId: string; start: string; reversed: boolean }[];
 }
 

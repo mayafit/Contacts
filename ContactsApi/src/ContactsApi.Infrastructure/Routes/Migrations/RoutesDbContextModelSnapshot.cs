@@ -38,6 +38,9 @@ namespace ContactsApi.Infrastructure.Routes.Migrations
                     b.Property<string>("Basis")
                         .HasColumnType("jsonb");
 
+                    b.PrimitiveCollection<long[]>("Cells")
+                        .HasColumnType("bigint[]");
+
                     b.Property<DateTime>("ComputedAt")
                         .HasColumnType("timestamp with time zone");
 

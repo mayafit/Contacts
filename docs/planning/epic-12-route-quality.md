@@ -647,7 +647,7 @@ a stray point rebuilt from the drives that run along its points, so that a commu
 with a bad end is not left with "no similar drive".
 
 Acceptance criteria (FR-62, AD-38 rule 3, amended 2026-10-30):
-- [x] `matched_routes.Cells` (bigint[], GIN): the 0.01° cells within 200 m of the
+- [x] `matched_routes.Cells` (bigint[], no index of its own): the 0.01° cells within 200 m of the
   line, written with every line and filled at start-up for rows matched before it
   (migration `RoutesCells`; no rule bump).
 - [x] Stray points (reached and left faster than 1.5 × the maximum, with 60 s of

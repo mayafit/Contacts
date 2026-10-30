@@ -226,3 +226,67 @@ public static class RouteLines
     public static string Density(IReadOnlyList<(double Lat, double Lon)> points) =>
         Atlas.Geo.EncodePolyline(Atlas.Geo.Simplify(points, DensityVertices, DensityTolerance));
 }
+
+/// <summary>
+/// The corridor cells of a matched line (AD-38 rule 3): the cells of a 0.01° grid that lie
+/// within <see cref="BufferM"/> of it, so the similar-drive pool finds the lines that run
+/// near a drive's points with one indexed overlap
+/// </summary>
+public static class RouteCells
+{
+    /// <summary>A cell's side in degrees (about 1.1 × 0.95 km in Israel)</summary>
+    public const double SizeDeg = 0.01;
+
+    /// <summary>A point this near the line lies in one of its cells (metres)</summary>
+    public const double BufferM = 200;
+
+    /// <summary>The line is sampled at least this often (metres)</summary>
+    public const double SampleM = 100;
+
+    /// <summary>The cell of a point</summary>
+    public static long Of(double lat, double lon) =>
+        (long)Math.Floor((lat + 90) / SizeDeg) * 100_000 + (long)Math.Floor((lon + 180) / SizeDeg);
+
+    /// <summary>The cells of a line, Google encoded at precision 5 (empty for a line of fewer than two points)</summary>
+    public static long[] Line(string polyline) => Line(Atlas.AtlasService.DecodePolyline(polyline));
+
+    /// <summary>
+    /// The cells of a line, sorted: every sample (each vertex, and every <see cref="SampleM"/>
+    /// between) adds the cells of the four corners of a square of 2 × <see cref="BufferM"/>
+    /// around it. The square is smaller than a cell, so its corners' cells are every cell it
+    /// touches, and a point within <see cref="BufferM"/> − <see cref="SampleM"/> / 2 of the
+    /// line lies in one of them.
+    /// </summary>
+    public static long[] Line(IReadOnlyList<(double Lat, double Lon)> line)
+    {
+        var cells = new HashSet<long>();
+        if (line.Count < 2)
+        {
+            return Array.Empty<long>();
+        }
+
+        void Add(double lat, double lon)
+        {
+            var dLat = BufferM / 110_540;
+            var dLon = BufferM / (111_320 * Math.Max(0.1, Math.Cos(lat * Math.PI / 180)));
+            cells.Add(Of(lat - dLat, lon - dLon));
+            cells.Add(Of(lat - dLat, lon + dLon));
+            cells.Add(Of(lat + dLat, lon - dLon));
+            cells.Add(Of(lat + dLat, lon + dLon));
+        }
+
+        Add(line[0].Lat, line[0].Lon);
+        for (var i = 1; i < line.Count; i++)
+        {
+            var (a, b) = (line[i - 1], line[i]);
+            var n = (int)Math.Ceiling(Atlas.Geo.Haversine(a.Lat, a.Lon, b.Lat, b.Lon) / SampleM);
+            for (var k = 1; k <= n; k++)
+            {
+                var t = k / (double)n;
+                Add(a.Lat + t * (b.Lat - a.Lat), a.Lon + t * (b.Lon - a.Lon));
+            }
+        }
+
+        return cells.OrderBy(c => c).ToArray();
+    }
+}

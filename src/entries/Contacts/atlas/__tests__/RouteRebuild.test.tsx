@@ -241,7 +241,7 @@ describe('RouteRebuild', () => {
     );
 
     const card = screen.getByRole('group', { name: 'Suggested route' });
-    expect(card).toHaveTextContent('From 3 drives between the same places, the closest on 3 Sep');
+    expect(card).toHaveTextContent('From 3 similar drives, the closest on 3 Sep');
     expect(card).toHaveTextContent('85% confidence (now 52%)');
 
     fireEvent.click(screen.getByRole('button', { name: 'Discard' }));

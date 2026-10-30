@@ -85,6 +85,8 @@ public class MatchedRouteRow
     public double? StartLon { get; set; }
     public double? EndLat { get; set; }
     public double? EndLon { get; set; }
+    /// <summary>The corridor cells of the line (RouteCells, AD-38 rule 3); null without a line or before the start-up fill</summary>
+    public long[]? Cells { get; set; }
     /// <summary>JSON: the metrics on the matched line</summary>
     public string? MetricsAfter { get; set; }
     public string? Reason { get; set; }

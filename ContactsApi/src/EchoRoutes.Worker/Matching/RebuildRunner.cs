@@ -75,6 +75,9 @@ public record RebuildSuggestion
     public string? GraphVersion { get; init; }
 }
 
+/// <summary>The similar-drive pool: the candidates, and the rows that have no corridor cells yet</summary>
+public record SimilarPool(List<SimilarCandidate> Candidates, int Preparing);
+
 /// <summary>Runs rebuild jobs and applies their suggestions</summary>
 public class RebuildRunner
 {
@@ -138,15 +141,18 @@ public class RebuildRunner
         else
         {
             var pool = await PoolAsync(owner, t, ct);
-            outcome = await Rebuilder.SimilarAsync(t.Points, pool, t.Type, costing, t.Source, _settings, _engine, _breaker, ct);
+            outcome = await Rebuilder.SimilarAsync(t.Points, pool.Candidates, t.Type, costing, t.Source, _settings, _engine, _breaker, ct);
             if (outcome == null)
             {
+                var preparing = pool.Preparing > 0
+                    ? $" {pool.Preparing} of your drives are still being prepared for this; try again in a few minutes."
+                    : string.Empty;
                 return new RebuildSuggestion
                 {
                     Method = method, Outcome = RebuildOutcomes.NoSimilar, ActivityId = activityId,
-                    Message = pool.Count == 0
-                        ? "No confidently matched drive starts and ends near this one."
-                        : $"None of the {pool.Count} drives between the same places follows this drive's own points."
+                    Message = (pool.Candidates.Count == 0
+                        ? "No confidently matched drive runs along this drive's points."
+                        : $"None of the {pool.Candidates.Count} drives that pass near this drive's points follows them closely enough.") + preparing
                 };
             }
         }
@@ -188,58 +194,72 @@ public class RebuildRunner
 
     /// <summary>
     /// The similar-drive pool (AD-38 rule 3): the Owner's own confident automatic matches of
-    /// the same type, not rejected, whose start and end lie within the endpoint distance of
-    /// this record's start and end (or end and start), nearest first, at most the scored count
+    /// the same type, not rejected, whose corridor cells cover at least the least fit of this
+    /// record's non-stray points (rows without cells yet: both ends within the endpoint
+    /// distance, either way round), the best by cover, ends and time of day, at most the
+    /// scored count, one per drive. Preparing counts the rows that have no cells yet.
     /// </summary>
-    public async Task<List<SimilarCandidate>> PoolAsync(string owner, RouteTrack t, CancellationToken ct)
+    public async Task<SimilarPool> PoolAsync(string owner, RouteTrack t, CancellationToken ct)
     {
-        var (s, e) = (t.Points[0], t.Points[^1]);
+        var clean = SimilarRoutes.Clean(t.Points, RouteQuality.ProfileFor(t.Type).MaxSpeedKmh);
+        if (clean.Count < 2)
+        {
+            return new SimilarPool(new(), 0);
+        }
+
+        var pointCells = clean.Select(p => RouteCells.Of(p.Lat, p.Lon)).ToArray();
+        var cells = pointCells.Distinct().ToArray();
+        var (s, e) = (clean[0], clean[^1]);
         var dLat = SimilarRoutes.EndpointM / 110_540;
         double DLon(double lat) => SimilarRoutes.EndpointM / (111_320 * Math.Max(0.1, Math.Cos(lat * Math.PI / 180)));
         double sLat0 = s.Lat - dLat, sLat1 = s.Lat + dLat, sLon0 = s.Lon - DLon(s.Lat), sLon1 = s.Lon + DLon(s.Lat);
         double eLat0 = e.Lat - dLat, eLat1 = e.Lat + dLat, eLon0 = e.Lon - DLon(e.Lat), eLon1 = e.Lon + DLon(e.Lat);
-        var ends = await _db.MatchedRoutes.AsNoTracking()
+        var eligible = _db.MatchedRoutes.AsNoTracking()
             .Where(m => m.OwnerId == owner && m.ActivityId != t.Id && m.Status == RouteStatuses.Matched && m.Confidence >= PoolMinConfidence
-                        && m.Method == RebuildMethods.Auto && m.FusedType == t.Type && m.Polyline != null
-                        && m.StartLat != null && m.StartLon != null && m.EndLat != null && m.EndLon != null
-                        && ((m.StartLat >= sLat0 && m.StartLat <= sLat1 && m.StartLon >= sLon0 && m.StartLon <= sLon1
-                             && m.EndLat >= eLat0 && m.EndLat <= eLat1 && m.EndLon >= eLon0 && m.EndLon <= eLon1)
-                            || (m.StartLat >= eLat0 && m.StartLat <= eLat1 && m.StartLon >= eLon0 && m.StartLon <= eLon1
-                                && m.EndLat >= sLat0 && m.EndLat <= sLat1 && m.EndLon >= sLon0 && m.EndLon <= sLon1)))
-            .Where(m => !_db.Decisions.Any(d => d.OwnerId == owner && d.SourceKey == m.SourceKey && d.Kind == RouteDecisionKinds.Reject))
-            .Select(m => new { m.ActivityId, m.StartedAt, m.ComputedAt, m.StartLat, m.StartLon, m.EndLat, m.EndLon })
+                        && m.Method == RebuildMethods.Auto && m.FusedType == t.Type && m.Polyline != null)
+            .Where(m => !_db.Decisions.Any(d => d.OwnerId == owner && d.SourceKey == m.SourceKey && d.Kind == RouteDecisionKinds.Reject));
+        // By the way (an indexed overlap of the cells); rows not filled yet by their ends
+        var rows = await eligible
+            .Where(m => (m.Cells != null && m.Cells.Any(c => cells.Contains(c)))
+                        || (m.Cells == null && m.StartLat != null && m.StartLon != null && m.EndLat != null && m.EndLon != null
+                            && ((m.StartLat >= sLat0 && m.StartLat <= sLat1 && m.StartLon >= sLon0 && m.StartLon <= sLon1
+                                 && m.EndLat >= eLat0 && m.EndLat <= eLat1 && m.EndLon >= eLon0 && m.EndLon <= eLon1)
+                                || (m.StartLat >= eLat0 && m.StartLat <= eLat1 && m.StartLon >= eLon0 && m.StartLon <= eLon1
+                                    && m.EndLat >= sLat0 && m.EndLat <= sLat1 && m.EndLon >= sLon0 && m.EndLon <= sLon1))))
+            .Select(m => new { m.ActivityId, m.StartedAt, m.ComputedAt, m.StartLat, m.StartLon, m.EndLat, m.EndLon, m.Cells })
             .ToListAsync(ct);
-        // Each direction whose two ends are within reach is a candidate: a round trip (home
-        // to home) has both, and only its line tells which one this drive followed
-        var nearest = new List<(Guid Id, DateTime Start, bool Reversed, double D)>();
-        foreach (var m in ends)
-        {
-            var sameA = Geo.Haversine(m.StartLat!.Value, m.StartLon!.Value, s.Lat, s.Lon);
-            var sameB = Geo.Haversine(m.EndLat!.Value, m.EndLon!.Value, e.Lat, e.Lon);
-            var revA = Geo.Haversine(m.StartLat.Value, m.StartLon.Value, e.Lat, e.Lon);
-            var revB = Geo.Haversine(m.EndLat.Value, m.EndLon.Value, s.Lat, s.Lon);
-            if (sameA <= SimilarRoutes.EndpointM && sameB <= SimilarRoutes.EndpointM)
-            {
-                nearest.Add((m.ActivityId, m.StartedAt ?? m.ComputedAt, false, sameA + sameB));
-            }
+        var preparing = await eligible.CountAsync(m => m.Cells == null, ct);
 
-            if (revA <= SimilarRoutes.EndpointM && revB <= SimilarRoutes.EndpointM)
+        bool Near(double? lat, double? lon, RoutePoint p) =>
+            lat.HasValue && lon.HasValue && Geo.Haversine(lat.Value, lon.Value, p.Lat, p.Lon) <= SimilarRoutes.EndpointM;
+        var nearest = new List<(Guid Id, DateTime Start, bool EndsNear, double Cover)>();
+        foreach (var m in rows)
+        {
+            var endsNear = (Near(m.StartLat, m.StartLon, s) && Near(m.EndLat, m.EndLon, e))
+                           || (Near(m.StartLat, m.StartLon, e) && Near(m.EndLat, m.EndLon, s));
+            // The share of points in its cells bounds its fit from above (RouteCells)
+            var cover = m.Cells == null
+                ? endsNear ? 1 : 0
+                : pointCells.Count(c => Array.BinarySearch(m.Cells, c) >= 0) / (double)pointCells.Length;
+            if (cover >= SimilarRoutes.MinFit)
             {
-                nearest.Add((m.ActivityId, m.StartedAt ?? m.ComputedAt, true, revA + revB));
+                nearest.Add((m.ActivityId, m.StartedAt ?? m.ComputedAt, endsNear, cover));
             }
         }
 
-        nearest = nearest.OrderBy(x => x.D).Take(SimilarRoutes.MaxCandidates).ToList();
-        // The lines of the nearest only (a years-long commute has thousands of rows)
-        var ids = nearest.Select(x => x.Id).Distinct().ToList();
+        nearest = nearest.OrderByDescending(x => x.Cover).ThenByDescending(x => x.EndsNear)
+            .ThenBy(x => SimilarRoutes.HourDiff(clean[0].T, x.Start)).Take(SimilarRoutes.MaxCandidates).ToList();
+        // The lines of the best only (a years-long commute has thousands of rows)
+        var ids = nearest.Select(x => x.Id).ToList();
         var lines = await _db.MatchedRoutes.AsNoTracking()
             .Where(m => m.OwnerId == owner && ids.Contains(m.ActivityId))
             .Select(m => new { m.ActivityId, m.Polyline, m.Pieces })
             .ToDictionaryAsync(m => m.ActivityId, ct);
-        return nearest.Where(x => lines.TryGetValue(x.Id, out var l) && l.Polyline != null)
-            .Select(x => new SimilarCandidate(x.Id, x.Start, lines[x.Id].Polyline!, x.Reversed,
-                JsonSerializer.Deserialize<List<RoutePiece>>(lines[x.Id].Pieces, Json)))
+        var candidates = nearest.Where(x => lines.TryGetValue(x.Id, out var l) && l.Polyline != null)
+            .Select(x => new SimilarCandidate(x.Id, x.Start, lines[x.Id].Polyline!,
+                JsonSerializer.Deserialize<List<RoutePiece>>(lines[x.Id].Pieces, Json), x.EndsNear))
             .ToList();
+        return new SimilarPool(candidates, preparing);
     }
 
     /// <summary>
@@ -316,6 +336,7 @@ public class RebuildRunner
         row.Confidence = r.Confidence;
         row.Polyline = r.Polyline;
         (row.ListPolyline, row.DensityPolyline) = RouteLines.Derive(r.Polyline);
+        row.Cells = RouteCells.Line(r.Polyline);
         row.Pieces = JsonSerializer.Serialize(r.Pieces ?? new(), Json);
         row.Roads = RouteRoads.Serialize(r.Roads ?? new());
         row.RoadNames = (r.Roads ?? new()).Select(x => x.Name).ToArray();

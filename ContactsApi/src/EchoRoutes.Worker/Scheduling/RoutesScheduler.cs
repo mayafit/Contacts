@@ -740,7 +740,7 @@ public class RoutesScheduler : BackgroundService
     }
 
     /// <summary>
-    /// Matched rows stored before the list and density lines existed get them now, 200
+    /// Matched rows stored before the list and density lines (or the corridor cells) existed get them now, 200
     /// at a time with the batch pause between pages (until then reads fall back to the
     /// full line). A failure is logged and left for the next start.
     /// </summary>
@@ -765,7 +765,7 @@ public class RoutesScheduler : BackgroundService
 
             if (total > 0)
             {
-                _logger.LogInformation("Routes: stored the list and density lines of {Count} matched routes", total);
+                _logger.LogInformation("Routes: stored the list and density lines and corridor cells of {Count} matched routes", total);
             }
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)

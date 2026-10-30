@@ -124,19 +124,19 @@ public class RoutesGapFillEngineTests
         var (there, timeS) = await RoadAsync(url, (31.9300, 34.8200), (31.9010, 34.9600));
         var (back, backS) = await RoadAsync(url, (31.9010, 34.9600), (31.9300, 34.8200));
         var twin = new SimilarCandidate(Guid.NewGuid(), new DateTime(2026, 9, 1, 7, 50, 0, DateTimeKind.Utc),
-            Geo.EncodePolyline(there.Select(p => (Math.Round(p.Lat, 5), Math.Round(p.Lon, 5))).ToList()), false);
+            Geo.EncodePolyline(there.Select(p => (Math.Round(p.Lat, 5), Math.Round(p.Lon, 5))).ToList()));
 
-        foreach (var (road, s, candidate) in new[] { (there, timeS, twin), (back, backS, twin with { Reversed = true }) })
+        foreach (var (road, s, reversed) in new[] { (there, timeS, false), (back, backS, true) })
         {
             // Sparse, with a ~6 km stretch not recorded
             var points = Sparse(road, s);
             var cut = points.Take(4).Concat(points.Skip(6)).ToList();
             var plain = (await StageB.MatchAsync(cut, "drive", "auto", "google-timeline", settings, client, breaker, null, default)).Result;
 
-            var rebuilt = await Rebuilder.SimilarAsync(cut, new[] { candidate }, "drive", "auto", "google-timeline", settings, client, breaker, default);
+            var rebuilt = await Rebuilder.SimilarAsync(cut, new[] { twin }, "drive", "auto", "google-timeline", settings, client, breaker, default);
 
             Assert.NotNull(rebuilt);
-            Assert.Equal(candidate.Reversed, rebuilt!.Basis!.Reversed);
+            Assert.Equal(reversed, rebuilt!.Basis!.Reversed);
             // The way back leaves the way there in places (another ramp, the other carriageway)
             Assert.True(rebuilt.Basis.Fit >= 0.8, $"fit {rebuilt.Basis.Fit}");
             Assert.True(rebuilt.Added > 0);

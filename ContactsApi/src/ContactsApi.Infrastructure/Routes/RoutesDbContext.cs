@@ -76,6 +76,9 @@ public class RoutesDbContext : DbContext
             e.Property(x => x.MetricsAfter).HasColumnType("jsonb");
             e.Property(x => x.Roads).HasColumnType("jsonb");
             e.Property(x => x.RoadNames).HasColumnType("text[]");
+            // The similar-drive pool's corridor cells (AD-38 rule 3): no index of its own, as
+            // every index leads with OwnerId; the overlap runs over one Owner's rows
+            e.Property(x => x.Cells).HasColumnType("bigint[]");
             e.Property(x => x.Method).HasMaxLength(16).HasDefaultValue("auto");
             e.Property(x => x.Basis).HasColumnType("jsonb");
             e.Property(x => x.Reason).HasMaxLength(500);
