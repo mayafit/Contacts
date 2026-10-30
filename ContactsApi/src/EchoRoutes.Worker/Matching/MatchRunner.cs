@@ -569,8 +569,22 @@ public class MatchRunner
             .OrderBy(m => m.Id).Take(Math.Max(1, page)).ToListAsync(ct);
         foreach (var row in rows)
         {
-            (row.ListPolyline, row.DensityPolyline) = RouteLines.Derive(row.Polyline!);
-            row.Cells = RouteCells.Line(row.Polyline!);
+            // Only what is missing; a line that cannot be read gets no cells (never retried forever)
+            try
+            {
+                if (row.ListPolyline == null || row.DensityPolyline == null)
+                {
+                    (row.ListPolyline, row.DensityPolyline) = RouteLines.Derive(row.Polyline!);
+                }
+
+                row.Cells ??= RouteCells.Line(row.Polyline!);
+            }
+            catch (Exception ex) when (ex is ArgumentException or IndexOutOfRangeException or FormatException or OverflowException)
+            {
+                row.ListPolyline ??= row.Polyline;
+                row.DensityPolyline ??= row.Polyline;
+                row.Cells ??= Array.Empty<long>();
+            }
         }
 
         await _db.SaveChangesAsync(ct);

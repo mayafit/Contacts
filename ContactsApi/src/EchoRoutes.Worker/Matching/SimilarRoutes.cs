@@ -14,7 +14,9 @@ namespace EchoRoutes.Worker.Matching;
 /// <param name="Polyline">Its matched line, Google encoded at precision 5, in the direction it was driven</param>
 /// <param name="Pieces">Its pieces (metres along its line); a gap piece is a straight leg, not a road, and is never borrowed</param>
 /// <param name="EndsNear">Both its ends lie within <see cref="SimilarRoutes.EndpointM"/> of this drive's ends, either way round</param>
-public record SimilarCandidate(Guid ActivityId, DateTime Start, string Polyline, IReadOnlyList<RoutePiece>? Pieces = null, bool EndsNear = false);
+/// <param name="Timed">Its start time is the drive's own (false: only when it was matched, so the time of day and kind of day are not scored)</param>
+public record SimilarCandidate(Guid ActivityId, DateTime Start, string Polyline, IReadOnlyList<RoutePiece>? Pieces = null, bool EndsNear = false,
+    bool Timed = true);
 
 /// <summary>The basis line in the drive's direction, its cumulative metres, and its gap stretches (never borrowed)</summary>
 public record BasisLine(List<(double Lat, double Lon)> Line, double[] Cum, List<(double From, double To)> Gaps)
@@ -29,7 +31,7 @@ public record BasisLine(List<(double Lat, double Lon)> Line, double[] Cum, List<
 /// <param name="Candidates">Drives scored</param>
 /// <param name="Agreeing">Drives that fit</param>
 /// <param name="Examples">The best few of the basis's way, best first</param>
-/// <param name="SameWay">Drives among the best <see cref="SimilarRoutes.WayPool"/> that take the basis's way</param>
+/// <param name="SameWay">Drives that take the basis's way: its way among the best <see cref="SimilarRoutes.WayPool"/>, and the other agreeing drives whose span lies along its first line</param>
 public record SimilarBasis(Guid ActivityId, DateTime Start, bool Reversed, double Fit, int Candidates, int Agreeing,
     List<SimilarExample> Examples, int SameWay = 0);
 
@@ -90,15 +92,18 @@ public static class SimilarRoutes
         double SpanFrom, double SpanTo, double Score);
 
     /// <summary>
-    /// Which real points are stray: reached from the point before and left to the point
-    /// after (the first and last: their one leg) only faster than <see cref="StraySpeedFactor"/>
-    /// × the type's maximum, with <see cref="StraySlackS"/> of slack on each leg. None
-    /// without a maximum or with fewer than three points.
+    /// Which real points are stray: an inner point reached from the point before and left
+    /// to the point after only faster than <see cref="StraySpeedFactor"/> × the type's
+    /// maximum, with <see cref="StraySlackS"/> of slack on each leg; then the first and last
+    /// point, each judged on its leg to the nearest inner point that is not stray (so a
+    /// teleport second point does not take the good first one with it). None without a
+    /// maximum or with fewer than three points.
     /// </summary>
     public static bool[] Stray(IReadOnlyList<RoutePoint> points, double? maxSpeedKmh)
     {
-        var stray = new bool[points.Count];
-        if (maxSpeedKmh is not > 0 || points.Count < 3)
+        var n = points.Count;
+        var stray = new bool[n];
+        if (maxSpeedKmh is not > 0 || n < 3)
         {
             return stray;
         }
@@ -106,12 +111,16 @@ public static class SimilarRoutes
         var maxMs = maxSpeedKmh.Value * StraySpeedFactor / 3.6;
         bool Fast(int a, int b) =>
             Geo.Haversine(points[a].Lat, points[a].Lon, points[b].Lat, points[b].Lon)
-            / (Math.Max(0, (points[b].T - points[a].T).TotalSeconds) + StraySlackS) > maxMs;
-        for (var i = 0; i < points.Count; i++)
+            / (Math.Max(0, Math.Abs((points[b].T - points[a].T).TotalSeconds)) + StraySlackS) > maxMs;
+        for (var i = 1; i < n - 1; i++)
         {
-            stray[i] = (i == 0 || Fast(i - 1, i)) && (i == points.Count - 1 || Fast(i, i + 1));
+            stray[i] = Fast(i - 1, i) && Fast(i, i + 1);
         }
 
+        var firstInner = Enumerable.Range(1, n - 2).FirstOrDefault(i => !stray[i], n - 1);
+        var lastInner = Enumerable.Range(1, n - 2).Reverse().FirstOrDefault(i => !stray[i], 0);
+        stray[0] = Fast(0, firstInner);
+        stray[n - 1] = Fast(lastInner, n - 1);
         return stray;
     }
 
@@ -168,13 +177,19 @@ public static class SimilarRoutes
         var ways = Ways(kept.OrderByDescending(s => s.Score).ThenByDescending(s => s.Candidate.Start).Take(WayPool).ToList());
         var largest = ways.Max(w => w.Count);
         ways = ways.OrderByDescending(w => w[0].Score + WayBonus * w.Count / largest).ThenByDescending(w => w[0].Candidate.Start).ToList();
-        var order = ways.Select(w => (Best: w[0], Way: w)).Concat(ways[0].Skip(1).Select(s => (Best: s, Way: ways[0]))).ToList();
+        var order = ways.Select(w => (Best: w[0], Way: w)).Concat(ways[0].Skip(1).Select(s => (Best: s, Way: ways[0])))
+            .Take(Math.Max(1, take)).ToList();
         var scored = pool.Select(c => c.ActivityId).Distinct().Count();
         var agreeing = kept.Select(s => s.Candidate.ActivityId).Distinct().Count();
-        return order.Take(Math.Max(1, take))
+        // A way's size counts the agreeing drives beyond the best too, for the ways tried only
+        var grouped = ways.SelectMany(w => w).ToHashSet();
+        var rest = kept.Where(s => !grouped.Contains(s)).ToList();
+        var sizes = order.Select(o => o.Way).Distinct()
+            .ToDictionary(w => w, w => w.Count + rest.Count(s => SameWay(w[0], s)));
+        return order
             .Select(o => (new SimilarBasis(o.Best.Candidate.ActivityId, o.Best.Candidate.Start, o.Best.Reversed, Math.Round(o.Best.Fit, 3),
                     scored, agreeing,
-                    o.Way.Take(3).Select(s => new SimilarExample(s.Candidate.ActivityId, s.Candidate.Start, s.Reversed)).ToList(), o.Way.Count),
+                    o.Way.Take(3).Select(s => new SimilarExample(s.Candidate.ActivityId, s.Candidate.Start, s.Reversed)).ToList(), sizes[o.Way]),
                 new BasisLine(o.Best.Line, o.Best.Cum, Gaps(o.Best.Candidate, o.Best.Reversed, o.Best.Cum[^1]))))
             .ToList();
     }
@@ -221,8 +236,8 @@ public static class SimilarRoutes
         var own = path[last] - path[first];
         var detour = own > 500 ? spanM / own : 1;
         var score = b.Fit
-                    - 0.15 * Math.Min(HourDiff(clean[0].T, c.Start), 3) / 3
-                    - 0.05 * (DayKind(clean[0].T) != DayKind(c.Start) ? 1 : 0)
+                    - (c.Timed ? 0.15 * Math.Min(HourDiff(clean[0].T, c.Start), 3) / 3 : 0)
+                    - (c.Timed && DayKind(clean[0].T) != DayKind(c.Start) ? 0.05 : 0)
                     - 0.15 * Math.Clamp((detour - 1.3) / 0.5, 0, 1)
                     + 0.05 * (c.EndsNear ? 1 : 0);
         return new Scored(c, b.Reversed, b.Line, b.Cum, b.Fit, from, to, score);

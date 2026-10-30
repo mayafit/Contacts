@@ -129,6 +129,20 @@ public class RouteRebuildTests
             Assert.Contains(RouteCells.Of(p.Lat, p.Lon), cells);
         }
 
+        // Far north the square is wider than a cell: still every point within 150 m is in
+        var north = Enumerable.Range(0, 6).Select(i => (70.0 + i * 0.0064, 25.0 + i * 0.02)).ToList();
+        var northCells = RouteCells.Line(north);
+        var ncum = SimilarRoutes.Cumulative(north);
+        for (var k = 0; k < 300; k++)
+        {
+            var (lat, lon) = SimilarRoutes.PointAt(north, ncum, rnd.NextDouble() * ncum[^1]);
+            var p = (Lat: lat + (rnd.NextDouble() * 2 - 1) * 100 / 110_540, Lon: lon + (rnd.NextDouble() * 2 - 1) * 100 / 38_000);
+            if (SimilarRoutes.Project(north, ncum, p.Lat, p.Lon).Dist <= 150)
+            {
+                Assert.Contains(RouteCells.Of(p.Lat, p.Lon), northCells);
+            }
+        }
+
         // 2 km away: in none of them; a line of one point has none
         Assert.DoesNotContain(RouteCells.Of(31.5 + 0.0064 * 2.5 + 0.018, 34.8 + 0.0075 * 2.5 - 0.021), cells);
         Assert.Empty(RouteCells.Line(new List<(double Lat, double Lon)> { (31.5, 34.8) }));
@@ -152,6 +166,9 @@ public class RouteRebuildTests
         };
 
         Assert.Equal(new[] { false, false, true, false, false, true }, SimilarRoutes.Stray(points, 160));
+        // A teleport second point does not take the good first one with it
+        var early = new List<RoutePoint> { points[0], points[2] with { T = T0.AddSeconds(30) }, points[3], points[4] };
+        Assert.Equal(new[] { false, true, false, false }, SimilarRoutes.Stray(early, 160));
         Assert.All(SimilarRoutes.Stray(points, null), Assert.False);
         Assert.Equal(4, SimilarRoutes.Clean(points, 160).Count);
 
@@ -221,6 +238,28 @@ public class RouteRebuildTests
         // The other way gets its try second, ahead of the common way's second best
         Assert.Equal((rare.ActivityId, 1), (ranked[1].Basis.ActivityId, ranked[1].Basis.SameWay));
         Assert.Equal(common[1].ActivityId, ranked[2].Basis.ActivityId);
+    }
+
+    [Fact]
+    public void A_way_s_size_counts_every_agreeing_drive_not_only_the_best_30()
+    {
+        var points = Sparse(60, 8);
+        var many = Enumerable.Range(1, 45).Select(d => new SimilarCandidate(Guid.NewGuid(), T0.AddDays(-d), Line(Road(60)))).ToList();
+
+        var best = SimilarRoutes.Rank(points, many)[0].Basis;
+
+        Assert.Equal((45, 45, 3), (best.Agreeing, best.SameWay, best.Examples.Count));
+    }
+
+    [Fact]
+    public void A_drive_matched_without_its_start_time_is_not_scored_on_the_time()
+    {
+        var points = Sparse(60, 8);
+        // Its "start" is only when it was matched: 12 hours off, but not held against it
+        var untimed = new SimilarCandidate(Guid.NewGuid(), T0.AddHours(12), Line(Road(60)), Timed: false);
+        var later = new SimilarCandidate(Guid.NewGuid(), T0.AddDays(-1).AddHours(1), Line(Road(60)));
+
+        Assert.Equal(untimed.ActivityId, SimilarRoutes.Rank(points, new[] { later, untimed })[0].Basis.ActivityId);
     }
 
     [Fact]

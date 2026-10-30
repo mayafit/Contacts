@@ -292,6 +292,9 @@ describe('rebuild texts (AD-38)', () => {
     expect(
       rebuildText(suggestion({ basis: { ...suggestion().basis!, sameWay: 14, reversed: false } })),
     ).not.toMatch(/take this way|other way/);
+    expect(
+      rebuildText(suggestion({ basis: { ...suggestion().basis!, sameWay: 1, reversed: false } })),
+    ).toMatch(/\(1 takes this way\)/);
     // A basis stored before ways were counted
     expect(
       rebuildText(suggestion({ basis: { ...suggestion().basis!, agreeing: 1, sameWay: undefined } })),

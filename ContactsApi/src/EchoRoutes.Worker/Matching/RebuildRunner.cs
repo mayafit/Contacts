@@ -208,7 +208,6 @@ public class RebuildRunner
         }
 
         var pointCells = clean.Select(p => RouteCells.Of(p.Lat, p.Lon)).ToArray();
-        var cells = pointCells.Distinct().ToArray();
         var (s, e) = (clean[0], clean[^1]);
         var dLat = SimilarRoutes.EndpointM / 110_540;
         double DLon(double lat) => SimilarRoutes.EndpointM / (111_320 * Math.Max(0.1, Math.Cos(lat * Math.PI / 180)));
@@ -218,37 +217,42 @@ public class RebuildRunner
             .Where(m => m.OwnerId == owner && m.ActivityId != t.Id && m.Status == RouteStatuses.Matched && m.Confidence >= PoolMinConfidence
                         && m.Method == RebuildMethods.Auto && m.FusedType == t.Type && m.Polyline != null)
             .Where(m => !_db.Decisions.Any(d => d.OwnerId == owner && d.SourceKey == m.SourceKey && d.Kind == RouteDecisionKinds.Reject));
-        // By the way (an indexed overlap of the cells); rows not filled yet by their ends
+        // By the way: the cover, counted in the query, so only rows that can fit come back
+        // (a commute's home cell alone is in almost every row); rows not filled yet by their ends
+        var need = (int)Math.Ceiling(SimilarRoutes.MinFit * pointCells.Length - 1e-9);
         var rows = await eligible
-            .Where(m => (m.Cells != null && m.Cells.Any(c => cells.Contains(c)))
+            .Where(m => (m.Cells != null && pointCells.Count(c => m.Cells.Contains(c)) >= need)
                         || (m.Cells == null && m.StartLat != null && m.StartLon != null && m.EndLat != null && m.EndLon != null
                             && ((m.StartLat >= sLat0 && m.StartLat <= sLat1 && m.StartLon >= sLon0 && m.StartLon <= sLon1
                                  && m.EndLat >= eLat0 && m.EndLat <= eLat1 && m.EndLon >= eLon0 && m.EndLon <= eLon1)
                                 || (m.StartLat >= eLat0 && m.StartLat <= eLat1 && m.StartLon >= eLon0 && m.StartLon <= eLon1
                                     && m.EndLat >= sLat0 && m.EndLat <= sLat1 && m.EndLon >= sLon0 && m.EndLon <= sLon1))))
-            .Select(m => new { m.ActivityId, m.StartedAt, m.ComputedAt, m.StartLat, m.StartLon, m.EndLat, m.EndLon, m.Cells })
+            .Select(m => new
+            {
+                m.ActivityId, m.StartedAt, m.ComputedAt, m.StartLat, m.StartLon, m.EndLat, m.EndLon,
+                Hits = m.Cells == null ? (int?)null : pointCells.Count(c => m.Cells.Contains(c))
+            })
             .ToListAsync(ct);
         var preparing = await eligible.CountAsync(m => m.Cells == null, ct);
 
         bool Near(double? lat, double? lon, RoutePoint p) =>
             lat.HasValue && lon.HasValue && Geo.Haversine(lat.Value, lon.Value, p.Lat, p.Lon) <= SimilarRoutes.EndpointM;
-        var nearest = new List<(Guid Id, DateTime Start, bool EndsNear, double Cover)>();
+        var nearest = new List<(Guid Id, DateTime Start, bool Timed, bool EndsNear, double Cover)>();
         foreach (var m in rows)
         {
             var endsNear = (Near(m.StartLat, m.StartLon, s) && Near(m.EndLat, m.EndLon, e))
                            || (Near(m.StartLat, m.StartLon, e) && Near(m.EndLat, m.EndLon, s));
             // The share of points in its cells bounds its fit from above (RouteCells)
-            var cover = m.Cells == null
-                ? endsNear ? 1 : 0
-                : pointCells.Count(c => Array.BinarySearch(m.Cells, c) >= 0) / (double)pointCells.Length;
+            var cover = m.Hits is { } hits ? hits / (double)pointCells.Length : endsNear ? 1 : 0;
             if (cover >= SimilarRoutes.MinFit)
             {
-                nearest.Add((m.ActivityId, m.StartedAt ?? m.ComputedAt, endsNear, cover));
+                nearest.Add((m.ActivityId, m.StartedAt ?? m.ComputedAt, m.StartedAt.HasValue, endsNear, cover));
             }
         }
 
+        // Without its own start time, a row has no time of day to compare: it goes last among equals
         nearest = nearest.OrderByDescending(x => x.Cover).ThenByDescending(x => x.EndsNear)
-            .ThenBy(x => SimilarRoutes.HourDiff(clean[0].T, x.Start)).Take(SimilarRoutes.MaxCandidates).ToList();
+            .ThenBy(x => x.Timed ? SimilarRoutes.HourDiff(clean[0].T, x.Start) : 24).Take(SimilarRoutes.MaxCandidates).ToList();
         // The lines of the best only (a years-long commute has thousands of rows)
         var ids = nearest.Select(x => x.Id).ToList();
         var lines = await _db.MatchedRoutes.AsNoTracking()
@@ -257,7 +261,7 @@ public class RebuildRunner
             .ToDictionaryAsync(m => m.ActivityId, ct);
         var candidates = nearest.Where(x => lines.TryGetValue(x.Id, out var l) && l.Polyline != null)
             .Select(x => new SimilarCandidate(x.Id, x.Start, lines[x.Id].Polyline!,
-                JsonSerializer.Deserialize<List<RoutePiece>>(lines[x.Id].Pieces, Json), x.EndsNear))
+                JsonSerializer.Deserialize<List<RoutePiece>>(lines[x.Id].Pieces, Json), x.EndsNear, x.Timed))
             .ToList();
         return new SimilarPool(candidates, preparing);
     }

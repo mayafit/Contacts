@@ -349,7 +349,9 @@ export const rebuildText = (s: RebuildSuggestion): string => {
   const similar = `${b.agreeing} similar drive${b.agreeing === 1 ? '' : 's'}`;
   // How many of them take the basis's way (absent on bases stored before ways were counted)
   const way =
-    typeof b.sameWay === 'number' && b.sameWay < b.agreeing ? ` (${b.sameWay} take this way)` : '';
+    typeof b.sameWay === 'number' && b.sameWay < b.agreeing
+      ? ` (${b.sameWay} take${b.sameWay === 1 ? 's' : ''} this way)`
+      : '';
   return `From ${similar}${way}, the closest on ${dayAndTime(b.start)}${b.reversed ? ', the other way' : ''}`;
 };
 

@@ -252,10 +252,9 @@ public static class RouteCells
 
     /// <summary>
     /// The cells of a line, sorted: every sample (each vertex, and every <see cref="SampleM"/>
-    /// between) adds the cells of the four corners of a square of 2 × <see cref="BufferM"/>
-    /// around it. The square is smaller than a cell, so its corners' cells are every cell it
-    /// touches, and a point within <see cref="BufferM"/> − <see cref="SampleM"/> / 2 of the
-    /// line lies in one of them.
+    /// between) adds every cell that a square of 2 × <see cref="BufferM"/> around it touches
+    /// (in Israel, the cells of its four corners), so a point within <see cref="BufferM"/> −
+    /// <see cref="SampleM"/> / 2 of the line lies in one of them, at any latitude.
     /// </summary>
     public static long[] Line(IReadOnlyList<(double Lat, double Lon)> line)
     {
@@ -268,11 +267,16 @@ public static class RouteCells
         void Add(double lat, double lon)
         {
             var dLat = BufferM / 110_540;
-            var dLon = BufferM / (111_320 * Math.Max(0.1, Math.Cos(lat * Math.PI / 180)));
-            cells.Add(Of(lat - dLat, lon - dLon));
-            cells.Add(Of(lat - dLat, lon + dLon));
-            cells.Add(Of(lat + dLat, lon - dLon));
-            cells.Add(Of(lat + dLat, lon + dLon));
+            var dLon = BufferM / (111_320 * Math.Max(0.01, Math.Cos(lat * Math.PI / 180)));
+            long lat0 = (long)Math.Floor((lat - dLat + 90) / SizeDeg), lat1 = (long)Math.Floor((lat + dLat + 90) / SizeDeg);
+            long lon0 = (long)Math.Floor((lon - dLon + 180) / SizeDeg), lon1 = (long)Math.Floor((lon + dLon + 180) / SizeDeg);
+            for (var a = lat0; a <= lat1; a++)
+            {
+                for (var o = lon0; o <= lon1; o++)
+                {
+                    cells.Add(a * 100_000 + o);
+                }
+            }
         }
 
         Add(line[0].Lat, line[0].Lon);

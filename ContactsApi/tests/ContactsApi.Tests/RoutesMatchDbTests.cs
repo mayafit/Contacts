@@ -294,6 +294,15 @@ public class RoutesMatchDbTests
         Assert.Equal(RebuildOutcomes.NoSimilar, none.Outcome);
         Assert.Contains("No confidently matched drive", none.Message);
 
+        // A drive that only starts in the same place (one point of 13 in their cells): not even read
+        list.Add(list[0] with
+        {
+            Id = Guid.NewGuid(), ExternalId = "east",
+            Points = list[0].Points.Select((p, k) => k == 0 ? p : p with { Lon = p.Lon + 0.05 }).ToList()
+        });
+        Assert.Empty((await Rebuild(sp).PoolAsync(owner, list[^1], default)).Candidates);
+        list.RemoveAt(list.Count - 1);
+
         // A recording that started late and stopped early (its middle 7 points): found by the way
         list.Add(list[0] with { Id = Guid.NewGuid(), ExternalId = "part", Points = list[0].Points.Skip(3).Take(7).ToList() });
         var part = await Rebuild(sp).PoolAsync(owner, list[^1], default);
@@ -349,6 +358,7 @@ public class RoutesMatchDbTests
         Assert.Null(conflict);
         var row = await Db(sp).MatchedRoutes.AsNoTracking().SingleAsync(m => m.OwnerId == owner && m.ActivityId == drives[0].Id);
         Assert.Equal((RebuildMethods.Similar, r.Polyline, r.Confidence), (row.Method, row.Polyline, row.Confidence));
+        Assert.Equal(RouteCells.Line(r.Polyline!), row.Cells);
         Assert.Contains(drives[1].Id.ToString(), row.Basis);
         Assert.NotNull(row.ListPolyline);
 
