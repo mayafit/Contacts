@@ -63,6 +63,30 @@ export interface HealthInput {
   unit?: string | null;
 }
 
+/** One of Google's questions about a place, and the Owner's answer */
+export interface ReviewAnswer {
+  question: string;
+  answer: string;
+}
+
+/** A Google Maps review in an import batch (AD-39): the published values, else the draft's */
+export interface ReviewInput {
+  name: string;
+  address?: string | null;
+  countryCode?: string | null;
+  lat: number;
+  lon: number;
+  /** 1 to 5 */
+  rating?: number | null;
+  text?: string | null;
+  /** False: only a draft was saved */
+  published: boolean;
+  /** When it was written or last changed (ISO) */
+  reviewedAt: string;
+  mapsUrl?: string | null;
+  answers?: ReviewAnswer[];
+}
+
 /** What one parsed file contributes */
 export interface ParsedData {
   source: string;
@@ -70,6 +94,8 @@ export interface ParsedData {
   places: PlaceInput[];
   visits: VisitInput[];
   health: HealthInput[];
+  /** Google Maps reviews (Takeout Reviews.json) */
+  reviews?: ReviewInput[];
 }
 
 /** An activity as listed (no points) */
@@ -416,9 +442,74 @@ export interface PlaceDetail {
   identifyState: IdentifyState;
   /** The possible identities when ambiguous (at most 6, nearest first); else empty */
   candidates: LocationCandidate[];
-  /** 'lookup' or 'nearby' (copied from a nearby place the user identified); null otherwise */
+  /** 'lookup', 'nearby' (copied from a nearby place the user identified) or 'review' (named by the Owner's review); null otherwise */
   identifiedFrom: string | null;
+  /** The Owner's Google Maps review of the place (AD-39) */
+  review?: PlaceReview | null;
+  /** Where the place stands on reviews */
+  reviewState?: ReviewState | null;
 }
+
+/** The Owner's Google Maps review of a place (AD-39) */
+export interface PlaceReview {
+  id: string;
+  /** The place as Google names it */
+  name: string;
+  address: string | null;
+  rating: number | null;
+  text: string | null;
+  /** False: a draft never published */
+  published: boolean;
+  reviewedAt: string;
+  mapsUrl: string | null;
+  answers: ReviewAnswer[];
+  /** The Atlas place it is about, when linked */
+  placeId: string | null;
+  linkedBy: string | null;
+  lat: number;
+  lon: number;
+}
+
+/**
+ * Where a place stands on reviews: reviewed; to_review; set aside (later until a date,
+ * never — for the place, or its category — or done); not_reviewable and why
+ */
+export interface ReviewState {
+  state: 'reviewed' | 'to_review' | 'later' | 'never' | 'done' | 'not_reviewable';
+  until?: string | null;
+  /** Never: set aside by its category */
+  category?: boolean;
+  /** not_reviewable: no_identity, category, no_recent_visit, routine */
+  reason?: string | null;
+  /** Opens the place on Google Maps, where the review is written */
+  writeUrl?: string | null;
+}
+
+/** A place to review */
+export interface ReviewDue {
+  placeId: string;
+  name: string;
+  category: string | null;
+  lastVisit: string;
+  visits: number;
+  writeUrl: string;
+  lat: number;
+  lon: number;
+}
+
+/** The Owner's reviews and the places to review (all time) */
+export interface ReviewsOverview {
+  written: number;
+  average: number | null;
+  linked: number;
+  unlinked: number;
+  recent: PlaceReview[];
+  due: ReviewDue[];
+  dueTotal: number;
+}
+
+/** A choice about a review reminder */
+export type ReviewAction = 'later' | 'never' | 'done' | 'never_kind' | 'clear';
 
 /** A place near an identified one that got (or may get) the same identity */
 export interface NearbyPlace {

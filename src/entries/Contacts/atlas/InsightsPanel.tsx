@@ -59,6 +59,7 @@ import {
 } from './insights';
 import { formatSignedPct } from './analysis';
 import HrZonesBar from './HrZonesBar';
+import ReviewsSection from './ReviewsSection';
 import { tokens } from '../theme/contactsTheme';
 
 /** A filter a proposal or a link applies */
@@ -995,6 +996,8 @@ const InsightsPanel: React.FC<InsightsPanelProps> = ({
               ))}
             </Section>
           )}
+
+          <ReviewsSection onShowPlace={onShowPlace} />
 
           {(hasActivities || data.travel.flights > 0 || data.travel.daysAway > 0) && (
             <Section title="Streaks & travel">

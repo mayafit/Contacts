@@ -10,8 +10,10 @@ import type { ParsedData } from '../types';
 import { parseGpx, parseTcx } from './tracks';
 import { samsungKind } from './samsung';
 import {
+  isGoogleReviews,
   parseFitbitHeartRate,
   parseGoogleFit,
+  parseGoogleReviews,
   parseTimelineDevice,
   parseTimelineTakeout,
 } from './google';
@@ -51,6 +53,8 @@ export const kindOf = (path: string): FileKind => {
   // JSON files worth reading: Timeline, Fit data points, Fitbit heart rate
   if (
     /timeline|semantic location history|location history|fit\/all data|heart_rate/.test(p) ||
+    // Takeout "Maps (your places)/Reviews.json" (AD-39)
+    /(^|\/)reviews\.json$/.test(p) ||
     !p.includes('/')
   ) {
     return 'json';
@@ -89,6 +93,9 @@ export const parseFile = async (
     json = JSON.parse(text);
   } catch {
     return null;
+  }
+  if (isGoogleReviews(json)) {
+    return parseGoogleReviews(json);
   }
   if (json && typeof json === 'object' && 'semanticSegments' in (json as object)) {
     return parseTimelineDevice(json);

@@ -665,6 +665,9 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                     b.Property<int>("Places")
                         .HasColumnType("integer");
 
+                    b.Property<int>("Reviews")
+                        .HasColumnType("integer");
+
                     b.Property<string>("Source")
                         .IsRequired()
                         .HasColumnType("text");
@@ -680,6 +683,99 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                     b.HasIndex("OwnerId", "CreatedAt");
 
                     b.ToTable("imports", "atlas");
+                });
+
+            modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.PlaceReview", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Address")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("Answers")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("CountryCode")
+                        .HasMaxLength(8)
+                        .HasColumnType("character varying(8)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ExternalId")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<Guid?>("ImportId")
+                        .HasColumnType("uuid");
+
+                    b.Property<double>("Lat")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("LinkedBy")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<double>("Lon")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("MapsUrl")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<string>("OwnerId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid?>("PlaceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("Published")
+                        .HasColumnType("boolean");
+
+                    b.Property<int?>("Rating")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("ReviewedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Text")
+                        .HasMaxLength(10000)
+                        .HasColumnType("character varying(10000)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ImportId");
+
+                    b.HasIndex("PlaceId");
+
+                    b.HasIndex("OwnerId", "PlaceId");
+
+                    b.HasIndex("OwnerId", "ReviewedAt");
+
+                    b.HasIndex("OwnerId", "Source", "ExternalId")
+                        .IsUnique()
+                        .HasFilter("\"ExternalId\" IS NOT NULL");
+
+                    b.ToTable("place_reviews", "atlas");
                 });
 
             modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.PlaceVisit", b =>
@@ -735,6 +831,50 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                         .HasFilter("\"ExternalId\" IS NOT NULL");
 
                     b.ToTable("visits", "atlas");
+                });
+
+            modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.ReviewReminder", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Category")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("OwnerId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid?>("PlaceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("Until")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PlaceId");
+
+                    b.HasIndex("OwnerId", "Category")
+                        .IsUnique()
+                        .HasFilter("\"Category\" IS NOT NULL");
+
+                    b.HasIndex("OwnerId", "PlaceId")
+                        .IsUnique()
+                        .HasFilter("\"PlaceId\" IS NOT NULL");
+
+                    b.ToTable("review_reminders", "atlas");
                 });
 
             modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.SourceConnection", b =>
@@ -856,6 +996,14 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.PlaceReview", b =>
+                {
+                    b.HasOne("ContactsApi.Infrastructure.Atlas.AtlasPlace", null)
+                        .WithMany()
+                        .HasForeignKey("PlaceId")
+                        .OnDelete(DeleteBehavior.SetNull);
+                });
+
             modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.PlaceVisit", b =>
                 {
                     b.HasOne("ContactsApi.Infrastructure.Atlas.AtlasPlace", "Place")
@@ -864,6 +1012,14 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                         .OnDelete(DeleteBehavior.SetNull);
 
                     b.Navigation("Place");
+                });
+
+            modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.ReviewReminder", b =>
+                {
+                    b.HasOne("ContactsApi.Infrastructure.Atlas.AtlasPlace", null)
+                        .WithMany()
+                        .HasForeignKey("PlaceId")
+                        .OnDelete(DeleteBehavior.Cascade);
                 });
 
             modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.TrackPoint", b =>

@@ -728,7 +728,7 @@ The Owner imports the Takeout export as they import the Timeline: the zip, or th
   3. otherwise the nearest place within 10 m, when no other place is within 25 m;
   4. otherwise the review stays unlinked; it is still listed with the Owner's reviews.
 
-  Linking runs after every import of reviews, and again after every import of places, for the reviews not linked yet. A link stays until the place is deleted.
+  A place takes one review (Google keeps one review per place per person). Linking runs after every import of reviews, and again after every import of places, for the reviews not linked yet. A link stays until the place is deleted.
 - **A review names its place.** Many Timeline places have no name ("Place"). When a review is linked to such a place by position (rules 2 and 3), the place takes the review's name and address, unless the Owner named the place themselves.
 - **In the place panel.** A reviewed place shows the review: the stars, the date, the text, the answers, "Draft" when it was never published, and **Open on Google Maps** (the review's link). The Owner's own photos at the place are shown as before.
 - **In Insights.** A **Reviews** section shows how many reviews the Owner has written, their average stars, how many are linked to visited places, and the latest reviews; a click opens the place, or Google Maps for an unlinked review. It covers all reviews, whatever the current filters.

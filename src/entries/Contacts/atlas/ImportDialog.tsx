@@ -71,6 +71,7 @@ const send = async (
     places: [],
     visits: [],
     health: [],
+    reviews: [],
   };
   let points = 0;
   let items = 0;
@@ -79,11 +80,19 @@ const send = async (
       current.activities.length ||
       current.places.length ||
       current.visits.length ||
-      current.health.length
+      current.health.length ||
+      current.reviews?.length
     ) {
       batches.push(current);
     }
-    current = { source: data.source, activities: [], places: [], visits: [], health: [] };
+    current = {
+      source: data.source,
+      activities: [],
+      places: [],
+      visits: [],
+      health: [],
+      reviews: [],
+    };
     points = 0;
     items = 0;
   };
@@ -128,6 +137,13 @@ const send = async (
     current.health.push(h);
     items += 1;
   });
+  (data.reviews ?? []).forEach((r) => {
+    if (items >= MAX_ITEMS) {
+      flush();
+    }
+    current.reviews!.push(r);
+    items += 1;
+  });
   flush();
 
   for (const b of batches) {
@@ -137,7 +153,13 @@ const send = async (
       fileName,
     });
     importIds.set(b.source, r.importId);
-    onSent(b.activities.length + b.places.length + b.visits.length + b.health.length);
+    onSent(
+      b.activities.length +
+        b.places.length +
+        b.visits.length +
+        b.health.length +
+        (b.reviews?.length ?? 0),
+    );
   }
 };
 
@@ -210,13 +232,16 @@ const ImportDialog: React.FC<ImportDialogProps> = ({
         if (!parsed) {
           return;
         }
-        const n = parsed.activities.length + parsed.visits.length + parsed.health.length;
+        const reviews = parsed.reviews?.length ?? 0;
+        const n = parsed.activities.length + parsed.visits.length + parsed.health.length + reviews;
         if (!n) {
           return;
         }
         found += 1;
         note(
-          `${f.path}: ${parsed.activities.length} activities, ${parsed.visits.length} visits, ${parsed.health.length} health values`,
+          reviews
+            ? `${f.path}: ${reviews} reviews`
+            : `${f.path}: ${parsed.activities.length} activities, ${parsed.visits.length} visits, ${parsed.health.length} health values`,
         );
         await send(parsed, importIds, label, (k) => setSent((s) => s + k));
       } catch (e) {

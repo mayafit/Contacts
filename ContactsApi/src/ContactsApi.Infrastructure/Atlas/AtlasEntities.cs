@@ -174,6 +174,57 @@ public class ImportRun
     public int Places { get; set; }
     public int Visits { get; set; }
     public int HealthSamples { get; set; }
+    public int Reviews { get; set; }
+}
+
+/// <summary>The Owner's own review of a place on Google Maps, imported from Takeout (AD-39)</summary>
+public class PlaceReview : ISourced
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string OwnerId { get; set; } = string.Empty;
+    public string Source { get; set; } = "google-maps";
+    /// <summary>The cid of its Google Maps link (else the link, else name|lat|lon)</summary>
+    public string? ExternalId { get; set; }
+    public Guid? ImportId { get; set; }
+
+    /// <summary>The place in Atlas it is about; null while none is clear</summary>
+    public Guid? PlaceId { get; set; }
+    /// <summary>How it was linked: name, only, nearest (PlaceReviews.Link)</summary>
+    public string? LinkedBy { get; set; }
+    /// <summary>The place as Google names it</summary>
+    public string Name { get; set; } = string.Empty;
+    public string? Address { get; set; }
+    public string? CountryCode { get; set; }
+    public double Lat { get; set; }
+    public double Lon { get; set; }
+    /// <summary>1 to 5; null when only text was written</summary>
+    public int? Rating { get; set; }
+    public string? Text { get; set; }
+    /// <summary>False: only a draft was saved</summary>
+    public bool Published { get; set; } = true;
+    /// <summary>When it was written or last changed (UTC)</summary>
+    public DateTime ReviewedAt { get; set; }
+    public string? MapsUrl { get; set; }
+    /// <summary>JSON: [{question, answer}] (Google's questions about the place)</summary>
+    public string Answers { get; set; } = "[]";
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>The Owner set a review reminder aside, for a place or a category (AD-39 rule 6)</summary>
+public class ReviewReminder
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string OwnerId { get; set; } = string.Empty;
+    /// <summary>The place (null for a category)</summary>
+    public Guid? PlaceId { get; set; }
+    /// <summary>The category, lower case (null for a place)</summary>
+    public string? Category { get; set; }
+    /// <summary>later, never, done</summary>
+    public string Kind { get; set; } = "never";
+    /// <summary>Until when a "later" hides it</summary>
+    public DateTime? Until { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 
 /// <summary>A personal access token for MCP clients (only its hash is kept)</summary>

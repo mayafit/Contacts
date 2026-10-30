@@ -161,6 +161,13 @@ Built in PRs #56–#110 (from a91a5c7 "Personal site with Atlas" to 1e05abc phot
 - Rendering: canvas (preferCanvas); track photo dots are on the canvas; the density view uses WebGL.
 - Indexes start with OwnerId, plus partial indexes for photos.
 
+## 5B. Place reviews (Epic 13)
+Architecture §5B, AD-39; plan `docs/planning/epic-13-place-reviews.md`.
+- **Import.** `parseGoogleReviews` (`importers/google.ts`) reads Takeout's `Maps (your places)/Reviews.json` (by name, or by a `FeatureCollection` carrying review fields) into `ParsedData.reviews`; the import dialog sends them in batches with the source `google-maps`, and `IngestRequest.Reviews` stores them in `atlas.place_reviews`, keyed by the cid of the review's Google Maps link. Review photos are not in Google's export.
+- **Linking.** `PlaceReviews.Link` (`AtlasPlaceReviews.cs`) links each review to one place (a shared word within 75 m, the only place within 30 m, or a clear nearest within 10 m); `AtlasService.LinkReviewsAsync` runs after every batch with reviews or places, and a review linked by position names an unnamed place (`IdentifiedFrom = review`).
+- **Shown.** `GET /api/atlas/places/{id}` carries `review` and `reviewState`; `PlaceReview.tsx` shows the review or the reminder in the place panel, and `ReviewsSection.tsx` the Insights **Reviews** section from `GET /api/atlas/reviews`.
+- **Reminders.** `PlaceReviews.Assess` decides at read time; `atlas.review_reminders` keeps Later, Not this one, Not this kind and I reviewed it (`POST /api/atlas/reviews/reminders`).
+
 ## 6A. Routes (route quality and road matching, Epic 12 R1)
 Architecture §5A, AD-32 to AD-37; plan `docs/planning/epic-12-route-quality.md`.
 - **Roads travelled (AD-37, rule `routes.v4`).**
