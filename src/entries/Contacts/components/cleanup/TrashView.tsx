@@ -25,6 +25,8 @@ export interface TrashViewProps {
   onRestore: (contacts: Contact[]) => void;
   /** Ask to delete contacts permanently */
   onDeleteForever: (contacts: Contact[]) => void;
+  /** Contacts to tick and list first (a search's matches, opened from the contacts' empty state) */
+  preselect?: string[];
 }
 
 /**
@@ -32,9 +34,21 @@ export interface TrashViewProps {
  * @param props - Component props
  * @returns View element
  */
-const TrashView: React.FC<TrashViewProps> = ({ trashed, onRestore, onDeleteForever }) => {
-  const [checked, setChecked] = useState<Set<string>>(new Set());
-  const sorted = useMemo(() => [...trashed].sort(compareByName), [trashed]);
+const TrashView: React.FC<TrashViewProps> = ({
+  trashed,
+  onRestore,
+  onDeleteForever,
+  preselect,
+}) => {
+  const [checked, setChecked] = useState<Set<string>>(() => new Set(preselect));
+  const sorted = useMemo(() => {
+    const first = new Set(preselect);
+    return [...trashed].sort(
+      (a, b) =>
+        Number(first.has(b.resourceName)) - Number(first.has(a.resourceName)) ||
+        compareByName(a, b),
+    );
+  }, [trashed, preselect]);
   const selected = sorted.filter((c) => checked.has(c.resourceName));
   const all = sorted.length > 0 && selected.length === sorted.length;
 

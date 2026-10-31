@@ -427,14 +427,21 @@ const SignedInHome: React.FC = () => {
     ],
   );
 
-  // A search that finds nobody says whether the Trash holds matches (it is left out of every view)
-  const trashMatches = useMemo(
-    () =>
-      visible.length === 0 && clean(deferredQuery)
-        ? trashed.filter((c) => matchesQuery(c, deferredQuery)).length
-        : 0,
-    [visible.length, deferredQuery, trashed],
-  );
+  // A search that finds nobody says where its matches are: hidden by the filters, or in the
+  // Trash (left out of every view)
+  const elsewhere = useMemo(() => {
+    if (visible.length > 0 || !clean(deferredQuery)) {
+      return { filtered: 0, trash: [] as string[] };
+    }
+    return {
+      filtered: contacts.filter((c) =>
+        matchesQuery(c, deferredQuery, searchIndex.get(c.resourceName)),
+      ).length,
+      trash: trashed.filter((c) => matchesQuery(c, deferredQuery)).map((c) => c.resourceName),
+    };
+  }, [visible.length, deferredQuery, contacts, searchIndex, trashed]);
+  // The Trash opened from there ticks those matches
+  const [trashPreselect, setTrashPreselect] = useState<string[] | undefined>(undefined);
 
   /** Shows a set of contacts in the table, replacing other filters */
   const showContacts = useCallback((ids: string[], title: string) => {
@@ -935,9 +942,24 @@ const SignedInHome: React.FC = () => {
                 Clear search and filters
               </Button>
             )}
-            {trashMatches > 0 && (
-              <Button sx={{ mt: 1, display: 'block', mx: 'auto' }} onClick={() => setView('trash')}>
-                {trashMatches === 1 ? '1 match' : `${trashMatches} matches`} in Trash
+            {elsewhere.filtered > 0 && (
+              <Typography variant="body2" sx={{ color: tokens.textMuted, mt: 1 }}>
+                {elsewhere.filtered === 1
+                  ? '1 contact matches'
+                  : `${elsewhere.filtered} contacts match`}{' '}
+                outside the current filters.
+              </Typography>
+            )}
+            {elsewhere.trash.length > 0 && (
+              <Button
+                sx={{ mt: 1, display: 'block', mx: 'auto' }}
+                onClick={() => {
+                  setTrashPreselect(elsewhere.trash);
+                  setView('trash');
+                }}
+              >
+                {elsewhere.trash.length === 1 ? '1 match' : `${elsewhere.trash.length} matches`} in
+                Trash
               </Button>
             )}
           </Box>
@@ -1012,7 +1034,10 @@ const SignedInHome: React.FC = () => {
 
         <Tabs
           value={view}
-          onChange={(_, v: View) => setView(v)}
+          onChange={(_, v: View) => {
+            setTrashPreselect(undefined);
+            setView(v);
+          }}
           variant="scrollable"
           scrollButtons={false}
           sx={{
@@ -1244,7 +1269,9 @@ const SignedInHome: React.FC = () => {
           )}
           {view === 'trash' && (
             <TrashView
+              key={trashPreselect?.join(',') ?? 'all'}
               trashed={trashed}
+              preselect={trashPreselect}
               onRestore={restore}
               onDeleteForever={(list) => {
                 setDeletePermanent(true);
