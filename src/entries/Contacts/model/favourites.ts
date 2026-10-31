@@ -26,7 +26,7 @@ export interface QuietFavourite {
 }
 
 /**
- * Favourites overdue against their rhythm, out of touch for 180 days, or never in touch;
+ * Favourites overdue against their rhythm, out of touch for 180 days, or with no email or meeting found;
  * the longest silence first (never last), at most 10.
  * @param contacts - Contacts
  * @param activity - Activity per contact

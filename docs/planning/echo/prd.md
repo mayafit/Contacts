@@ -278,7 +278,7 @@ With Tier T1, Echo learns from Gmail headers and the Calendar when the Owner was
 #### FR-12: Last in touch — Built
 After opting into T1, the Owner sees for every Contact:
 - the last email sent and received, and the last and next meeting;
-- most in touch, gone quiet and never in touch;
+- most in touch, gone quiet and none found (no email or meeting in the scan);
 - people the Owner emails who are not Contacts.
 
 They can mark their Own Addresses, which are excluded from counts and used to tell sent mail from received mail.
@@ -925,7 +925,7 @@ Insights proposes segments found in the Contacts by grouping, each with its coun
 - **Organization**: Contacts whose organization names are the same once case, punctuation and company suffixes ("Ltd", "Inc.", "בע"מ") are set aside; 3 or more.
 - **Email domain**: Contacts sharing a work email domain (not a personal mail service); 3 or more.
 - **Phone country**: Contacts by their numbers' country; 3 or more, other than the Owner's main country, which is everyone.
-- **Relationship tier** (T1), from the last 12 months of emails and meetings (an email counts 1, a meeting 3): **Inner circle** (24 or more, and in touch in the last 30 days), **Regular** (6 or more, in the last 90 days), **Occasional** (in touch in the last year), **Dormant** (in touch before, not in the last year), **Never in touch**.
+- **Relationship tier** (T1), from the last 12 months of emails and meetings (an email counts 1, a meeting 3): **Inner circle** (24 or more, and in touch in the last 30 days), **Regular** (6 or more, in the last 90 days), **Occasional** (in touch in the last year), **Over a year ago** (the last touch is just over a year old, possible only between full scans), **None found** (no email or meeting in what the activity scanned: the last 12 months, less when a very large mailbox reaches the scan's 10,000-message limit; older mail is not read, so the app does not say "never").
 - **Name script**: Hebrew, English, mixed (for clean-up).
 
 ### 4.19 Contacts: Public Profiles and the Dossier (Proposed)

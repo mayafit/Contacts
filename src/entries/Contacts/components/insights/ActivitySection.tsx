@@ -260,7 +260,7 @@ const ActivitySection: React.FC<ActivitySectionProps> = ({
                 title: 'Gone quiet (nothing for 6 months)',
               },
               {
-                label: 'Never in touch',
+                label: 'None found',
                 value: ranked.never.length,
                 ids: ranked.never.map((c) => c.resourceName),
                 title: 'No email or meeting in the last year',

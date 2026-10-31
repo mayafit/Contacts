@@ -283,7 +283,7 @@ const RuleRow: React.FC<{
           >
             <MenuItem value="within">within</MenuItem>
             <MenuItem value="olderThan">more than</MenuItem>
-            <MenuItem value="never">never</MenuItem>
+            <MenuItem value="never">none found</MenuItem>
           </Pick>
           {r.op !== 'never' && (
             <TextField
