@@ -11,6 +11,8 @@ jest.mock('../../../../services/api/BackendApiClient', () => ({
     settings: jest.fn(),
     saveSettings: jest.fn(),
     resetSettings: jest.fn(),
+    getActivityStatus: jest.fn(() => new Promise(() => undefined)),
+    setActivityWindow: jest.fn(),
   },
 }));
 

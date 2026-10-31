@@ -1,6 +1,6 @@
 /**
  * @fileoverview The Settings page (FR-68 to FR-71, AD-41): text sizes, the pointer, map
- * symbols, colours, route styles and chart colours, each with its default, a reset and a
+ * symbols, colours, route styles, chart colours and the email and calendar scan period (FR-90), each with its default, a reset and a
  * preview; changes apply at once and are saved by themselves
  * @module Contacts/settings/SettingsPage
  */
@@ -23,6 +23,7 @@ import { tokens } from '../theme/contactsTheme';
 import { useSettings } from './SettingsProvider';
 import type { SaveState } from './SettingsProvider';
 import { cursorValue } from './pointer';
+import ScanPeriodSetting from './ScanPeriodSetting';
 import {
   DEFAULT_UI,
   PATTERNS,
@@ -42,6 +43,7 @@ export const SECTIONS = [
   { id: 'colors', title: 'Colours' },
   { id: 'routes', title: 'Routes' },
   { id: 'charts', title: 'Charts' },
+  { id: 'activity', title: 'Email and calendar' },
   { id: 'other', title: 'Other settings' },
 ] as const;
 
@@ -855,6 +857,10 @@ const SettingsPage: React.FC = () => {
               <Box key={i} sx={{ flex: 1, bgcolor: z }} />
             ))}
           </Box>
+        </Section>
+
+        <Section id="activity" title="Email and calendar">
+          <ScanPeriodSetting />
         </Section>
 
         <Section id="other" title="Other settings">

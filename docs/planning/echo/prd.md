@@ -954,6 +954,22 @@ The contact card opens with a **Dossier**, everything Echo knows about the perso
 - **Relationship** (T1): the tier, the last email and meeting, the next meeting, the emails and meetings of the last 12 months, the usual rhythm, threads awaiting a reply.
 - **Shared context**: favourite, its labels and segments, **colleagues** (other Contacts with the same organization or work email domain, at most 8, each opening their card), and its relations.
 
+### 4.20 Contacts: Scan Period and a Contact's Whole History (Proposed)
+
+On 2026-10-31 the Owner found a Contact they wrote to in 2015–2016 labelled "Never in touch": the activity reads only the last 12 months. They asked to set the scan period in Settings, and to search one Contact's history from their card without a time limit.
+
+#### FR-90: Scan period — Proposed
+**Settings → Email and calendar** sets how far back the activity scan (FR-12) reads Gmail and Calendar: **1 year** (the default), **2**, **3** or **5 years**. A change is saved at once and starts a full scan when Gmail or Calendar is connected. A longer period takes longer: the first scan and the weekly full scan read every message of the period (about 40 messages a second, at most 10,000 per year of the period). The figures "in the last 12 months", the score and the tiers stay 12 months; the last email, the last meeting and "Over a year ago" reach back the whole period, and "None found" means nothing in it. The period is a setting: **Forget** removes the activity, not the period.
+
+#### FR-91: A Contact's whole history — Proposed
+The dossier's **Relationship** offers **Search all history**: Echo searches the Owner's whole mailbox and calendar, with no date limit, for that Contact's addresses, and shows:
+- **emails from them**: how many, the first and the last date;
+- **emails to them** (the Owner's sent mail to, cc or bcc them): how many, the first and the last date;
+- **meetings** with them: how many, the first and the last, and the next one;
+- when it was checked, with **Search again**.
+
+The mail search needs email content (T2), because Gmail searches only with that permission; without it the history shows meetings only, and says so. Only counts and dates are kept, encrypted, until the activity is forgotten. Nothing of a message is read but its date.
+
 ## 5. Privacy Model
 
 Privacy is a product pillar, not a compliance appendix. The requirements in §4.10 and NFR-07, NFR-08 and NFR-11 implement it.
@@ -963,8 +979,8 @@ Privacy is a product pillar, not a compliance appendix. The requirements in §4.
 | Tier | What Echo reads | Default | Status |
 |---|---|---|---|
 | **T0: Base** | Google Contacts (read/write); the Owner's profile (and, from Phase 0, their email address, checked against the allowlist, FR-51) | On at sign-in | Built |
-| **T1: Touchpoints** | Gmail headers (From/To/Cc/date), Calendar events (time, attendees, title) | Off | Built |
-| **T2: Email content** | The permission (`gmail.readonly`, which replaces the T1 Gmail permission) allows reading the whole mailbox. Echo reads only the last 3 emails from each Contact the Owner chooses (up to 10), and, for each flight in Atlas, the newest 20 mails that name both its airports (FR-73). When the Owner asks to find a Contact's email (FR-78), it reads the sender (name and address) of the newest 25 mails Gmail finds from that Contact's names, and nothing else of them. When the Owner asks a Contact's dossier for the links in their signatures (FR-87), it reads that Contact's last 3 emails and keeps only the links. It processes them in memory and never stores them; of a flight's mails it keeps only the flight number, the scheduled times and which mail (subject, sender, date). | Off | Built (flights, find email: Proposed) |
+| **T1: Touchpoints** | Gmail headers (From/To/Cc/date), Calendar events (time, attendees, title), over the scan period the Owner sets (1 year by default, up to 5, FR-90); for a Contact's whole history (FR-91), their meetings at any date | Off | Built (the period and the history: Proposed) |
+| **T2: Email content** | The permission (`gmail.readonly`, which replaces the T1 Gmail permission) allows reading the whole mailbox. Echo reads only the last 3 emails from each Contact the Owner chooses (up to 10), and, for each flight in Atlas, the newest 20 mails that name both its airports (FR-73). When the Owner asks to find a Contact's email (FR-78), it reads the sender (name and address) of the newest 25 mails Gmail finds from that Contact's names, and nothing else of them. When the Owner asks a Contact's dossier for the links in their signatures (FR-87), it reads that Contact's last 3 emails and keeps only the links. When the Owner asks a Contact's whole history (FR-91), it searches all mail from and to that Contact's addresses and reads only the number of messages and the date of the first and the last; it keeps those counts and dates. It processes them in memory and never stores them; of a flight's mails it keeps only the flight number, the scheduled times and which mail (subject, sender, date). | Off | Built (flights, find email: Proposed) |
 | **T3: Life sources** | Each Atlas source connected or imported separately (Timeline, Sports Tracker, health exports, OneDrive photo metadata) | Off per source | Built |
 | **T4: Faces** | Face detections and templates computed from Photos | Off; separate biometric consent | Proposed |
 

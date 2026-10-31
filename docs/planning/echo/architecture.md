@@ -1515,6 +1515,33 @@ No rule in this section or in §5G calls a language model: favourites, labels, s
   - Clearbit, People Data Labs and similar enrichment services (rejected: paid, and they sell profiles assembled about people without their part);
   - reading the signatures with Gemini (rejected: the Owner asked for traditional methods; links have a fixed form).
 
+## 5H. Scan Period and a Contact's Whole History (FR-90, FR-91)
+
+### AD-47 — The scan period is a per-account setting beside the snapshot; a Contact's whole history is counted by Gmail search and Calendar search, and only counts and dates are kept
+
+- **Binds:** `ActivityWorker` (the period, the message cap), `ActivityStore` (`activity-window:{user}`, `activity-history:{user}`), `ActivityController` (`PUT /api/activity/window`, `GET`/`POST /api/activity/history`), `ContactHistoryReader`, the Settings page's **Email and calendar** section, `Dossier.tsx`; FR-90, FR-91.
+- **Prevents:**
+  - "Never in touch" for a Contact whose mail is older than the period;
+  - a period lost with **Forget**;
+  - a history that reads message content;
+  - an unbounded request on a mailbox of a million messages.
+- **Rule:**
+  1. **Period.** `years` ∈ {1, 2, 3, 5}, default 1, stored unencrypted (it says nothing about anyone) at `activity-window:{user}` without expiry. `PUT /api/activity/window {years}` saves it and, when Gmail or Calendar is connected, queues a **full** scan (`ActivityJob.Full`). The status (`GET /api/activity/status`) returns `windowYears`. **Forget** (`DELETE /api/activity`) removes the snapshot and the histories, not the period.
+  2. **The scan with a period.** The worker reads the period at the start of each job: the full mail scan reads back to `now − years × 365 days`, at most **10,000 × years** messages (as before, `Since` is the oldest message read when the cap stops it); the calendar reads from the same date to 60 days ahead. A period changed between full scans takes effect at the queued full scan; incremental scans keep the stored data. The 12-month figures (`emails12m`, `meetings12m`, the score, the tiers) are unchanged: they count the last 12 months of `emailMonths`/`meetingMonths`.
+  3. **History request.** `POST /api/activity/history {contact, emails}`: `contact` is the Contact's resource name, `emails` its addresses, at most 10, each a plain address (the pattern of `SignatureReader`), lower-cased and distinct; none valid → 400 `INVALID_INPUT`. Mail is searched when `gmail.readonly` (T2) was granted (Gmail's `q` is refused with `gmail.metadata`); the calendar when the Calendar scope was; neither → 403 `NOT_CONNECTED`. The answer is the stored record.
+  4. **Mail counts** (`ContactHistoryReader.CountMailAsync`), two queries:
+     - received: `from:(a OR b …) -in:chats`;
+     - sent: `in:sent {to:a cc:a bcc:a to:b …} -in:chats`.
+     Each is listed by `messages.list` (500 ids a page, `fields=messages/id,nextPageToken`) to the end, at most **20,000** ids (then `capped`, shown as "20,000+"). The first id of the first page is the newest message and the last id listed the oldest: only those two are read (`messages.get`, `format=minimal`, `fields=internalDate`). No header or body is read.
+  5. **Meetings** (`ContactHistoryReader.CountMeetingsAsync`): for each address, `events.list` on the primary calendar with `q` = the address, `singleEvents`, no `timeMin`, 2,500 a page, at most 4 pages; an event counts when an attendee's address equals one of the Contact's (Calendar's `q` is a free-text match), it is not cancelled, it has 2 to 20 attendees, and the Owner did not decline it (the rules of the activity scan). Events are distinct by id. Past events give the count, the first and the last; the earliest future one is **next**.
+  6. **The record** `{checkedAt, mail: searched | not_allowed, calendar: searched | not_allowed, received {count, capped, first, last}, sent {…}, meetings {count, first, last, next}}`, kept encrypted (protector `ContactsApi.Activity.History.v1`) in one document per user keyed by the Contact's resource name, at most **2,000** records (the oldest checked dropped), sliding 90 days as the snapshot. `GET /api/activity/history?contact=` returns a Contact's record or 204.
+  7. **The dossier.** Under the relationship lines: the record when there is one ("All history, checked 31 Oct 2026: 143 from them (Nov 2015 – Mar 2016) · 23 to them (Dec 2015 – Feb 2016) · 4 meetings (Jan – Mar 2016) · next 12 Nov 2026") with **Search again**; otherwise **Search all history**. Without T2 it says that mail needs email content and the history holds meetings only; without T2 or Calendar the button is replaced by that explanation. A Contact without an address has no button.
+- **Alternatives considered:**
+  - one unlimited full scan instead of a per-Contact search (rejected: a 10-year mailbox is hundreds of thousands of messages, at 40 a second hours of quota, for every Contact at once);
+  - reading every message's date for a by-year chart (rejected for now: 5 quota units a message; the two ends answer "when were we in touch");
+  - `resultSizeEstimate` for the counts (rejected: Gmail documents it as an estimate);
+  - the period in the encrypted snapshot (rejected: **Forget** would erase a setting).
+
 ## 6. Consistency Conventions
 
 | Concern | Convention |
@@ -1692,6 +1719,8 @@ routing/regions.txt                  # Geofabrik regions built into the tiles im
 | FR-87 Links in their signatures | Proposed | `POST /api/profiles/signatures`, `SignatureLinks` | AD-46 | 1 |
 | FR-88 Into the Contact | Proposed | `Dossier.tsx`, the Review links dialog | AD-46, AD-5 | 1 |
 | FR-89 The dossier | Proposed | `model/dossier.ts`, `Dossier.tsx` | AD-46 | 1 |
+| FR-90 Scan period | Proposed | `ActivityWorker`, `ActivityStore` window, `PUT /api/activity/window`, Settings → Email and calendar | AD-47 | 1 |
+| FR-91 A Contact's whole history | Proposed | `ContactHistoryReader`, `/api/activity/history`, `Dossier.tsx` | AD-47 | 1 |
 | FR-67 Reviews from a scheduled Takeout on Drive | Proposed | `OptIns.Takeout`, `GoogleDriveTakeout`, `GoogleReviewsParser`, `TakeoutDriveService`, `TakeoutDriveWorker`, `/api/atlas/connections/google-drive`, the Google Drive tab | AD-40, AD-39 | 1 |
 | FR-60 Routes abroad | Proposed | `routing/regions.txt`, region outlines, per-region counts | AD-32 | R3 |
 

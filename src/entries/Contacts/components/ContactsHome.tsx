@@ -359,6 +359,7 @@ const SignedInHome: React.FC = () => {
       segmentCtx,
       gravatar: profiles.byContact,
       signaturesAllowed: !!activity.status?.connected.signatures,
+      calendarAllowed: !!activity.status?.connected.calendar,
       onOpenCard: setCardFor,
     }),
     [
