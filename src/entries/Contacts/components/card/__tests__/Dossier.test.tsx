@@ -72,19 +72,24 @@ describe('the dossier (AD-46 rule 6)', () => {
 
   it("lists only this contact's awaiting threads, not the whole mailbox's", () => {
     const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
-    const thread = (threadId: string, subject: string, counterpart: string) =>
+    const thread = (threadId: string, subject: string, ...counterparts: string[]) =>
       ({
         threadId,
         subject,
         lastAt: daysAgo(5),
         lastFromMe: false,
         inInbox: true,
-        counterparts: [counterpart],
+        counterparts,
       }) as unknown as DossierData['threads'][number];
+    // A second address, in upper case on the contact (counterparts come lower-cased)
+    const both = {
+      ...dana,
+      emailAddresses: [{ value: 'dana@acme.com' }, { value: 'Dana.Cohen@Gmail.com' }],
+    } as Contact;
     render(
       <Dossier
-        contact={dana}
-        draft={dana}
+        contact={both}
+        draft={both}
         onDraftChange={jest.fn()}
         groups={{}}
         data={data({
@@ -92,11 +97,14 @@ describe('the dossier (AD-46 rule 6)', () => {
           threads: [
             thread('t1', 'Budget review', 'dana@acme.com'),
             thread('t2', 'Your car has been selected', 'noreply@rental.example'),
+            // She is not the first counterpart
+            thread('t3', 'Trip plan', 'ron@acme.com', 'dana.cohen@gmail.com'),
           ],
         })}
       />,
     );
     expect(screen.getByText(/Budget review/)).toBeTruthy();
+    expect(screen.getByText(/Trip plan/)).toBeTruthy();
     expect(screen.queryByText(/Your car has been selected/)).toBeNull();
   });
 
