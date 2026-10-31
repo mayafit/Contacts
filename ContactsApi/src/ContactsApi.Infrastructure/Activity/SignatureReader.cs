@@ -81,12 +81,17 @@ public class SignatureReader
                     break;
                 }
 
-                matched++;
                 var get = _gmail.Users.Messages.Get("me", id);
                 get.Format = UsersResource.MessagesResource.GetRequest.FormatEnum.Full;
                 get.Fields = "internalDate,payload(mimeType,headers,body/data,parts(mimeType,headers,body/data,parts(mimeType,headers,body/data,parts(mimeType,headers,body/data))))";
                 var m = await get.ExecuteAsync(ct);
-                if (m == null || IsInvitation(m.Payload))
+                if (m == null)
+                {
+                    continue;
+                }
+
+                matched++;
+                if (IsInvitation(m.Payload))
                 {
                     continue;
                 }

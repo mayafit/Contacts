@@ -110,6 +110,7 @@ describe('the dossier (AD-46 rule 6)', () => {
 
   it('reads the signature links on request', async () => {
     client.signatureLinks.mockResolvedValue({
+      matched: 3,
       emails: 3,
       urls: ['https://x.com/dana', 'https://promo.example.com'],
     });

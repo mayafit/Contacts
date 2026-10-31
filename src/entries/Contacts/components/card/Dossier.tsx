@@ -205,7 +205,7 @@ const Dossier: React.FC<{
                     ? 'No email from them in the last 3 years.'
                     : signature.emails === 0
                       ? `Their last ${signature.matched} emails were meeting invitations or had no text of their own.`
-                      : `Read their last ${signature.emails} emails: ${signatureFound ? `${signatureFound} links` : 'no profile link'} in their signatures.`}
+                      : `Read ${signature.emails} of their latest emails: ${signatureFound ? `${signatureFound} links` : 'no profile link'} in their signatures.`}
                 </Typography>
               )}
               {signature.state === 'error' && (
