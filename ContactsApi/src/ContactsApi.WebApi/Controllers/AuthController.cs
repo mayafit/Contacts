@@ -29,7 +29,8 @@ public class AuthController : ControllerBase
     /// <summary>The pages an opt-in returns to (the Drive opt-in and email content from a flight return to Atlas)</summary>
     private static readonly HashSet<string> OptInReturns = new(StringComparer.Ordinal)
     {
-        "/contacts?connected=activity", "/contacts?connected=signatures", "/atlas?connected=takeout", "/atlas?connected=mail"
+        "/contacts?connected=activity", "/contacts?connected=signatures", "/atlas?connected=takeout", "/atlas?connected=mail",
+        "/contacts?connected=other"
     };
 
     private readonly ILogger<AuthController> _logger;
@@ -69,9 +70,11 @@ public class AuthController : ControllerBase
     /// <param name="back">Where an email-content opt-in returns: atlas (from a flight) or Contacts</param>
     /// <param name="again">Second step: ask for the scopes the callback found missing</param>
     /// <param name="hint">Account to sign in (second step)</param>
+    /// <param name="other">Also ask to read Other contacts (opt-in, AD-48)</param>
     public async Task<IActionResult> Login(
         [FromQuery] bool consent = false, [FromQuery] bool activity = false, [FromQuery] bool signatures = false,
-        [FromQuery] bool again = false, [FromQuery] string? hint = null, [FromQuery] bool takeout = false, [FromQuery] string? back = null)
+        [FromQuery] bool again = false, [FromQuery] string? hint = null, [FromQuery] bool takeout = false, [FromQuery] string? back = null,
+        [FromQuery] bool other = false)
     {
         try
         {
@@ -119,8 +122,15 @@ public class AuthController : ControllerBase
                 HttpContext.Session.SetString(AfterLoginKey, "/atlas?connected=takeout");
             }
 
+            if (other)
+            {
+                optIns.OtherContacts = true;
+                consent = true;
+                HttpContext.Session.SetString(AfterLoginKey, "/contacts?connected=other");
+            }
+
             HttpContext.Session.SetString(RequestedKey, System.Text.Json.JsonSerializer.Serialize(optIns));
-            var scopes = desired != null && !activity && !signatures && !takeout
+            var scopes = desired != null && !activity && !signatures && !takeout && !other
                 ? desired.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList()
                 : ScopePreferences.ScopesFor(baseScopes, optIns);
             HttpContext.Session.Remove(DesiredScopesKey);
@@ -330,13 +340,14 @@ public class AuthController : ControllerBase
 
             // What the user ended up granting is their opt-in (they can untick boxes)
             var requested = RequestedOptIns();
-            if (requested.Activity || requested.Signatures || requested.Takeout || savedOptIns.Activity || savedOptIns.Signatures
-                || savedOptIns.Takeout)
+            if (requested.Activity || requested.Signatures || requested.Takeout || requested.OtherContacts
+                || savedOptIns.Activity || savedOptIns.Signatures || savedOptIns.Takeout || savedOptIns.OtherContacts)
             {
                 await _prefs.SaveAsync(payload.Subject, new OptIns
                 {
                     Signatures = grantedScopes.Contains(ActivityScopes.GmailRead),
                     Takeout = grantedScopes.Contains(TakeoutScopes.Drive),
+                    OtherContacts = grantedScopes.Contains(OtherContactsScopes.Read),
                     Activity = grantedScopes.Contains(ActivityScopes.Gmail) || grantedScopes.Contains(ActivityScopes.Calendar)
                         || (grantedScopes.Contains(ActivityScopes.GmailRead) && (requested.Activity || savedOptIns.Activity))
                 });

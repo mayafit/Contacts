@@ -53,6 +53,8 @@ builder.Services.AddSingleton<ProfileStore>();
 builder.Services.AddSingleton<ProfileQueue>();
 builder.Services.AddHostedService<ProfileWorker>();
 builder.Services.AddSingleton<ScopePreferences>();
+// Dismissed suggestions from Other contacts (AD-48 rule 7)
+builder.Services.AddSingleton<OtherContactsStore>();
 
 // Assistant: Gemini key from Vault (Gemini__ApiKey); without it the assistant reports itself disabled
 builder.Services.Configure<ContactsApi.WebApi.Controllers.GeminiOptions>(builder.Configuration.GetSection("Gemini"));

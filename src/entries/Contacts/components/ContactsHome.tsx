@@ -123,6 +123,7 @@ import { buildActivityIndex } from '../model/activity';
 import ActivitySection from './insights/ActivitySection';
 import ReachOutSection from './insights/ReachOutSection';
 import SuggestEmailsDialog from './insights/SuggestEmailsDialog';
+import OtherContactsDialog from './insights/OtherContactsDialog';
 import SignatureDialog from './insights/SignatureDialog';
 import AssistantPanel from './assistant/AssistantPanel';
 import MobileContactList from './table/MobileContactList';
@@ -202,6 +203,7 @@ const SignedInHome: React.FC = () => {
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [phoneSyncOpen, setPhoneSyncOpen] = useState(false);
   const [suggestOpen, setSuggestOpen] = useState(false);
+  const [otherOpen, setOtherOpen] = useState(false);
   // Signature reader: the most-emailed contacts ('auto'), or chosen ones
   const [signatureTargets, setSignatureTargets] = useState<Contact[] | 'auto' | null>(null);
   // A message for the assistant to answer as soon as it opens (e.g. "Draft")
@@ -249,6 +251,15 @@ const SignedInHome: React.FC = () => {
         setToast('Email content was not allowed');
       } else {
         setSignatureTargets('auto');
+      }
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+    if (params.get('connected') === 'other') {
+      setView('insights');
+      if (params.get('declined')) {
+        setToast('Other contacts were not allowed');
+      } else {
+        setOtherOpen(true);
       }
       window.history.replaceState(null, '', window.location.pathname);
     }
@@ -1217,6 +1228,7 @@ const SignedInHome: React.FC = () => {
               onShowDuplicates={() => setView('duplicates')}
               orgInsights={orgInsights}
               onReviewDomain={setReviewDomain}
+              onReviewOtherContacts={() => setOtherOpen(true)}
               activitySection={
                 <>
                   <FavouritesCard
@@ -1393,6 +1405,28 @@ const SignedInHome: React.FC = () => {
           if (count > 0) {
             setToast(`Added ${count} emails. Re-reading mail so their history appears…`);
             // Their past mail is attributed only by a full scan
+            void activity.refresh(true);
+          }
+        }}
+      />
+      <OtherContactsDialog
+        open={otherOpen}
+        onClose={() => setOtherOpen(false)}
+        contacts={contacts}
+        allContacts={allContacts}
+        groups={groups}
+        people={activity.people}
+        onApplied={(emailsAdded, created) => {
+          if (emailsAdded + created === 0) {
+            return;
+          }
+          const parts = [
+            emailsAdded ? `updated ${emailsAdded} contacts` : '',
+            created ? `saved ${created} new contacts` : '',
+          ].filter(Boolean);
+          setToast(`Other contacts: ${parts.join(', ')}.`);
+          if (emailsAdded > 0 && activity.connected) {
+            // Their past mail is attributed only by a full scan (AD-48 rule 6)
             void activity.refresh(true);
           }
         }}

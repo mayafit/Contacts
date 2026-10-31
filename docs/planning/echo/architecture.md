@@ -1543,6 +1543,39 @@ No rule in this section or in §5G calls a language model: favourites, labels, s
   - `resultSizeEstimate` for the counts (rejected: Gmail documents it as an estimate);
   - the period in the encrypted snapshot (rejected: **Forget** would erase a setting).
 
+## 5I. Suggestions from Other Contacts (FR-92)
+
+### AD-48 — Other contacts are read live through an opt-in read-only scope, matched in the browser by address, phone and name, and only the dismissals are kept
+
+- **Binds:** `OptIns.OtherContacts` and `OtherContactsScopes.Read` (`contacts.other.readonly`), `AuthController` (`?other=true`), `OtherContactsReader`, `OtherContactsStore`, `OtherContactsController` (`GET /api/other-contacts`, `GET`/`POST`/`DELETE /api/other-contacts/dismissed`), `model/otherContacts.ts`, `OtherContactsDialog.tsx`, the Insights card **Other contacts**; FR-92.
+- **Prevents:**
+  - a wrong address on a Contact from a loose name match, and the wrong activity it then brings;
+  - no-reply, notification and relay addresses offered as people;
+  - the same rejected suggestion on every visit;
+  - a copy of Other contacts kept in Echo's storage.
+- **Rule:**
+  1. **Permission.** A separate opt-in, like email content: `GET /api/auth/login?other=true` asks for `https://www.googleapis.com/auth/contacts.other.readonly` with the Owner's other opt-ins and comes back to `/contacts?connected=other` (declined: `&declined=1`, the sign-in as it was). The opt-in is saved (`OptIns.OtherContacts`) and asked again at later sign-ins (`ScopePreferences.ScopesFor`; `FromScopes` for accounts from before opt-ins were saved).
+  2. **Reading.** `GET /api/other-contacts`; without the scope in the session's grant, 403 `NOT_CONNECTED`. `otherContacts.list` with `readMask=names,emailAddresses,phoneNumbers`, 1,000 a page, at most **20,000** entries (then `capped`). A rate limit is retried 3 times with back-off (2, 4, 8 s) and then 502 `READ_FAILED` "busy"; Google refusing the token is 403 `NOT_CONNECTED`. Each entry: the resource name; the display name (dropped when it contains `@`, since Gmail then stored an address as the name); the addresses, lower-cased, plain (the pattern of AD-47 rule 3), distinct, automated ones removed (rule 3); the phones as Google gives them. An entry with no address left is dropped. The answer is `{entries, read, automated, capped}`. Nothing is stored on the server.
+  3. **Automated addresses** (`OtherContactsReader.IsAutomated`), never suggested:
+     - the local part (before any `+`) is a role name: `noreply`, `no-reply`, `no_reply`, `donotreply`, `do-not-reply`, `mailer-daemon`, `postmaster`, `bounce(s)`, `notification(s)`, `notify`, `alert(s)`, `newsletter(s)`, `news`, `info`, `support`, `service`, `billing`, `invoice(s)`, `receipt(s)`, `order(s)`, `marketing`, `updates`, `calendar-notification`, or starts with `noreply`, `no-reply` or `bounce`;
+     - the local part holds a run of **8 or more digits** (relay addresses such as `1323111618-zkwq…`) or is longer than **40** characters;
+     - the domain is a relay: `guest.booking.com`, `facebookmail.com`, `reply.github.com`, `reply.linkedin.com`, `docs.google.com`, `calendar.google.com`, `resource.calendar.google.com`, `group.calendar.google.com`, or starts with `reply.`, `bounce.` or `bounces.`.
+  4. **Matching** (`buildOtherSuggestions`, pure, in the browser). Targets are the active Contacts (not those in the app's Trash); an address on **any** Contact, Trash included, is known and never suggested again. For each entry, in this order:
+     1. **address**: an entry address that is on exactly one active Contact (reason `email`);
+     2. **phone**: an entry phone whose `phoneKey` (the last 9 digits) is on exactly one active Contact (reason `phone`);
+     3. **name**: the entry's name as a set of two or more words (search folding, lower case, every non-letter a space) equal to the word set of one of a Contact's `nameVariants` (display name; given + family; given + middle + family; phonetic name; nickname + family), on exactly one Contact (reason `name`); else the address's local part split at `.`, `_` and `-`, digits dropped, two or more words, equal to such a set (reason `address`).
+     The first step that finds exactly one Contact decides. A step that finds **several** stops the matching for that entry (counted as `ambiguous`) and never falls through to a weaker step. A single word never matches.
+  5. **Suggestions.**
+     - Matched: the entry's addresses not known on any Contact and its phones whose key is not on that Contact. Nothing new → no suggestion. Several entries for one Contact merge into one row (reasons kept, strongest first: `email`, `phone`, `name`, `address`). The row's kind is `missing` when the Contact has no address, else `extra`; `missing` rows come first, then by name.
+     - Unmatched with new addresses: a **save** row when the activity (FR-12) shows the Owner sent them at least one email or met them at least once in the scan period (summed over the entry's addresses), ordered by `sent×3 + meetings×3 + received`, at most **100**. Without activity the save list is empty and says that it needs Gmail & Calendar.
+  6. **Applying.** The Owner ticks rows (none is ticked in advance) and applies them one by one through the assistant's change path: `resolveChange` with `addEmails` (type from `emailType`: `home` on a personal mail service, else `work`) and `addPhones` (`mobile`) → `buildPatch` → `updateContact`; a save is `newContactPatch` with `splitFullName(name)` → `createContact` → `contactAdded`. A row that fails stays, with the reason. When addresses were added, a full activity scan is queued (their past mail is attributed only by a full scan, as FR-78's dialog does).
+  7. **Dismissals.** Key `u:{resource name}:{the row's values, sorted, joined by ','}` for an update, `n:{the first address}` for a save, so a row whose values change shows again. Stored per user, encrypted (protector `ContactsApi.OtherContacts.Dismissed.v1`), at `other-contacts-dismissed:{user}`, at most **5,000** keys (the oldest dropped), sliding **365** days as the opt-ins; keys longer than 600 characters are refused. `POST {keys}` adds, `GET` lists, `DELETE` clears (**Show dismissed**).
+- **Alternatives considered:**
+  - Google's `copyOtherContactToMyContactsGroup` for a save (rejected: a second write path outside the store, and it copies Gmail's display name unchecked; the create path is the app's own);
+  - an automatic merge (rejected: names in Other contacts are reversed, partial or addresses; the Owner asked for review);
+  - matching on the server with `NameMatcher` (rejected: it would need the Owner's whole Contacts list in each request; the browser already holds the Contacts, the Trash and the phone key);
+  - keeping a copy of Other contacts (rejected: a read takes seconds, and a copy is another dataset to protect and to forget).
+
 ## 6. Consistency Conventions
 
 | Concern | Convention |
@@ -1722,6 +1755,7 @@ routing/regions.txt                  # Geofabrik regions built into the tiles im
 | FR-89 The dossier | Proposed | `model/dossier.ts`, `Dossier.tsx` | AD-46 | 1 |
 | FR-90 Scan period | Proposed | `ActivityWorker`, `ActivityStore` window, `PUT /api/activity/window`, Settings → Email and calendar | AD-47 | 1 |
 | FR-91 A Contact's whole history | Proposed | `ContactHistoryReader`, `/api/activity/history`, `Dossier.tsx` | AD-47 | 1 |
+| FR-92 Suggestions from Other contacts | Proposed | `OtherContactsReader`, `OtherContactsStore`, `/api/other-contacts`, `model/otherContacts.ts`, `OtherContactsDialog.tsx` | AD-48 | 1 |
 | FR-67 Reviews from a scheduled Takeout on Drive | Proposed | `OptIns.Takeout`, `GoogleDriveTakeout`, `GoogleReviewsParser`, `TakeoutDriveService`, `TakeoutDriveWorker`, `/api/atlas/connections/google-drive`, the Google Drive tab | AD-40, AD-39 | 1 |
 | FR-60 Routes abroad | Proposed | `routing/regions.txt`, region outlines, per-region counts | AD-32 | R3 |
 

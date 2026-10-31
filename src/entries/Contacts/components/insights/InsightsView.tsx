@@ -26,6 +26,8 @@ export interface InsightsViewProps {
   onReviewDomain: (insight: DomainInsight) => void;
   /** Keeping-in-touch section, shown under the headline tiles */
   activitySection?: React.ReactNode;
+  /** Open the suggestions from Other contacts (FR-92) */
+  onReviewOtherContacts?: () => void;
 }
 
 const fmt = new Intl.NumberFormat('en-US');
@@ -134,6 +136,7 @@ const InsightsView: React.FC<InsightsViewProps> = ({
   orgInsights,
   onReviewDomain,
   activitySection,
+  onReviewOtherContacts,
 }) => {
   const [allDomains, setAllDomains] = useState(false);
   const toFix = orgInsights.reduce((s, d) => s + d.needsUpdate.length, 0);
@@ -208,6 +211,27 @@ const InsightsView: React.FC<InsightsViewProps> = ({
       </Box>
 
       {activitySection}
+
+      {onReviewOtherContacts && (
+        <Card
+          title="Other contacts"
+          subtitle="People Gmail saved by itself when you wrote to someone not in your contacts"
+          sx={{ mb: 2 }}
+        >
+          <Typography variant="body2" sx={{ color: tokens.textSecondary }}>
+            Find missing emails and phones for your contacts, and people you write to who are not
+            saved yet. You review every suggestion.
+          </Typography>
+          <Button
+            size="small"
+            endIcon={<ArrowForward />}
+            onClick={onReviewOtherContacts}
+            sx={{ mt: 1, ml: -1 }}
+          >
+            Review suggestions
+          </Button>
+        </Card>
+      )}
 
       {orgInsights.length > 0 && (
         <Card

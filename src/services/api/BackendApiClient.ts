@@ -155,6 +155,27 @@ export interface MailCount {
   last?: string | null;
 }
 
+/** One of Google's Other contacts, automated addresses removed (AD-48 rule 2) */
+export interface OtherContactEntry {
+  resourceName: string;
+  /** Null when Gmail stored an address as the name */
+  name?: string | null;
+  /** Lower-case plain addresses */
+  emails: string[];
+  phones: string[];
+}
+
+/** A read of Other contacts */
+export interface OtherContactsRead {
+  entries: OtherContactEntry[];
+  /** Entries Google returned */
+  read: number;
+  /** Entries left out because every address was automated */
+  automated: number;
+  /** The read stopped at 20,000 */
+  capped: boolean;
+}
+
 /** A Contact's whole history (AD-47 rule 6) */
 export interface ContactHistory {
   checkedAt: string;
@@ -1779,6 +1800,59 @@ export class BackendApiClient {
         body: JSON.stringify({ contact, emails }),
       }),
       'Failed to search the history',
+    );
+  }
+
+  /** Signs in to Google again, allowing Other contacts to be read (back to /contacts?connected=other) */
+  connectOtherContacts(): void {
+    window.location.href = `${this.baseUrl}/auth/login?other=true`;
+  }
+
+  /**
+   * Google's Other contacts, read live (AD-48 rule 2); 403 NOT_CONNECTED without the opt-in
+   * @returns The entries
+   */
+  async getOtherContacts(): Promise<OtherContactsRead> {
+    return unwrap(
+      await this.request<OtherContactsRead>('/other-contacts'),
+      'Failed to read Other contacts',
+    );
+  }
+
+  /**
+   * The dismissed suggestion keys (AD-48 rule 7)
+   * @returns Keys
+   */
+  async getDismissedOther(): Promise<string[]> {
+    return unwrap(
+      await this.request<string[]>('/other-contacts/dismissed'),
+      'Failed to read dismissed suggestions',
+    );
+  }
+
+  /**
+   * Dismiss suggestions
+   * @param keys - Suggestion keys
+   * @returns All dismissed keys
+   */
+  async dismissOther(keys: string[]): Promise<string[]> {
+    return unwrap(
+      await this.request<string[]>('/other-contacts/dismissed', {
+        method: 'POST',
+        body: JSON.stringify({ keys }),
+      }),
+      'Failed to dismiss',
+    );
+  }
+
+  /**
+   * Bring every dismissed suggestion back
+   * @returns No keys
+   */
+  async clearDismissedOther(): Promise<string[]> {
+    return unwrap(
+      await this.request<string[]>('/other-contacts/dismissed', { method: 'DELETE' }),
+      'Failed to show dismissed suggestions',
     );
   }
 
