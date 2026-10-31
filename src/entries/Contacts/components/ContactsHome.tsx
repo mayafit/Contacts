@@ -1416,16 +1416,23 @@ const SignedInHome: React.FC = () => {
         allContacts={allContacts}
         groups={groups}
         people={activity.people}
-        onApplied={(emailsAdded, created) => {
-          if (emailsAdded + created === 0) {
+        ready={
+          !loading &&
+          allContacts.length > 0 &&
+          (!!activity.error ||
+            (activity.status !== null &&
+              (activity.people !== null || !(activity.status.peopleCount > 0))))
+        }
+        onApplied={(updated, created, emailsAdded) => {
+          if (updated + created === 0) {
             return;
           }
           const parts = [
-            emailsAdded ? `updated ${emailsAdded} contacts` : '',
+            updated ? `updated ${updated} contacts` : '',
             created ? `saved ${created} new contacts` : '',
           ].filter(Boolean);
           setToast(`Other contacts: ${parts.join(', ')}.`);
-          if (emailsAdded > 0 && activity.connected) {
+          if (emailsAdded && activity.connected) {
             // Their past mail is attributed only by a full scan (AD-48 rule 6)
             void activity.refresh(true);
           }

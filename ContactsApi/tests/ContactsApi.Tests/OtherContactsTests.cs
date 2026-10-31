@@ -33,6 +33,7 @@ public class OtherContactsTests
     [InlineData("dana+work@gmail.com")]
     [InlineData("support.team.lead@example.com")]
     [InlineData("david1975@walla.co.il")]
+    [InlineData("0521234567@gmail.com")]
     public void People_are_not_automated(string email) =>
         Assert.False(OtherContactsReader.IsAutomated(email));
 
@@ -90,6 +91,29 @@ public class OtherContactsTests
         Assert.DoesNotContain(OtherContactsScopes.Read, ScopePreferences.ScopesFor(new[] { "openid" }, new OptIns { Activity = true }));
         Assert.True(ScopePreferences.FromScopes(new[] { OtherContactsScopes.Read }).OtherContacts);
         Assert.True(new OptIns().With(new OptIns { OtherContacts = true }).OtherContacts);
+    }
+
+    [Fact]
+    public void Only_a_refused_token_or_scope_asks_to_allow_again()
+    {
+        static global::Google.GoogleApiException Error(int status, string message, string? reason = null) =>
+            new("people", message)
+            {
+                HttpStatusCode = (System.Net.HttpStatusCode)status,
+                Error = new global::Google.Apis.Requests.RequestError
+                {
+                    Message = message,
+                    Errors = reason == null
+                        ? null
+                        : new List<global::Google.Apis.Requests.SingleError> { new() { Reason = reason } }
+                }
+            };
+
+        Assert.True(OtherContactsReader.IsRefused(Error(401, "Invalid Credentials")));
+        Assert.True(OtherContactsReader.IsRefused(Error(403, "Request had insufficient authentication scopes.")));
+        Assert.True(OtherContactsReader.IsRefused(Error(403, "Forbidden", "insufficientPermissions")));
+        Assert.False(OtherContactsReader.IsRefused(Error(403, "People API has not been used in project 1 before or it is disabled", "accessNotConfigured")));
+        Assert.False(OtherContactsReader.IsRefused(Error(500, "Backend Error")));
     }
 
     private static OtherContactsStore Store(IDistributedCache cache) =>

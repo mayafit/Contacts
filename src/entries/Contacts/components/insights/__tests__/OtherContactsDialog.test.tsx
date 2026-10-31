@@ -39,7 +39,7 @@ const edna = {
   names: [{ givenName: 'Edna', familyName: 'Abergel', displayName: 'Edna Abergel' }],
 } as unknown as Contact;
 
-const open = (onApplied = jest.fn(), people: unknown = null) =>
+const open = (onApplied = jest.fn(), people: unknown = null, ready = true) =>
   render(
     <OtherContactsDialog
       open
@@ -48,6 +48,7 @@ const open = (onApplied = jest.fn(), people: unknown = null) =>
       allContacts={[edna]}
       groups={{}}
       people={people}
+      ready={ready}
       onApplied={onApplied}
     />,
   );
@@ -84,6 +85,14 @@ describe('suggestions from Other contacts', () => {
     expect(mockApi.connectOtherContacts).toHaveBeenCalled();
   });
 
+  it('suggests nothing until the contacts and the activity have loaded', async () => {
+    open(jest.fn(), null, false);
+    await waitFor(() => expect(mockApi.getOtherContacts).toHaveBeenCalled());
+    expect(screen.queryByRole('checkbox')).toBeNull();
+    expect(screen.queryByText(/No suggestions/)).toBeNull();
+    expect(screen.getByRole('progressbar')).toBeTruthy();
+  });
+
   it('nothing is ticked; applying a ticked row adds the address to the contact', async () => {
     const onApplied = jest.fn();
     open(onApplied);
@@ -93,7 +102,7 @@ describe('suggestions from Other contacts', () => {
     expect(screen.getByText(/People worth saving need Gmail/)).toBeTruthy();
     fireEvent.click(box);
     fireEvent.click(screen.getByRole('button', { name: 'Apply 1' }));
-    await waitFor(() => expect(onApplied).toHaveBeenCalledWith(1, 0));
+    await waitFor(() => expect(onApplied).toHaveBeenCalledWith(1, 0, true));
     const action = mockDispatch.mock.calls[0][0] as {
       arg: { resourceName: string; updates: { emailAddresses: { value: string; type: string }[] } };
     };
@@ -111,7 +120,7 @@ describe('suggestions from Other contacts', () => {
     await waitFor(() =>
       expect(screen.queryByRole('checkbox', { name: 'Add to Edna Abergel' })).toBeNull(),
     );
-    expect(mockApi.dismissOther).toHaveBeenCalledWith(['u:people/1:edna.abergel@bankleumi.co.il']);
+    expect(mockApi.dismissOther).toHaveBeenCalledWith(['email:edna.abergel@bankleumi.co.il']);
     fireEvent.click(screen.getByRole('button', { name: 'Show dismissed (1)' }));
     expect(await screen.findByRole('checkbox', { name: 'Add to Edna Abergel' })).toBeTruthy();
   });
@@ -124,7 +133,7 @@ describe('suggestions from Other contacts', () => {
     });
     fireEvent.click(await screen.findByRole('checkbox', { name: 'Save Avi Bar' }));
     fireEvent.click(screen.getByRole('button', { name: 'Apply 1' }));
-    await waitFor(() => expect(onApplied).toHaveBeenCalledWith(0, 1));
+    await waitFor(() => expect(onApplied).toHaveBeenCalledWith(0, 1, false));
     expect(mockApi.createContact).toHaveBeenCalledWith(
       expect.objectContaining({
         names: [expect.objectContaining({ givenName: 'Avi', familyName: 'Bar' })],

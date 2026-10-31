@@ -94,9 +94,11 @@ public class OtherContactsController : ControllerBase
             return SessionExpired();
         }
 
-        if (request?.Keys == null || request.Keys.Count == 0 || request.Keys.Count > 1000)
+        if (request?.Keys == null || request.Keys.Count == 0 || request.Keys.Count > 1000
+            || request.Keys.Any(k => string.IsNullOrWhiteSpace(k) || k.Length > OtherContactsStore.MaxKeyLength))
         {
-            return BadRequest(ApiResponse<object>.ErrorResponse("INVALID_INPUT", "Send 1 to 1,000 keys."));
+            return BadRequest(ApiResponse<object>.ErrorResponse(
+                "INVALID_INPUT", $"Send 1 to 1,000 keys of at most {OtherContactsStore.MaxKeyLength} characters."));
         }
 
         return Ok(ApiResponse<List<string>>.SuccessResponse(await _store.AddDismissedAsync(userId, request.Keys)));

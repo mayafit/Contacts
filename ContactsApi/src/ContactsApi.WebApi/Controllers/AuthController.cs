@@ -108,9 +108,9 @@ public class AuthController : ControllerBase
                 HttpContext.Session.SetString(AfterLoginKey, back == "atlas" ? "/atlas?connected=mail" : "/contacts?connected=signatures");
             }
 
-            // Drive is asked on top of a known account's opt-ins; signed out, they are not known
-            // and a consent for Drive alone would drop them
-            if (takeout && userId == null)
+            // Drive and Other contacts are asked on top of a known account's opt-ins; signed out,
+            // they are not known and a consent for one of them alone would drop them
+            if ((takeout || other) && userId == null)
             {
                 return RedirectToFrontend("/login?error=session");
             }

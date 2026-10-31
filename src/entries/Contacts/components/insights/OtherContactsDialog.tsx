@@ -52,8 +52,16 @@ export interface OtherContactsDialogProps {
   groups: Record<string, ContactGroup>;
   /** Activity per address, null without Gmail & Calendar */
   people: Record<string, PersonActivity> | null;
-  /** Called with how many contacts got an address, and how many were created */
-  onApplied: (emailsAdded: number, created: number) => void;
+  /**
+   * The contacts and the activity have loaded. Suggestions wait for it: an empty list
+   * would offer every correspondent as a new contact.
+   */
+  ready: boolean;
+  /**
+   * Called after applying: contacts updated, contacts created, and whether an address
+   * was added (its past mail needs a full scan)
+   */
+  onApplied: (updated: number, created: number, emailsAdded: boolean) => void;
 }
 
 const fmt = new Intl.NumberFormat('en-US');
@@ -70,8 +78,9 @@ const Row: React.FC<{
   checked: boolean;
   onCheck: (checked: boolean) => void;
   onDismiss: () => void;
+  disabled: boolean;
   error?: string;
-}> = ({ label, title, detail, checked, onCheck, onDismiss, error }) => (
+}> = ({ label, title, detail, checked, onCheck, onDismiss, disabled, error }) => (
   <Box
     sx={{
       display: 'flex',
@@ -85,6 +94,7 @@ const Row: React.FC<{
       size="small"
       checked={checked}
       onChange={(e) => onCheck(e.target.checked)}
+      disabled={disabled}
       inputProps={{ 'aria-label': label }}
       sx={{ mt: -0.5 }}
     />
@@ -102,9 +112,16 @@ const Row: React.FC<{
       )}
     </Box>
     <Tooltip title="Dismiss: don't suggest this again">
-      <IconButton size="small" aria-label={`Dismiss ${title}`} onClick={onDismiss}>
-        <Close fontSize="small" />
-      </IconButton>
+      <span>
+        <IconButton
+          size="small"
+          aria-label={`Dismiss ${title}`}
+          onClick={onDismiss}
+          disabled={disabled}
+        >
+          <Close fontSize="small" />
+        </IconButton>
+      </span>
     </Tooltip>
   </Box>
 );
@@ -121,6 +138,7 @@ const OtherContactsDialog: React.FC<OtherContactsDialogProps> = ({
   allContacts,
   groups,
   people,
+  ready,
   onApplied,
 }) => {
   const dispatch = useAppDispatch();
@@ -133,18 +151,18 @@ const OtherContactsDialog: React.FC<OtherContactsDialogProps> = ({
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [failed, setFailed] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
-  // Read once per opening: applying changes the contacts, which must not rebuild the
-  // list (and reset the ticks) while it runs; applying uses the latest contact
-  const lists = useRef({ contacts, allContacts, people });
-  lists.current = { contacts, allContacts, people };
-  const [snapshot, setSnapshot] = useState(lists.current);
+  // The list follows the contacts (an applied row drops out; ticks are keyed by row);
+  // applying uses the latest version of a contact
+  const lists = useRef(allContacts);
+  lists.current = allContacts;
 
   useEffect(() => {
     if (!open) {
       return;
     }
     let alive = true;
-    setSnapshot(lists.current);
+    setRead(null);
+    setDismissed(new Set());
     setLoading(true);
     setError(null);
     setNotConnected(false);
@@ -183,16 +201,10 @@ const OtherContactsDialog: React.FC<OtherContactsDialogProps> = ({
 
   const suggestions = useMemo(
     () =>
-      read
-        ? buildOtherSuggestions(
-            read.entries,
-            snapshot.contacts,
-            snapshot.allContacts,
-            snapshot.people,
-            dismissed,
-          )
+      read && ready
+        ? buildOtherSuggestions(read.entries, contacts, allContacts, people, dismissed)
         : null,
-    [read, snapshot, dismissed],
+    [read, ready, contacts, allContacts, people, dismissed],
   );
   const updates = (suggestions?.updates ?? []).filter((u) => !done.has(u.key));
   const saves = (suggestions?.saves ?? []).filter((s) => !done.has(s.key));
@@ -212,9 +224,9 @@ const OtherContactsDialog: React.FC<OtherContactsDialogProps> = ({
       return next;
     });
 
-  const dismiss = async (key: string) => {
+  const dismiss = async (keys: string[]) => {
     try {
-      setDismissed(new Set(await backendApiClient.dismissOther([key])));
+      setDismissed(new Set(await backendApiClient.dismissOther(keys)));
     } catch (e) {
       setError((e as Error).message || 'Failed to dismiss');
     }
@@ -231,7 +243,7 @@ const OtherContactsDialog: React.FC<OtherContactsDialogProps> = ({
 
   const applyUpdate = async (u: UpdateSuggestion) => {
     const current =
-      lists.current.allContacts.find((c) => c.resourceName === u.contact.resourceName) ?? u.contact;
+      lists.current.find((c) => c.resourceName === u.contact.resourceName) ?? u.contact;
     const res = resolveChange(
       current,
       {
@@ -261,7 +273,8 @@ const OtherContactsDialog: React.FC<OtherContactsDialogProps> = ({
 
   const apply = async () => {
     setBusy(true);
-    let emailsAdded = 0;
+    let updated = 0;
+    let emailsAdded = false;
     let created = 0;
     const ok = new Set(done);
     const errors: Record<string, string> = {};
@@ -269,9 +282,8 @@ const OtherContactsDialog: React.FC<OtherContactsDialogProps> = ({
       try {
         await applyUpdate(u);
         ok.add(u.key);
-        if (u.emails.length) {
-          emailsAdded += 1;
-        }
+        updated += 1;
+        emailsAdded = emailsAdded || u.emails.length > 0;
       } catch (e) {
         errors[u.key] = (e as Error).message || 'Not saved';
       }
@@ -288,7 +300,7 @@ const OtherContactsDialog: React.FC<OtherContactsDialogProps> = ({
     setDone(ok);
     setFailed(errors);
     setBusy(false);
-    onApplied(emailsAdded, created);
+    onApplied(updated, created, emailsAdded);
     if (Object.keys(errors).length === 0) {
       onClose();
     }
@@ -301,7 +313,8 @@ const OtherContactsDialog: React.FC<OtherContactsDialogProps> = ({
       title={getDisplayName(u.contact)}
       checked={checked.has(u.key)}
       onCheck={(on) => tick(u.key, on)}
-      onDismiss={() => void dismiss(u.key)}
+      onDismiss={() => void dismiss(u.keys)}
+      disabled={busy}
       error={failed[u.key]}
       detail={
         <>
@@ -340,7 +353,7 @@ const OtherContactsDialog: React.FC<OtherContactsDialogProps> = ({
           Other contacts are people Gmail saved by itself when you wrote to someone not in your
           contacts. Nothing is added until you tick it and apply; check that it is the same person.
         </Typography>
-        {loading && <CircularProgress size={24} />}
+        {(loading || (read && !ready)) && <CircularProgress size={24} />}
         {error && (
           <Alert severity="error" sx={{ mb: 2 }}>
             {error}
@@ -384,7 +397,8 @@ const OtherContactsDialog: React.FC<OtherContactsDialogProps> = ({
               title={s.name ?? s.emails[0]}
               checked={checked.has(s.key)}
               onCheck={(on) => tick(s.key, on)}
-              onDismiss={() => void dismiss(s.key)}
+              onDismiss={() => void dismiss(s.keys)}
+              disabled={busy}
               error={failed[s.key]}
               detail={
                 <>
@@ -400,7 +414,7 @@ const OtherContactsDialog: React.FC<OtherContactsDialogProps> = ({
           )),
           'Not in your contacts; you wrote to them or met them in the scan period.',
         )}
-        {read && !snapshot.people && (
+        {suggestions && !people && (
           <Typography variant="body2" sx={{ color: tokens.textMuted, mb: 1 }}>
             People worth saving need Gmail & Calendar connected on this page.
           </Typography>

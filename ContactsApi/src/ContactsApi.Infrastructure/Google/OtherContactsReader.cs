@@ -101,11 +101,14 @@ public class OtherContactsReader
         var domain = email[(at + 1)..];
         var plus = local.IndexOf('+');
         var role = plus > 0 ? local[..plus] : local;
+        // A relay has a long number among other text; a mobile number as the whole
+        // local part (0521234567@gmail.com) is a person
+        var relayNumber = LongDigits.IsMatch(local) && !local.All(char.IsDigit);
         return RoleNames.Contains(role)
             || role.StartsWith("noreply", StringComparison.Ordinal)
             || role.StartsWith("no-reply", StringComparison.Ordinal)
             || role.StartsWith("bounce", StringComparison.Ordinal)
-            || LongDigits.IsMatch(local)
+            || relayNumber
             || local.Length > 40
             || RelayDomains.Contains(domain)
             || domain.StartsWith("reply.", StringComparison.Ordinal)
@@ -185,6 +188,18 @@ public class OtherContactsReader
         return result;
     }
 
+    /// <summary>
+    /// The token or its scope was refused: 401, or 403 for a missing permission. Any other
+    /// 403 (the API disabled, a policy) is a failure, so the Owner is not sent round the
+    /// Allow sign-in for nothing.
+    /// </summary>
+    internal static bool IsRefused(global::Google.GoogleApiException ex) =>
+        (int)ex.HttpStatusCode == 401
+        || ((int)ex.HttpStatusCode == 403
+            && (ex.Error?.Errors?.Any(e => e.Reason is "insufficientPermissions") == true
+                || (ex.Error?.Message ?? ex.Message).Contains("insufficient authentication scopes", StringComparison.OrdinalIgnoreCase)
+                || (ex.Error?.Message ?? ex.Message).Contains("ACCESS_TOKEN_SCOPE_INSUFFICIENT", StringComparison.Ordinal)));
+
     /// <summary>A rate limit is retried 3 times with back-off, then reported as busy</summary>
     private static async Task<T> Call<T>(Func<Task<T>> call, CancellationToken ct)
     {
@@ -204,7 +219,7 @@ public class OtherContactsReader
 
                 await Task.Delay(TimeSpan.FromSeconds(2 << attempt), ct);
             }
-            catch (global::Google.GoogleApiException ex) when ((int)ex.HttpStatusCode is 401 or 403)
+            catch (global::Google.GoogleApiException ex) when (IsRefused(ex))
             {
                 throw new ActivityScanException("NOT_CONNECTED", "Reading Other contacts was not allowed. Allow it again.", ex);
             }

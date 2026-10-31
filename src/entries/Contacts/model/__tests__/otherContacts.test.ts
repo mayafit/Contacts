@@ -53,6 +53,7 @@ describe('suggestions from Other contacts (AD-48)', () => {
     // Vowel points are folded away, and the order does not matter
     expect(wordKey('אַיֶּלֶת שרמן')).toBe(wordKey('שרמן אילת'));
     expect(wordKey('Edna')).toBeNull();
+    expect(wordKey('Cohen Cohen')).toBeNull();
     expect(localPartKey('edna.abergel2@bankleumi.co.il')).toBe('abergel edna');
     expect(localPartKey('eabergel@bankleumi.co.il')).toBeNull();
   });
@@ -67,7 +68,8 @@ describe('suggestions from Other contacts (AD-48)', () => {
       reasons: ['name'],
       names: ['Abergel Edna'],
     });
-    expect(updates[0].key).toBe('u:people/1:edna.abergel@bankleumi.co.il');
+    expect(updates[0].key).toBe('u:people/1');
+    expect(updates[0].keys).toEqual(['email:edna.abergel@bankleumi.co.il']);
   });
 
   it('a known address brings the other address and the phone to its contact', () => {
@@ -84,6 +86,7 @@ describe('suggestions from Other contacts (AD-48)', () => {
       emails: ['dana.home@gmail.com'],
       phones: ['052-999-8888'],
       reasons: ['email'],
+      keys: ['email:dana.home@gmail.com', 'phone:529998888'],
     });
   });
 
@@ -127,6 +130,17 @@ describe('suggestions from Other contacts (AD-48)', () => {
     expect(r.saves).toEqual([]);
   });
 
+  it('an entry whose address is only on a contact in Trash suggests nothing to a namesake', () => {
+    const trashed = contact('people/9', 'Dana', 'Cohen', {
+      emailAddresses: [{ value: 'dana@old.com' }],
+    });
+    const namesake = contact('people/1', 'Dana', 'Cohen');
+    const r = build([entry('Dana Cohen', ['dana@old.com', 'dana@new.com'])], [namesake], {
+      all: [namesake, trashed],
+    });
+    expect(r.updates).toEqual([]);
+  });
+
   it('saves people the Owner wrote to or met, most in touch first, and only with activity', () => {
     const people = {
       'a@x.com': activity(1),
@@ -147,15 +161,34 @@ describe('suggestions from Other contacts (AD-48)', () => {
     expect(build(entries, [], { people: null }).saves).toEqual([]);
   });
 
-  it('leaves out dismissed suggestions, and shows one again when it changes', () => {
+  it('dismisses value by value: a new value shows alone, a phone in any format stays dismissed', () => {
     const edna = contact('people/1', 'Edna', 'Abergel');
-    const one = [entry('Abergel Edna', ['e@x.com'])];
-    const key = build(one, [edna]).updates[0].key;
-    expect(build(one, [edna], { dismissed: [key] }).updates).toEqual([]);
-    const two = [entry('Abergel Edna', ['e@x.com']), entry('Edna Abergel', ['e2@x.com'])];
-    const merged = build(two, [edna], { dismissed: [key] }).updates;
-    expect(merged).toHaveLength(1);
-    expect(merged[0].emails).toEqual(['e@x.com', 'e2@x.com']);
+    const one = [entry('Abergel Edna', ['e@x.com'], ['050-123-4567'])];
+    const keys = build(one, [edna]).updates[0].keys;
+    expect(build(one, [edna], { dismissed: keys }).updates).toEqual([]);
+    const two = [
+      entry('Abergel Edna', ['e@x.com'], ['+972 50 1234567']),
+      entry('Edna Abergel', ['e2@x.com']),
+    ];
+    const again = build(two, [edna], { dismissed: keys }).updates;
+    expect(again).toHaveLength(1);
+    expect(again[0]).toMatchObject({ emails: ['e2@x.com'], phones: [] });
+  });
+
+  it('a dismissed address dismisses the person to save', () => {
+    const people = { 'a@x.com': activity(3) };
+    const r = build([entry('Avi A', ['a@x.com'])], [], { people, dismissed: ['email:a@x.com'] });
+    expect(r.saves).toEqual([]);
+  });
+
+  it('an address offered to a contact is not also offered as a new person', () => {
+    const r = build(
+      [entry('Edna Abergel', ['e@x.com']), entry(null, ['e@x.com'])],
+      [contact('people/1', 'Edna', 'Abergel')],
+      { people: { 'e@x.com': activity(5) } },
+    );
+    expect(r.updates).toHaveLength(1);
+    expect(r.saves).toEqual([]);
   });
 
   it('lists contacts without an email first', () => {

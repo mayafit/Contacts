@@ -16,7 +16,10 @@ const REASON_ORDER: MatchReason[] = ['email', 'phone', 'name', 'address'];
 
 /** Addresses and phones to add to a Contact */
 export interface UpdateSuggestion {
+  /** The row: `u:{resource name}` */
   key: string;
+  /** One dismissal key per value (`email:…`, `phone:…`) */
+  keys: string[];
   /** `missing`: the Contact has no address; `extra`: it has one */
   kind: 'missing' | 'extra';
   contact: Contact;
@@ -29,7 +32,10 @@ export interface UpdateSuggestion {
 
 /** An Other contact worth saving as a new Contact */
 export interface SaveSuggestion {
+  /** The row: `n:{first address}` */
   key: string;
+  /** One dismissal key per address */
+  keys: string[];
   name: string | null;
   emails: string[];
   phones: string[];
@@ -52,7 +58,8 @@ export const MAX_SAVES = 100;
 
 /**
  * A name as a set of words, for an order-free comparison: folded, lower case, every
- * non-letter a space, words sorted. Fewer than two words never match.
+ * character other than a letter or digit a space, words distinct and sorted. Fewer than
+ * two distinct words never match.
  * @param text - Name
  * @returns Key, or null
  */
@@ -62,7 +69,8 @@ export const wordKey = (text: string | null | undefined): string | null => {
     .trim()
     .split(' ')
     .filter(Boolean);
-  return words.length >= 2 ? [...new Set(words)].sort().join(' ') : null;
+  const distinct = [...new Set(words)];
+  return distinct.length >= 2 ? distinct.sort().join(' ') : null;
 };
 
 /**
@@ -80,6 +88,15 @@ export const localPartKey = (email: string): string | null =>
   );
 
 const lower = (v: string | null | undefined) => clean(v).toLowerCase();
+
+/** The dismissal key of an address (AD-48 rule 7) */
+export const emailDismissKey = (email: string): string => `email:${lower(email)}`;
+
+/** The dismissal key of a phone: its comparison key, so the formatting does not matter */
+export const phoneDismissKey = (phone: string): string | null => {
+  const k = phoneKey(phone);
+  return k ? `phone:${k}` : null;
+};
 
 /** Index of a value to the Contacts holding it */
 const indexBy = (contacts: Contact[], keysOf: (c: Contact) => (string | null)[]) => {
@@ -150,6 +167,8 @@ export const buildOtherSuggestions = (
     allContacts.flatMap((c) => (c.emailAddresses ?? []).map((e) => lower(e.value))),
   );
   const byEmail = indexBy(contacts, (c) => (c.emailAddresses ?? []).map((e) => lower(e.value)));
+  // Addresses only on Contacts in Trash: the Owner put that person there
+  const trashedOnly = new Set([...known].filter((e) => !byEmail.has(e)));
   const byPhone = indexBy(contacts, phoneKeysOf);
   const byName = indexBy(contacts, (c) => nameVariants(c).map(wordKey));
   const byId = new Map(contacts.map((c) => [c.resourceName, c]));
@@ -168,7 +187,10 @@ export const buildOtherSuggestions = (
 
   entries.forEach((entry) => {
     const emails = entry.emails.map(lower).filter(Boolean);
-    const fresh = emails.filter((e) => !known.has(e));
+    if (emails.some((e) => trashedOnly.has(e))) {
+      return;
+    }
+    const fresh = emails.filter((e) => !known.has(e) && !dismissed.has(emailDismissKey(e)));
     const match = matchEntry(entry, [
       { reason: 'email', owners: () => ownersOf(byEmail, emails) },
       {
@@ -199,7 +221,7 @@ export const buildOtherSuggestions = (
       fresh.forEach((e) => row.emails.add(e));
       entry.phones.forEach((p) => {
         const k = phoneKey(p);
-        if (k && !have.has(k) && !row.phones.has(k)) {
+        if (k && !have.has(k) && !row.phones.has(k) && !dismissed.has(`phone:${k}`)) {
           row.phones.set(k, clean(p));
         }
       });
@@ -211,7 +233,7 @@ export const buildOtherSuggestions = (
       return;
     }
 
-    // Nobody matches. An address on a Contact in Trash means the Owner put them there
+    // Nobody matches; a dismissed address dismisses the person
     if (!people || fresh.length === 0 || fresh.length < emails.length) {
       return;
     }
@@ -223,6 +245,7 @@ export const buildOtherSuggestions = (
     }
     saves.push({
       key: `n:${fresh[0]}`,
+      keys: fresh.map(emailDismissKey),
       name: entry.name ? clean(entry.name) : null,
       emails: fresh,
       phones: [...new Set(entry.phones.map(clean).filter(Boolean))],
@@ -245,7 +268,8 @@ export const buildOtherSuggestions = (
       }
       const contact = byId.get(id)!;
       return {
-        key: `u:${id}:${[...emails, ...phones].sort().join(',')}`,
+        key: `u:${id}`,
+        keys: [...emails.map(emailDismissKey), ...[...row.phones.keys()].map((k) => `phone:${k}`)],
         kind: (contact.emailAddresses ?? []).some((e) => clean(e.value)) ? 'extra' : 'missing',
         contact,
         emails,
@@ -254,16 +278,18 @@ export const buildOtherSuggestions = (
         names: [...row.names],
       };
     })
-    .filter((u): u is UpdateSuggestion => !!u && !dismissed.has(u.key))
+    .filter((u): u is UpdateSuggestion => !!u)
     .sort(
       (a, b) =>
         (a.kind === b.kind ? 0 : a.kind === 'missing' ? -1 : 1) ||
         getDisplayName(a.contact).localeCompare(getDisplayName(b.contact), ['he', 'en']),
     );
 
+  // An address offered to a Contact is not also offered as a new person
+  const offered = new Set(updates.flatMap((u) => u.emails));
   const seen = new Set<string>();
   const ranked = saves
-    .filter((s) => !dismissed.has(s.key) && !seen.has(s.key) && seen.add(s.key))
+    .filter((s) => !s.emails.some((e) => offered.has(e)) && !seen.has(s.key) && !!seen.add(s.key))
     .sort(
       (a, b) =>
         b.sent * 3 + b.meetings * 3 + b.received - (a.sent * 3 + a.meetings * 3 + a.received),
