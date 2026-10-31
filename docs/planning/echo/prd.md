@@ -970,6 +970,18 @@ The dossier's **Relationship** offers **Search all history**: Echo searches the 
 
 The mail search needs email content (T2), because Gmail searches only with that permission; without it the history shows meetings only, and says so. Only counts and dates are kept, encrypted, until the activity is forgotten. Nothing of a message is read but its date.
 
+### 4.21 Contacts: Suggestions from Other Contacts (Proposed)
+
+On 2026-10-31 the Owner pointed at Google Contacts' **Other contacts**: the people Gmail saves by itself when the Owner writes to someone who is not in their Contacts (a name, addresses, sometimes a phone). They asked to use it to complete their Contacts, and agreed that it should be suggestions they accept, not an automatic merge.
+
+#### FR-92: Suggestions from Other contacts — Proposed
+With the Owner's opt-in (read-only access to Other contacts, asked once by a new sign-in), Insights → **Other contacts** → **Review suggestions** lists, for the Owner to accept or dismiss one by one:
+- **an email for a Contact who has none**, and **another address** for a Contact who has one, when an Other contact is the same person;
+- **a phone number** that Contact lacks, from the same match;
+- **people worth saving**: Other contacts who match no Contact and whom the Owner wrote to or met within the scan period (FR-90), most in touch first; accepting creates a Contact with their name, addresses and phone.
+
+Each suggestion says why it matched: an address already on the Contact, the same phone number, the same name in any order ("Abergel Edna" is Edna Abergel), or an address that spells the name. A name shared by more than one Contact suggests nothing, and the list says how many were left out for that reason. Automated senders (no-reply, notifications, relay addresses with long numbers, booking and social-network relays) are never suggested. A dismissed suggestion does not come back unless it changes; **Show dismissed** brings them all back. Nothing is written to Other contacts, and nothing of it is kept but the dismissed suggestions.
+
 ## 5. Privacy Model
 
 Privacy is a product pillar, not a compliance appendix. The requirements in §4.10 and NFR-07, NFR-08 and NFR-11 implement it.
@@ -978,7 +990,7 @@ Privacy is a product pillar, not a compliance appendix. The requirements in §4.
 
 | Tier | What Echo reads | Default | Status |
 |---|---|---|---|
-| **T0: Base** | Google Contacts (read/write); the Owner's profile (and, from Phase 0, their email address, checked against the allowlist, FR-51) | On at sign-in | Built |
+| **T0: Base** | Google Contacts (read/write); the Owner's profile (and, from Phase 0, their email address, checked against the allowlist, FR-51); with a separate opt-in, Other contacts (read only: names, addresses, phones), read when the Owner opens the suggestions (FR-92) and not kept | On at sign-in (Other contacts: off) | Built (Other contacts: Proposed) |
 | **T1: Touchpoints** | Gmail headers (From/To/Cc/date), Calendar events (time, attendees, title), over the scan period the Owner sets (1 year by default, up to 5, FR-90); for a Contact's whole history (FR-91), their meetings at any date | Off | Built (the period and the history: Proposed) |
 | **T2: Email content** | The permission (`gmail.readonly`, which replaces the T1 Gmail permission) allows reading the whole mailbox. Echo reads only the last 3 emails from each Contact the Owner chooses (up to 10), and, for each flight in Atlas, the newest 20 mails that name both its airports (FR-73). When the Owner asks to find a Contact's email (FR-78), it reads the sender (name and address) of the newest 25 mails Gmail finds from that Contact's names, and nothing else of them. When the Owner asks a Contact's dossier for the links in their signatures (FR-87), it reads that Contact's last 3 emails and keeps only the links. When the Owner asks a Contact's whole history (FR-91), it searches all mail from and to that Contact's addresses and reads only the number of messages and the date of the first and the last; it keeps those counts and dates. It processes them in memory and never stores them; of a flight's mails it keeps only the flight number, the scheduled times and which mail (subject, sender, date). | Off | Built (flights, find email: Proposed) |
 | **T3: Life sources** | Each Atlas source connected or imported separately (Timeline, Sports Tracker, health exports, OneDrive photo metadata) | Off per source | Built |

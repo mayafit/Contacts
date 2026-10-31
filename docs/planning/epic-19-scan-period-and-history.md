@@ -28,4 +28,4 @@ to search a Contact's history from their card without a time limit.
 
 ### 19.3 Deployment — Phase 1
 
-- [ ] Merged, images built for arm64, rolled out; checked on the Owner's Contacts.
+- [x] Merged (PR #143), images built for arm64, rolled out.
