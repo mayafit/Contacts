@@ -263,6 +263,12 @@ public class ActivityWorker : BackgroundService
         }
 
         await _store.SaveAsync(job.UserId, snapshot);
+
+        // The period changed while this scan ran (it read the old one): scan it in full now
+        if (snapshot.Status == ActivityStatus.Ready && await _store.GetWindowYearsAsync(job.UserId) != years)
+        {
+            await EnqueueAsync(job with { Full = true });
+        }
     }
 
     /// <summary>Marks the scan failed; the previous data stays usable</summary>

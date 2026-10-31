@@ -520,6 +520,29 @@ public class ActivityController : ControllerBase
         return Ok(ApiResponse<ActivityStatusResponse>.SuccessResponse(status));
     }
 
+    /// <summary>The longest a history search may take (the proxy waits 120 s)</summary>
+    private static readonly TimeSpan HistoryBudget = TimeSpan.FromSeconds(80);
+
+    /// <summary>One part of a history search: <c>searched</c>, or <c>failed</c> with the reason kept</summary>
+    private async Task<string> Part(Func<Task> run, ContactHistory history)
+    {
+        try
+        {
+            await run();
+            return "searched";
+        }
+        catch (OperationCanceledException) when (!HttpContext.RequestAborted.IsCancellationRequested)
+        {
+            history.Error = "The search took too long; the mailbox or calendar is very large.";
+            return "failed";
+        }
+        catch (ActivityScanException ex) when (ex.Code != "NOT_CONNECTED")
+        {
+            history.Error = ex.Message;
+            return "failed";
+        }
+    }
+
     /// <summary>A Contact's whole history as last searched (AD-47 rule 6), or 204</summary>
     /// <param name="contact">The Contact's resource name</param>
     [HttpGet("history")]
@@ -566,21 +589,26 @@ public class ActivityController : ControllerBase
 
         var reader = new ContactHistoryReader(async _ =>
             await _tokens.GetAccessTokenAsync(HttpContext) ?? throw new ActivityScanException("NOT_CONNECTED", "Session ended"));
-        var ct = HttpContext.RequestAborted;
+        // Within the proxy's 120 s; each part fails on its own, so one keeps the other's answer
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(HttpContext.RequestAborted);
+        budget.CancelAfter(HistoryBudget);
+        var ct = budget.Token;
         var history = new ContactHistory { CheckedAt = DateTime.UtcNow };
         try
         {
             if (connected.Signatures)
             {
-                history.Received = await reader.CountMailAsync(ContactHistoryReader.ReceivedQuery(addresses), ct);
-                history.Sent = await reader.CountMailAsync(ContactHistoryReader.SentQuery(addresses), ct);
-                history.Mail = "searched";
+                history.Mail = await Part(async () =>
+                {
+                    history.Received = await reader.CountMailAsync(ContactHistoryReader.ReceivedQuery(addresses), ct);
+                    history.Sent = await reader.CountMailAsync(ContactHistoryReader.SentQuery(addresses), ct);
+                }, history);
             }
 
             if (connected.Calendar)
             {
-                history.Meetings = await reader.CountMeetingsAsync(addresses, DateTime.UtcNow, ct);
-                history.Calendar = "searched";
+                history.Calendar = await Part(
+                    async () => history.Meetings = await reader.CountMeetingsAsync(addresses, DateTime.UtcNow, ct), history);
             }
         }
         catch (ActivityScanException ex) when (ex.Code == "NOT_CONNECTED")
@@ -588,9 +616,12 @@ public class ActivityController : ControllerBase
             return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.ErrorResponse(
                 "NOT_CONNECTED", "Google refused the request. Sign in again."));
         }
-        catch (ActivityScanException ex)
+
+        if (history.Mail is "failed" or "not_allowed" && history.Calendar is "failed" or "not_allowed"
+            && (history.Mail == "failed" || history.Calendar == "failed"))
         {
-            return StatusCode(StatusCodes.Status502BadGateway, ApiResponse<object>.ErrorResponse("SEARCH_FAILED", ex.Message));
+            return StatusCode(StatusCodes.Status502BadGateway, ApiResponse<object>.ErrorResponse(
+                "SEARCH_FAILED", history.Error ?? "The search failed. Try again later."));
         }
 
         await _store.SaveHistoryAsync(userId, request!.Contact, history);

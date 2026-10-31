@@ -41,6 +41,9 @@ public class MeetingCount
 
     /// <summary>The next one</summary>
     public DateTime? Next { get; set; }
+
+    /// <summary>An address had more events than were read</summary>
+    public bool Capped { get; set; }
 }
 
 /// <summary>What the user has with one Contact, at any date (AD-47 rule 6)</summary>
@@ -49,11 +52,14 @@ public class ContactHistory
     /// <summary>When it was searched</summary>
     public DateTime CheckedAt { get; set; }
 
-    /// <summary><c>searched</c>, or <c>not_allowed</c> without email content (T2)</summary>
+    /// <summary><c>searched</c>, <c>not_allowed</c> without email content (T2), or <c>failed</c></summary>
     public string Mail { get; set; } = "not_allowed";
 
-    /// <summary><c>searched</c>, or <c>not_allowed</c> without Calendar</summary>
+    /// <summary><c>searched</c>, <c>not_allowed</c> without Calendar, or <c>failed</c></summary>
     public string Calendar { get; set; } = "not_allowed";
+
+    /// <summary>Why a part failed (busy, too slow…)</summary>
+    public string? Error { get; set; }
 
     /// <summary>Emails from them</summary>
     public MailCount? Received { get; set; }
@@ -83,6 +89,9 @@ public class ContactHistoryReader
 
     /// <summary>Events with more people than this are not meetings with a person (as the scan)</summary>
     private const int MaxMeetingSize = 20;
+
+    /// <summary>How far ahead meetings are read: bounds endless recurrences, as the scan</summary>
+    public static readonly TimeSpan Ahead = TimeSpan.FromDays(60);
 
     private static readonly Regex Plain = new(
         @"^[a-z0-9._%+'\-]+@[a-z0-9\-]+(\.[a-z0-9\-]+)+$", RegexOptions.Compiled);
@@ -140,10 +149,11 @@ public class ContactHistoryReader
             list.MaxResults = 500;
             list.PageToken = pageToken;
             list.Fields = "messages/id,nextPageToken";
-            var page = await GoogleActivityClient.Run(() => list.ExecuteAsync(ct), "gmail");
+            var page = await Call(() => list.ExecuteAsync(ct), "gmail", ct);
             var ids = page?.Messages?.Select(m => m?.Id).OfType<string>().ToList() ?? new();
             if (ids.Count > 0)
             {
+                // Gmail lists newest first in practice, but does not promise it: both ends are dated
                 newest ??= ids[0];
                 oldest = ids[^1];
                 result.Count += ids.Count;
@@ -158,9 +168,12 @@ public class ContactHistoryReader
         }
         while (pageToken != null);
 
-        result.Last = newest == null ? null : await DateOfAsync(newest, ct);
+        var a = newest == null ? null : await DateOfAsync(newest, ct);
+        var b = oldest == null || oldest == newest ? a : await DateOfAsync(oldest, ct);
+        var dates = new[] { a, b }.Where(d => d != null).Select(d => d!.Value).ToList();
+        result.Last = dates.Count > 0 ? dates.Max() : null;
         // Capped: the oldest listed is not the first, so no first date is claimed
-        result.First = oldest == null || result.Capped ? null : await DateOfAsync(oldest, ct);
+        result.First = dates.Count > 0 && !result.Capped ? dates.Min() : null;
         return result;
     }
 
@@ -171,15 +184,49 @@ public class ContactHistoryReader
         get.Fields = "internalDate";
         try
         {
-            var m = await GoogleActivityClient.Run(() => get.ExecuteAsync(ct), "gmail");
+            var m = await Call(() => get.ExecuteAsync(ct), "gmail", ct);
             return m?.InternalDate is long ms ? DateTimeOffset.FromUnixTimeMilliseconds(ms).UtcDateTime : null;
         }
-        catch (ActivityScanException) when (!ct.IsCancellationRequested)
+        catch (ActivityScanException ex) when (ex.Code == "SCAN_FAILED" && !ct.IsCancellationRequested)
         {
             // Deleted since it was listed: the count stands without that date
             return null;
         }
     }
+
+    /// <summary>
+    /// A Google call: a rate limit (shared with a running scan) is retried 3 times with
+    /// back-off and then reported as busy, never as a refused sign-in
+    /// </summary>
+    private static async Task<T> Call<T>(Func<Task<T>> call, string api, CancellationToken ct)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return await call();
+            }
+            catch (global::Google.GoogleApiException ex) when (IsRateLimit(ex))
+            {
+                if (attempt == 3)
+                {
+                    throw new ActivityScanException(
+                        "SCAN_FAILED", $"{(api == "gmail" ? "Gmail" : "Google Calendar")} is busy. Try again in a minute.", ex);
+                }
+
+                await Task.Delay(TimeSpan.FromSeconds(2 << attempt), ct);
+            }
+            catch (global::Google.GoogleApiException ex)
+            {
+                throw GoogleActivityClient.Classify((int)ex.HttpStatusCode, ex.Error?.Message ?? ex.Message, api, ex);
+            }
+        }
+    }
+
+    private static bool IsRateLimit(global::Google.GoogleApiException ex) =>
+        (int)ex.HttpStatusCode == 429
+        || (ex.HttpStatusCode == System.Net.HttpStatusCode.Forbidden
+            && ex.Error?.Errors?.Any(e => e.Reason is "rateLimitExceeded" or "userRateLimitExceeded" or "quotaExceeded") == true);
 
     /// <summary>
     /// The meetings with any of the addresses, at any date.
@@ -191,6 +238,7 @@ public class ContactHistoryReader
     public async Task<MeetingCount> CountMeetingsAsync(IReadOnlyList<string> addresses, DateTime now, CancellationToken ct)
     {
         var events = new Dictionary<string, CalendarEvent>();
+        var capped = false;
         foreach (var address in addresses)
         {
             string? pageToken = null;
@@ -201,10 +249,13 @@ public class ContactHistoryReader
                 req.Q = address;
                 req.SingleEvents = true;
                 req.ShowDeleted = false;
+                // No lower bound; ahead only as far as the scan, so recurrences end
+                req.TimeMaxDateTimeOffset = now + Ahead;
+                req.OrderBy = EventsResource.ListRequest.OrderByEnum.StartTime;
                 req.MaxResults = 2500;
                 req.PageToken = pageToken;
                 req.Fields = "items(id,status,start,attendees(email,self,responseStatus,resource)),nextPageToken";
-                var page = await GoogleActivityClient.Run(() => req.ExecuteAsync(ct), "calendar");
+                var page = await Call(() => req.ExecuteAsync(ct), "calendar", ct);
                 foreach (var ev in page?.Items ?? new List<CalendarEvent>())
                 {
                     if (ev.Id != null)
@@ -216,14 +267,17 @@ public class ContactHistoryReader
                 pageToken = page?.NextPageToken;
             }
             while (pageToken != null && ++pages < MaxEventPages);
+            capped |= pageToken != null;
         }
 
-        return Meetings(events.Values, addresses, now);
+        var result = Meetings(events.Values, addresses, now);
+        result.Capped = capped;
+        return result;
     }
 
     /// <summary>
     /// The meetings among the events (AD-47 rule 5): an attendee is one of the
-    /// addresses, not cancelled, 2 to 20 attendees, not declined by the user
+    /// addresses and did not decline, not cancelled, 2 to 20 attendees, not declined by the user
     /// </summary>
     public static MeetingCount Meetings(IEnumerable<CalendarEvent> events, IReadOnlyList<string> addresses, DateTime now)
     {
@@ -234,7 +288,8 @@ public class ContactHistoryReader
             var attendees = ev.Attendees ?? new List<global::Google.Apis.Calendar.v3.Data.EventAttendee>();
             if (ev.Status == "cancelled" || attendees.Count < 2 || attendees.Count > MaxMeetingSize
                 || attendees.Any(a => a.Self == true && a.ResponseStatus == "declined")
-                || !attendees.Any(a => a.Self != true && a.Resource != true && wanted.Contains((a.Email ?? string.Empty).Trim())))
+                || !attendees.Any(a => a.Self != true && a.Resource != true && a.ResponseStatus != "declined"
+                    && wanted.Contains((a.Email ?? string.Empty).Trim())))
             {
                 continue;
             }

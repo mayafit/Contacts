@@ -55,6 +55,8 @@ public class ContactHistoryTests
         var next = new DateTime(2026, 11, 12, 9, 0, 0, DateTimeKind.Utc);
         var declined = Meeting("d", last.AddDays(1), "Dror@Gmail.com");
         declined.Attendees.Single(x => x.Self == true).ResponseStatus = "declined";
+        var theyDeclined = Meeting("x", last.AddDays(5), "dror@gmail.com");
+        theyDeclined.Attendees.First(x => x.Email == "dror@gmail.com").ResponseStatus = "declined";
         var cancelled = Meeting("c", last.AddDays(2), "dror@gmail.com");
         cancelled.Status = "cancelled";
         var events = new[]
@@ -68,6 +70,7 @@ public class ContactHistoryTests
             Meeting("big", last.AddDays(4), Enumerable.Range(0, 25).Select(i => $"p{i}@x.com").Append("dror@gmail.com").ToArray()),
             declined,
             cancelled,
+            theyDeclined,
         };
         var m = ContactHistoryReader.Meetings(events, a, Now);
         Assert.Equal(2, m.Count);

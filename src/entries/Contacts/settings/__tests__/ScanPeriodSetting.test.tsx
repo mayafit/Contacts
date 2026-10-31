@@ -26,7 +26,7 @@ describe('the scan period (FR-90)', () => {
     fireEvent.mouseDown(select);
     fireEvent.click(within(screen.getByRole('listbox')).getByText('3 years'));
     expect(client.setActivityWindow).toHaveBeenCalledWith(3);
-    expect(await screen.findByText(/A full scan has started/)).toBeTruthy();
+    expect(await screen.findByText(/A full scan with this period has started/)).toBeTruthy();
   });
 
   it('says the period waits for a connection', async () => {

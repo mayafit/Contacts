@@ -132,7 +132,8 @@ const AllHistory: React.FC<{
           )}
           {record.calendar === 'searched' && meetings && (
             <Typography variant="body2">
-              {meetings.count} {meetings.count === 1 ? 'meeting' : 'meetings'}
+              {meetings.count}
+              {meetings.capped ? '+' : ''} {meetings.count === 1 ? 'meeting' : 'meetings'}
               {meetings.count ? ` (${span(meetings.first, meetings.last)})` : ''}
               {meetings.next ? ` · next ${formatRelative(meetings.next)}` : ''}
             </Typography>
@@ -142,6 +143,9 @@ const AllHistory: React.FC<{
               ? 'Mail not searched: allow reading email content (Insights). '
               : ''}
             {record.calendar === 'not_allowed' ? 'Calendar not connected. ' : ''}
+            {record.mail === 'failed' ? 'Mail could not be searched. ' : ''}
+            {record.calendar === 'failed' ? 'Calendar could not be searched. ' : ''}
+            {record.error ? `${record.error} ` : ''}
             Checked{' '}
             {new Date(record.checkedAt).toLocaleDateString('en-GB', {
               day: 'numeric',

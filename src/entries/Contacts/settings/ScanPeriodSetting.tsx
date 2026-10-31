@@ -93,7 +93,7 @@ const ScanPeriodSetting: React.FC = () => {
             ? 'Saving…'
             : state.s === 'saved'
               ? connected
-                ? 'Saved. A full scan has started; Insights shows its progress.'
+                ? 'Saved. A full scan with this period has started, or follows the scan running now; Insights shows its progress.'
                 : 'Saved. It applies when Gmail or Calendar is connected (Insights).'
               : !connected && status
                 ? 'Gmail and Calendar are not connected (Insights).'

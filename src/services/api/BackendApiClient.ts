@@ -158,8 +158,10 @@ export interface MailCount {
 /** A Contact's whole history (AD-47 rule 6) */
 export interface ContactHistory {
   checkedAt: string;
-  mail: 'searched' | 'not_allowed';
-  calendar: 'searched' | 'not_allowed';
+  mail: 'searched' | 'not_allowed' | 'failed';
+  calendar: 'searched' | 'not_allowed' | 'failed';
+  /** Why a part failed */
+  error?: string | null;
   received?: MailCount | null;
   sent?: MailCount | null;
   meetings?: {
@@ -167,6 +169,7 @@ export interface ContactHistory {
     first?: string | null;
     last?: string | null;
     next?: string | null;
+    capped?: boolean;
   } | null;
 }
 
