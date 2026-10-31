@@ -92,10 +92,11 @@ const Dossier: React.FC<{
   );
   const activity = data.activity?.get(contact.resourceName);
   const tier = data.activity ? tierOf(activity, data.segmentCtx.now) : null;
-  const awaiting = useMemo(
-    () => awaitingReply(data.threads, contactsByEmail([contact])),
-    [data.threads, contact],
-  );
+  // Only this contact's threads: awaitingReply also returns unmatched ones (contact null)
+  const awaiting = useMemo(() => {
+    const all = awaitingReply(data.threads, contactsByEmail([contact]));
+    return { owe: all.owe.filter((a) => a.contact), waiting: all.waiting.filter((a) => a.contact) };
+  }, [data.threads, contact]);
   const colleagues = useMemo(
     () => colleaguesOf(contact, data.contacts, data.activity),
     [contact, data.contacts, data.activity],
