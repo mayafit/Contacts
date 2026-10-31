@@ -420,7 +420,7 @@ public class GoogleActivityClient
                 || string.Equals(e.Reason, "userRateLimitExceeded", StringComparison.OrdinalIgnoreCase))
             || (error.Message ?? string.Empty).Contains("rate limit", StringComparison.OrdinalIgnoreCase)));
 
-    private static async Task<T> Run<T>(Func<Task<T>> call, string api)
+    internal static async Task<T> Run<T>(Func<Task<T>> call, string api)
     {
         try
         {

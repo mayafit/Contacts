@@ -206,7 +206,7 @@ export const TOOL_DECLARATIONS = [
         neverInTouch: {
           type: 'boolean',
           description:
-            'Only contacts with an email address but no email or meeting in the last year',
+            'Only contacts with an email address but no email or meeting in the scan period (1 year unless the Owner set more)',
         },
         updatedAfter: S('YYYY-MM-DD: contact changed after this date'),
         sortBy: {
@@ -743,7 +743,7 @@ const fullContact = (c: Contact, ctx: AssistantContext) => {
           nextMeetingTitle: a.nextMeetingTitle,
         }
       : ctx.activityReady
-        ? 'no email or meeting in the last year'
+        ? 'no email or meeting in the scan period'
         : 'activity not connected',
   };
 };

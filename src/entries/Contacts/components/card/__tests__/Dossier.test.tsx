@@ -5,7 +5,11 @@ import Dossier, { type DossierData } from '../Dossier';
 import { backendApiClient } from '../../../../../services/api/BackendApiClient';
 
 jest.mock('../../../../../services/api/BackendApiClient', () => ({
-  backendApiClient: { signatureLinks: jest.fn() },
+  backendApiClient: {
+    signatureLinks: jest.fn(),
+    getContactHistory: jest.fn(),
+    searchContactHistory: jest.fn(),
+  },
 }));
 const client = backendApiClient as jest.Mocked<typeof backendApiClient>;
 
@@ -53,6 +57,87 @@ const data = (over: Partial<DossierData> = {}): DossierData => ({
 });
 
 describe('the dossier (AD-46 rule 6)', () => {
+  beforeEach(() => {
+    client.getContactHistory.mockResolvedValue(null);
+  });
+
+  it('searches all history on request and shows the counts and dates (AD-47 rule 7)', async () => {
+    client.searchContactHistory.mockResolvedValue({
+      checkedAt: '2026-10-31T10:00:00Z',
+      mail: 'searched',
+      calendar: 'searched',
+      received: {
+        count: 143,
+        capped: false,
+        first: '2015-11-02T09:00:00Z',
+        last: '2016-03-07T09:00:00Z',
+      },
+      sent: { count: 20000, capped: true, first: null, last: '2016-02-01T09:00:00Z' },
+      meetings: {
+        count: 1,
+        first: '2016-01-10T09:00:00Z',
+        last: '2016-01-10T09:00:00Z',
+        next: null,
+      },
+    });
+    render(
+      <Dossier
+        contact={dana}
+        draft={dana}
+        onDraftChange={jest.fn()}
+        groups={{}}
+        data={data({ gravatar: new Map(), calendarAllowed: true })}
+      />,
+    );
+    const button = (await screen.findByRole('button', {
+      name: 'Search all history',
+    })) as HTMLButtonElement;
+    // Enabled once the stored record has been asked for
+    await waitFor(() => expect(button.disabled).toBe(false));
+    fireEvent.click(button);
+    expect(await screen.findByText('143 emails from them (Nov 2015 – Mar 2016)')).toBeTruthy();
+    // Capped: no first date is claimed
+    expect(screen.getByText('20,000+ emails to them (Feb 2016)')).toBeTruthy();
+    expect(screen.getByText('1 meeting (Jan 2016)')).toBeTruthy();
+    expect(client.searchContactHistory).toHaveBeenCalledWith('people/1', ['dana@acme.com']);
+    expect(screen.getByRole('button', { name: 'Search again' })).toBeTruthy();
+  });
+
+  it('shows the stored history and says why mail was not searched', async () => {
+    client.getContactHistory.mockResolvedValue({
+      checkedAt: '2026-10-30T10:00:00Z',
+      mail: 'not_allowed',
+      calendar: 'searched',
+      meetings: { count: 0 },
+    });
+    render(
+      <Dossier
+        contact={dana}
+        draft={dana}
+        onDraftChange={jest.fn()}
+        groups={{}}
+        data={data({ gravatar: new Map(), signaturesAllowed: false, calendarAllowed: true })}
+      />,
+    );
+    expect(await screen.findByText('0 meetings')).toBeTruthy();
+    expect(screen.getByText(/Mail not searched: allow reading email content/)).toBeTruthy();
+    expect(client.getContactHistory).toHaveBeenCalledWith('people/1');
+  });
+
+  it('without email content or Calendar, explains instead of offering the search', async () => {
+    render(
+      <Dossier
+        contact={dana}
+        draft={dana}
+        onDraftChange={jest.fn()}
+        groups={{}}
+        data={data({ gravatar: new Map(), signaturesAllowed: false })}
+      />,
+    );
+    expect(await screen.findByText(/Connect Calendar or allow reading email content/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Search all history' })).toBeNull();
+  });
+
   it('shows profiles, about, segments and colleagues; Add puts the link in the draft', () => {
     const onDraftChange = jest.fn();
     const d = data();

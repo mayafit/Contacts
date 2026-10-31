@@ -142,6 +142,35 @@ export interface ActivityStatusResponse {
   peopleCount: number;
   /** The name directory (find a person by name in mail/meetings) exists */
   hasDirectory?: boolean;
+  /** The scan period in years (AD-47 rule 1) */
+  windowYears?: number;
+}
+
+/** Emails one way with a Contact, at any date */
+export interface MailCount {
+  count: number;
+  /** Listing stopped at 20,000 */
+  capped: boolean;
+  first?: string | null;
+  last?: string | null;
+}
+
+/** A Contact's whole history (AD-47 rule 6) */
+export interface ContactHistory {
+  checkedAt: string;
+  mail: 'searched' | 'not_allowed' | 'failed';
+  calendar: 'searched' | 'not_allowed' | 'failed';
+  /** Why a part failed */
+  error?: string | null;
+  received?: MailCount | null;
+  sent?: MailCount | null;
+  meetings?: {
+    count: number;
+    first?: string | null;
+    last?: string | null;
+    next?: string | null;
+    capped?: boolean;
+  } | null;
 }
 
 /** Signature reading result for one contact */
@@ -1707,6 +1736,49 @@ export class BackendApiClient {
         method: 'POST',
       }),
       'Failed to start the activity scan',
+    );
+  }
+
+  /**
+   * Set the scan period; a change starts a full scan (AD-47 rule 1)
+   * @param years - 1, 2, 3 or 5
+   * @returns Status
+   */
+  async setActivityWindow(years: number): Promise<ActivityStatusResponse> {
+    return unwrap(
+      await this.request<ActivityStatusResponse>('/activity/window', {
+        method: 'PUT',
+        body: JSON.stringify({ years }),
+      }),
+      'Failed to save the scan period',
+    );
+  }
+
+  /**
+   * A Contact's whole history as last searched, or null
+   * @param contact - Resource name
+   * @returns The record
+   */
+  async getContactHistory(contact: string): Promise<ContactHistory | null> {
+    const r = await this.request<ContactHistory>(
+      `/activity/history?contact=${encodeURIComponent(contact)}`,
+    );
+    return r.status === 204 ? null : unwrap(r, 'Failed to read the history');
+  }
+
+  /**
+   * Search a Contact's whole mail and calendar, without a date limit (AD-47)
+   * @param contact - Resource name
+   * @param emails - Its addresses
+   * @returns The record
+   */
+  async searchContactHistory(contact: string, emails: string[]): Promise<ContactHistory> {
+    return unwrap(
+      await this.request<ContactHistory>('/activity/history', {
+        method: 'POST',
+        body: JSON.stringify({ contact, emails }),
+      }),
+      'Failed to search the history',
     );
   }
 

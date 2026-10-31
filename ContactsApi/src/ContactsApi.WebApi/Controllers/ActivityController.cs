@@ -44,6 +44,26 @@ public class ActivityStatusResponse
 
     /// <summary>Whether the name directory (find a person by name) exists yet</summary>
     public bool HasDirectory { get; set; }
+
+    /// <summary>The scan period in years (AD-47 rule 1)</summary>
+    public int WindowYears { get; set; } = 1;
+}
+
+/// <summary>The scan period to set</summary>
+public class ActivityWindowRequest
+{
+    /// <summary>1, 2, 3 or 5</summary>
+    public int Years { get; set; }
+}
+
+/// <summary>A Contact whose whole history to search</summary>
+public class ContactHistoryRequest
+{
+    /// <summary>The Contact's resource name</summary>
+    public string Contact { get; set; } = string.Empty;
+
+    /// <summary>Its addresses</summary>
+    public List<string>? Emails { get; set; }
 }
 
 /// <summary>A directory match</summary>
@@ -144,7 +164,9 @@ public class ActivityController : ControllerBase
         }
 
         var snapshot = await _store.GetAsync(userId);
-        return Ok(ApiResponse<ActivityStatusResponse>.SuccessResponse(Fill(new ActivityStatusResponse(), snapshot)));
+        var status = Fill(new ActivityStatusResponse(), snapshot);
+        status.WindowYears = await _store.GetWindowYearsAsync(userId);
+        return Ok(ApiResponse<ActivityStatusResponse>.SuccessResponse(status));
     }
 
     /// <summary>Snapshot with the activity per address</summary>
@@ -458,7 +480,152 @@ public class ActivityController : ControllerBase
         }
 
         await _store.RemoveAsync(userId);
-        return Ok(ApiResponse<ActivityStatusResponse>.SuccessResponse(Fill(new ActivityStatusResponse(), new ActivitySnapshot())));
+        await _store.RemoveHistoriesAsync(userId);
+        var status = Fill(new ActivityStatusResponse(), new ActivitySnapshot());
+        // The period is a setting: Forget keeps it (AD-47 rule 1)
+        status.WindowYears = await _store.GetWindowYearsAsync(userId);
+        return Ok(ApiResponse<ActivityStatusResponse>.SuccessResponse(status));
+    }
+
+    /// <summary>
+    /// Sets how many years back the scan reads, and starts a full scan when Gmail or
+    /// Calendar is connected (AD-47 rule 1)
+    /// </summary>
+    /// <param name="request">The period</param>
+    /// <returns>Status</returns>
+    [HttpPut("window")]
+    public async Task<IActionResult> SetWindow([FromBody] ActivityWindowRequest request)
+    {
+        var userId = await SignedInUserAsync();
+        if (userId == null)
+        {
+            return SessionExpired();
+        }
+
+        if (request == null || !ActivityStore.WindowYears.Contains(request.Years))
+        {
+            return BadRequest(ApiResponse<object>.ErrorResponse(
+                "INVALID_INPUT", $"The scan period is {string.Join(", ", ActivityStore.WindowYears)} years."));
+        }
+
+        var changed = await _store.GetWindowYearsAsync(userId) != request.Years;
+        await _store.SaveWindowYearsAsync(userId, request.Years);
+        var connected = Connection();
+        var snapshot = changed && (connected.Gmail || connected.Calendar)
+            ? await _worker.EnqueueAsync(new ActivityJob(
+                userId, HttpContext.Session.GetString("UserEmail") ?? string.Empty, true, connected.Gmail, connected.Calendar))
+            : await _store.GetAsync(userId);
+        var status = Fill(new ActivityStatusResponse(), snapshot);
+        status.WindowYears = request.Years;
+        return Ok(ApiResponse<ActivityStatusResponse>.SuccessResponse(status));
+    }
+
+    /// <summary>The longest a history search may take (the proxy waits 120 s)</summary>
+    private static readonly TimeSpan HistoryBudget = TimeSpan.FromSeconds(80);
+
+    /// <summary>One part of a history search: <c>searched</c>, or <c>failed</c> with the reason kept</summary>
+    private async Task<string> Part(Func<Task> run, ContactHistory history)
+    {
+        try
+        {
+            await run();
+            return "searched";
+        }
+        catch (OperationCanceledException) when (!HttpContext.RequestAborted.IsCancellationRequested)
+        {
+            history.Error = "The search took too long; the mailbox or calendar is very large.";
+            return "failed";
+        }
+        catch (ActivityScanException ex) when (ex.Code != "NOT_CONNECTED")
+        {
+            history.Error = ex.Message;
+            return "failed";
+        }
+    }
+
+    /// <summary>A Contact's whole history as last searched (AD-47 rule 6), or 204</summary>
+    /// <param name="contact">The Contact's resource name</param>
+    [HttpGet("history")]
+    public async Task<IActionResult> History([FromQuery] string contact)
+    {
+        var userId = await SignedInUserAsync();
+        if (userId == null)
+        {
+            return SessionExpired();
+        }
+
+        var all = await _store.GetHistoriesAsync(userId);
+        return !string.IsNullOrEmpty(contact) && all.TryGetValue(contact, out var history)
+            ? Ok(ApiResponse<ContactHistory>.SuccessResponse(history))
+            : NoContent();
+    }
+
+    /// <summary>
+    /// Searches a Contact's whole mail (T2) and calendar (T1) without a date limit;
+    /// only counts and dates are read and kept (AD-47 rules 3 to 6)
+    /// </summary>
+    /// <param name="request">The Contact and its addresses</param>
+    [HttpPost("history")]
+    public async Task<IActionResult> SearchHistory([FromBody] ContactHistoryRequest request)
+    {
+        var userId = await SignedInUserAsync();
+        if (userId == null)
+        {
+            return SessionExpired();
+        }
+
+        var addresses = ContactHistoryReader.Addresses(request?.Emails);
+        if (string.IsNullOrWhiteSpace(request?.Contact) || addresses.Count == 0)
+        {
+            return BadRequest(ApiResponse<object>.ErrorResponse("INVALID_INPUT", "The contact has no email address."));
+        }
+
+        var connected = Connection();
+        if (!connected.Signatures && !connected.Calendar)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.ErrorResponse(
+                "NOT_CONNECTED", "Allow reading email content or connect Calendar first."));
+        }
+
+        var reader = new ContactHistoryReader(async _ =>
+            await _tokens.GetAccessTokenAsync(HttpContext) ?? throw new ActivityScanException("NOT_CONNECTED", "Session ended"));
+        // Within the proxy's 120 s; each part fails on its own, so one keeps the other's answer
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(HttpContext.RequestAborted);
+        budget.CancelAfter(HistoryBudget);
+        var ct = budget.Token;
+        var history = new ContactHistory { CheckedAt = DateTime.UtcNow };
+        try
+        {
+            if (connected.Signatures)
+            {
+                history.Mail = await Part(async () =>
+                {
+                    history.Received = await reader.CountMailAsync(ContactHistoryReader.ReceivedQuery(addresses), ct);
+                    history.Sent = await reader.CountMailAsync(ContactHistoryReader.SentQuery(addresses), ct);
+                }, history);
+            }
+
+            if (connected.Calendar)
+            {
+                history.Calendar = await Part(
+                    async () => history.Meetings = await reader.CountMeetingsAsync(addresses, DateTime.UtcNow, ct), history);
+            }
+        }
+        catch (ActivityScanException ex) when (ex.Code == "NOT_CONNECTED")
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.ErrorResponse(
+                "NOT_CONNECTED", "Google refused the request. Sign in again."));
+        }
+
+        if (history.Mail is "failed" or "not_allowed" && history.Calendar is "failed" or "not_allowed"
+            && (history.Mail == "failed" || history.Calendar == "failed"))
+        {
+            return StatusCode(StatusCodes.Status502BadGateway, ApiResponse<object>.ErrorResponse(
+                "SEARCH_FAILED", history.Error ?? "The search failed. Try again later."));
+        }
+
+        await _store.SaveHistoryAsync(userId, request!.Contact, history);
+        return Ok(ApiResponse<ContactHistory>.SuccessResponse(history));
     }
 
     /// <summary>The signed-in Google account, with a valid token, or null</summary>

@@ -263,7 +263,7 @@ const ActivitySection: React.FC<ActivitySectionProps> = ({
                 label: 'None found',
                 value: ranked.never.length,
                 ids: ranked.never.map((c) => c.resourceName),
-                title: 'No email or meeting in the last year',
+                title: 'No email or meeting in the scan period (Settings)',
               },
             ].map((t) => (
               <Box

@@ -38,8 +38,8 @@ public record ActivityJob(string UserId, string UserEmail, bool Full, bool Gmail
 /// </summary>
 public class ActivityWorker : BackgroundService
 {
-    /// <summary>How far back a full scan reads</summary>
-    public static readonly TimeSpan Window = TimeSpan.FromDays(365);
+    /// <summary>One year of the scan period; the period is the Owner's setting (AD-47 rule 1)</summary>
+    public static readonly TimeSpan Year = TimeSpan.FromDays(365);
 
     /// <summary>A scan whose heartbeat is older than this died (e.g. pod restart)</summary>
     public static readonly TimeSpan StaleAfter = TimeSpan.FromMinutes(3);
@@ -47,7 +47,8 @@ public class ActivityWorker : BackgroundService
     /// <summary>Full rescan this often; in between only new messages are read</summary>
     private static readonly TimeSpan FullScanEvery = TimeSpan.FromDays(7);
 
-    private const int MaxMessages = 10_000;
+    /// <summary>Messages a full scan reads at most, per year of the period</summary>
+    public const int MaxMessagesPerYear = 10_000;
 
     private readonly Channel<ActivityJob> _jobs = Channel.CreateUnbounded<ActivityJob>();
     private readonly ActivityStore _store;
@@ -128,6 +129,9 @@ public class ActivityWorker : BackgroundService
     {
         var snapshot = await _store.GetAsync(job.UserId);
         var lastBeat = DateTime.MinValue;
+        // Read at the start of each job: a changed period applies from the next scan
+        var years = await _store.GetWindowYearsAsync(job.UserId);
+        var window = Year * years;
 
         async Task Beat(string phase, int done)
         {
@@ -202,9 +206,9 @@ public class ActivityWorker : BackgroundService
                 aggregator = new ActivityAggregator(contactEmails, mine);
                 if (job.Gmail)
                 {
-                    var since = now - Window;
+                    var since = now - window;
                     var scan = await client.ScanMailAsync(
-                        aggregator, since, MaxMessages, historyId, n => Beat("gmail", n), ct);
+                        aggregator, since, MaxMessagesPerYear * years, historyId, n => Beat("gmail", n), ct);
                     snapshot.MessagesScanned = scan.Read;
                     // A mailbox bigger than the cap is covered only back to the oldest message read
                     snapshot.Since = scan.Truncated && scan.Oldest != null ? scan.Oldest : since;
@@ -224,7 +228,7 @@ public class ActivityWorker : BackgroundService
             aggregator!.ClearMeetings();
             if (job.Calendar)
             {
-                await client.ScanCalendarAsync(aggregator, now - Window, now.AddDays(60), n => Beat("calendar", n), ct);
+                await client.ScanCalendarAsync(aggregator, now - window, now.AddDays(60), n => Beat("calendar", n), ct);
             }
 
             aggregator.PruneDirectory();
@@ -259,6 +263,12 @@ public class ActivityWorker : BackgroundService
         }
 
         await _store.SaveAsync(job.UserId, snapshot);
+
+        // The period changed while this scan ran (it read the old one): scan it in full now
+        if (snapshot.Status == ActivityStatus.Ready && await _store.GetWindowYearsAsync(job.UserId) != years)
+        {
+            await EnqueueAsync(job with { Full = true });
+        }
     }
 
     /// <summary>Marks the scan failed; the previous data stays usable</summary>

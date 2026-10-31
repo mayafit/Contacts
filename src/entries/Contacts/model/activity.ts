@@ -141,6 +141,9 @@ export const lastMonths = (now: Date, n: number): Set<string> => {
   return keys;
 };
 
+/** Months the usual rhythm is computed over (AD-47 rule 2) */
+export const RHYTHM_MONTHS = 24;
+
 const sumMonths = (months: Record<string, number> | undefined, keys: Set<string>): number =>
   Object.entries(months ?? {}).reduce((s, [k, v]) => (keys.has(k) ? s + v : s), 0);
 
@@ -157,6 +160,7 @@ export const buildActivityIndex = (
   now: Date = new Date(),
 ): ActivityIndex => {
   const year = lastMonths(now, 12);
+  const rhythm = lastMonths(now, RHYTHM_MONTHS);
   const index: ActivityIndex = new Map();
   contacts.forEach((c) => {
     const addresses = [
@@ -209,7 +213,8 @@ export const buildActivityIndex = (
       found.lastInTouch = later(found.lastEmailAt, found.lastMeetingAt);
       found.score = found.emails12m + MEETING_WEIGHT * found.meetings12m;
       found.activeMonths = [...new Set(found.activeMonths)].sort();
-      found.typicalGapDays = typicalGapOf(found.activeMonths);
+      // The current rhythm: a longer scan period (AD-47) must not average old habits in
+      found.typicalGapDays = typicalGapOf(found.activeMonths.filter((m) => rhythm.has(m)));
       index.set(c.resourceName, found);
     }
   });

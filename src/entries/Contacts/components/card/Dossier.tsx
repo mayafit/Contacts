@@ -5,13 +5,15 @@
  * @module Contacts/components/card/Dossier
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Box, Button, ButtonBase, Chip, Collapse, Link, Typography } from '@mui/material';
 import { ExpandLess, ExpandMore, Star } from '@mui/icons-material';
 import type { Contact, ContactGroup } from '../../types/Contact';
 import {
   backendApiClient,
+  type ContactHistory,
   type GravatarProfile,
+  type MailCount,
   type ThreadState,
 } from '../../../../services/api/BackendApiClient';
 import { describeGap, formatRelative, type ActivityIndex } from '../../model/activity';
@@ -41,6 +43,8 @@ export interface DossierData {
   gravatar: Map<string, GravatarProfile[]>;
   /** Email content (T2) may be read */
   signaturesAllowed: boolean;
+  /** Calendar is connected (a Contact's whole history searches it, AD-47) */
+  calendarAllowed?: boolean;
   onOpenCard: (resourceName: string) => void;
 }
 
@@ -58,6 +62,132 @@ const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title
     <Box sx={{ mt: 0.5 }}>{children}</Box>
   </Box>
 );
+
+const monthYear = (iso?: string | null): string =>
+  iso ? new Date(iso).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }) : '';
+
+/** "Nov 2015 – Mar 2016", or one month when both ends are in it */
+const span = (first?: string | null, last?: string | null): string => {
+  const a = monthYear(first);
+  const b = monthYear(last);
+  return a && b && a !== b ? `${a} – ${b}` : b || a;
+};
+
+/** "143 emails from them (Nov 2015 – Mar 2016)"; a capped count has no first date */
+const mailLine = (c: MailCount, what: string): string => {
+  const n = `${c.count.toLocaleString('en-GB')}${c.capped ? '+' : ''}`;
+  const when = c.count ? span(c.capped ? null : c.first, c.last) : '';
+  return `${n} ${c.count === 1 ? 'email' : 'emails'} ${what}${when ? ` (${when})` : ''}`;
+};
+
+/**
+ * A Contact's whole history, searched on request without a date limit (AD-47 rule 7).
+ * @param props - The Contact, its addresses and what may be searched
+ * @returns Section
+ */
+const AllHistory: React.FC<{
+  contact: string;
+  emails: string[];
+  mailAllowed: boolean;
+  calendarAllowed: boolean;
+}> = ({ contact, emails, mailAllowed, calendarAllowed }) => {
+  const [record, setRecord] = useState<ContactHistory | null>(null);
+  const [state, setState] = useState<
+    { s: 'loading' | 'idle' | 'busy' } | { s: 'error'; message: string }
+  >({ s: 'loading' });
+
+  useEffect(() => {
+    let live = true;
+    backendApiClient
+      .getContactHistory(contact)
+      .then((r) => live && setRecord(r))
+      .catch(() => undefined)
+      .finally(() => live && setState({ s: 'idle' }));
+    return () => {
+      live = false;
+    };
+  }, [contact]);
+
+  const search = async () => {
+    setState({ s: 'busy' });
+    try {
+      setRecord(await backendApiClient.searchContactHistory(contact, emails));
+      setState({ s: 'idle' });
+    } catch (e) {
+      setState({ s: 'error', message: (e as Error).message });
+    }
+  };
+
+  const caption = { color: tokens.textSecondary };
+  const meetings = record?.meetings;
+  return (
+    <Section title="All history">
+      {record && (
+        <Box sx={{ mb: 0.5 }}>
+          {record.mail === 'searched' && record.received && (
+            <Typography variant="body2">{mailLine(record.received, 'from them')}</Typography>
+          )}
+          {record.mail === 'searched' && record.sent && (
+            <Typography variant="body2">{mailLine(record.sent, 'to them')}</Typography>
+          )}
+          {record.calendar === 'searched' && meetings && (
+            <Typography variant="body2">
+              {meetings.count}
+              {meetings.capped ? '+' : ''} {meetings.count === 1 ? 'meeting' : 'meetings'}
+              {meetings.count ? ` (${span(meetings.first, meetings.last)})` : ''}
+              {meetings.next ? ` · next ${formatRelative(meetings.next)}` : ''}
+            </Typography>
+          )}
+          <Typography variant="caption" component="div" sx={caption}>
+            {record.mail === 'not_allowed'
+              ? 'Mail not searched: allow reading email content (Insights). '
+              : ''}
+            {record.calendar === 'not_allowed' ? 'Calendar not connected. ' : ''}
+            {record.mail === 'failed' ? 'Mail could not be searched. ' : ''}
+            {record.calendar === 'failed' ? 'Calendar could not be searched. ' : ''}
+            {record.error ? `${record.error} ` : ''}
+            Checked{' '}
+            {new Date(record.checkedAt).toLocaleDateString('en-GB', {
+              day: 'numeric',
+              month: 'short',
+              year: 'numeric',
+            })}
+            .
+          </Typography>
+        </Box>
+      )}
+      {mailAllowed || calendarAllowed ? (
+        <Button
+          size="small"
+          disabled={state.s === 'busy' || state.s === 'loading'}
+          onClick={() => void search()}
+        >
+          {state.s === 'busy'
+            ? 'Searching all mail and calendar…'
+            : record
+              ? 'Search again'
+              : 'Search all history'}
+        </Button>
+      ) : (
+        <Typography variant="caption" sx={{ color: tokens.textMuted }}>
+          Connect Calendar or allow reading email content (Insights) to search all history.
+        </Typography>
+      )}
+      {!record && state.s !== 'busy' && (mailAllowed || calendarAllowed) && (
+        <Typography variant="caption" component="div" sx={{ color: tokens.textMuted }}>
+          {mailAllowed
+            ? 'Counts every email and meeting with them, at any date. Only counts and dates are kept.'
+            : 'Counts every meeting with them, at any date. Allow reading email content (Insights) to count emails too.'}
+        </Typography>
+      )}
+      {state.s === 'error' && (
+        <Typography variant="caption" component="div" sx={{ color: tokens.attention }}>
+          {state.message}
+        </Typography>
+      )}
+    </Section>
+  );
+};
 
 /**
  * The dossier.
@@ -276,6 +406,15 @@ const Dossier: React.FC<{
               </Typography>
             ))}
           </Section>
+        )}
+
+        {emails.length > 0 && (
+          <AllHistory
+            contact={contact.resourceName}
+            emails={emails}
+            mailAllowed={data.signaturesAllowed}
+            calendarAllowed={!!data.calendarAllowed}
+          />
         )}
 
         <Section title="Shared context">
