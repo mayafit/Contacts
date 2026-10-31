@@ -108,6 +108,7 @@ import { analyzeOrganizations, type DomainInsight } from '../model/organizations
 import { useAppSelector, useAppDispatch } from '../types/hooks';
 import type { Contact, ContactGroup } from '../types/Contact';
 import {
+  clean,
   getDisplayName,
   getPhoneticName,
   hasName,
@@ -424,6 +425,15 @@ const SignedInHome: React.FC = () => {
       deferredQuery,
       searchIndex,
     ],
+  );
+
+  // A search that finds nobody says whether the Trash holds matches (it is left out of every view)
+  const trashMatches = useMemo(
+    () =>
+      visible.length === 0 && clean(deferredQuery)
+        ? trashed.filter((c) => matchesQuery(c, deferredQuery)).length
+        : 0,
+    [visible.length, deferredQuery, trashed],
   );
 
   /** Shows a set of contacts in the table, replacing other filters */
@@ -923,6 +933,11 @@ const SignedInHome: React.FC = () => {
             {contacts.length > 0 && (
               <Button sx={{ mt: 1 }} onClick={() => showFilter('all')}>
                 Clear search and filters
+              </Button>
+            )}
+            {trashMatches > 0 && (
+              <Button sx={{ mt: 1, display: 'block', mx: 'auto' }} onClick={() => setView('trash')}>
+                {trashMatches === 1 ? '1 match' : `${trashMatches} matches`} in Trash
               </Button>
             )}
           </Box>
