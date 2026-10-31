@@ -70,6 +70,36 @@ describe('the dossier (AD-46 rule 6)', () => {
     );
   });
 
+  it("lists only this contact's awaiting threads, not the whole mailbox's", () => {
+    const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
+    const thread = (threadId: string, subject: string, counterpart: string) =>
+      ({
+        threadId,
+        subject,
+        lastAt: daysAgo(5),
+        lastFromMe: false,
+        inInbox: true,
+        counterparts: [counterpart],
+      }) as unknown as DossierData['threads'][number];
+    render(
+      <Dossier
+        contact={dana}
+        draft={dana}
+        onDraftChange={jest.fn()}
+        groups={{}}
+        data={data({
+          activity: new Map() as unknown as DossierData['activity'],
+          threads: [
+            thread('t1', 'Budget review', 'dana@acme.com'),
+            thread('t2', 'Your car has been selected', 'noreply@rental.example'),
+          ],
+        })}
+      />,
+    );
+    expect(screen.getByText(/Budget review/)).toBeTruthy();
+    expect(screen.queryByText(/Your car has been selected/)).toBeNull();
+  });
+
   it('reads the signature links on request', async () => {
     client.signatureLinks.mockResolvedValue({
       emails: 3,

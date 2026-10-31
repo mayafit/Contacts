@@ -431,7 +431,7 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({
               )}
               {dossier && (
                 <Dossier
-                  key={draft.resourceName}
+                  key={`dossier:${draft.resourceName}`}
                   contact={contact ?? original}
                   draft={draft}
                   onDraftChange={setDraft}
@@ -444,7 +444,7 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({
                 />
               )}
               <ContactForm
-                key={draft.resourceName}
+                key={`form:${draft.resourceName}`}
                 draft={draft}
                 onChange={setDraft}
                 disabled={saving}

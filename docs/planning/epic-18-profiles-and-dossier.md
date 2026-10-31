@@ -45,4 +45,6 @@ Checked on 2026-10-31:
 
 ### 18.4 Deployment — Phase 1
 
-- [ ] Merged, images built for arm64, rolled out; checked on the Owner's Contacts.
+- [x] Merged, images built for arm64, rolled out (#138); checked on the Owner's Contacts, which found
+  the dossier listing the whole mailbox's waiting threads, showing twice, and not following a
+  colleague opened from it (fixed in the follow-up PR, AD-46 rule 6).

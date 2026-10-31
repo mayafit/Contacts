@@ -178,6 +178,16 @@ const ContactsTable: React.FC<ContactsTableProps> = ({
     setFirstVisible(0);
   }, [scrollResetKey]);
 
+  // The open card's row is brought into view, e.g. a colleague opened from the dossier
+  useEffect(() => {
+    const index = selectedResourceName
+      ? sorted.findIndex((c) => c.resourceName === selectedResourceName)
+      : -1;
+    if (index >= 0) {
+      virtualizer.scrollToIndex(index, { align: 'auto' });
+    }
+  }, [selectedResourceName]);
+
   const activeLetter = useMemo(() => {
     if (railEntries.length === 0 || sorted.length === 0) {
       return null;
