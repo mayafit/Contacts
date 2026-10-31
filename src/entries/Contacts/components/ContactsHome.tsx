@@ -429,19 +429,33 @@ const SignedInHome: React.FC = () => {
 
   // A search that finds nobody says where its matches are: hidden by the filters, or in the
   // Trash (left out of every view)
+  // The Trash opened from the search ticks those matches
+  const [trashPreselect, setTrashPreselect] = useState<string[] | undefined>(undefined);
+  const trashIndex = useMemo(
+    () => new Map(trashed.map((c) => [c.resourceName, searchTextOf(c)])),
+    [trashed],
+  );
   const elsewhere = useMemo(() => {
-    if (visible.length > 0 || !clean(deferredQuery)) {
+    if (!clean(deferredQuery)) {
       return { filtered: 0, trash: [] as string[] };
     }
     return {
-      filtered: contacts.filter((c) =>
-        matchesQuery(c, deferredQuery, searchIndex.get(c.resourceName)),
-      ).length,
-      trash: trashed.filter((c) => matchesQuery(c, deferredQuery)).map((c) => c.resourceName),
+      // Shown only when the table is empty
+      filtered:
+        visible.length > 0
+          ? 0
+          : contacts.filter((c) => matchesQuery(c, deferredQuery, searchIndex.get(c.resourceName)))
+              .length,
+      // Shown with any result: a search can find others while the one sought is in the Trash
+      trash: trashed
+        .filter((c) => matchesQuery(c, deferredQuery, trashIndex.get(c.resourceName)))
+        .map((c) => c.resourceName),
     };
-  }, [visible.length, deferredQuery, contacts, searchIndex, trashed]);
-  // The Trash opened from there ticks those matches
-  const [trashPreselect, setTrashPreselect] = useState<string[] | undefined>(undefined);
+  }, [visible.length, deferredQuery, contacts, searchIndex, trashed, trashIndex]);
+  const openTrashMatches = () => {
+    setTrashPreselect(elsewhere.trash);
+    setView('trash');
+  };
 
   /** Shows a set of contacts in the table, replacing other filters */
   const showContacts = useCallback((ids: string[], title: string) => {
@@ -884,6 +898,11 @@ const SignedInHome: React.FC = () => {
             ? `${fmt.format(contacts.length)} contacts`
             : `${fmt.format(visible.length)} of ${fmt.format(contacts.length)}`}
         </Typography>
+        {visible.length > 0 && elsewhere.trash.length > 0 && (
+          <Button size="small" onClick={openTrashMatches}>
+            +{elsewhere.trash.length} in Trash
+          </Button>
+        )}
         <Tooltip title="Choose columns">
           <IconButton
             onClick={() => setIsColumnConfigOpen(true)}
@@ -951,13 +970,7 @@ const SignedInHome: React.FC = () => {
               </Typography>
             )}
             {elsewhere.trash.length > 0 && (
-              <Button
-                sx={{ mt: 1, display: 'block', mx: 'auto' }}
-                onClick={() => {
-                  setTrashPreselect(elsewhere.trash);
-                  setView('trash');
-                }}
-              >
+              <Button sx={{ mt: 1, display: 'block', mx: 'auto' }} onClick={openTrashMatches}>
                 {elsewhere.trash.length === 1 ? '1 match' : `${elsewhere.trash.length} matches`} in
                 Trash
               </Button>

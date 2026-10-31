@@ -925,7 +925,7 @@ Insights proposes segments found in the Contacts by grouping, each with its coun
 - **Organization**: Contacts whose organization names are the same once case, punctuation and company suffixes ("Ltd", "Inc.", "בע"מ") are set aside; 3 or more.
 - **Email domain**: Contacts sharing a work email domain (not a personal mail service); 3 or more.
 - **Phone country**: Contacts by their numbers' country; 3 or more, other than the Owner's main country, which is everyone.
-- **Relationship tier** (T1), from the last 12 months of emails and meetings (an email counts 1, a meeting 3): **Inner circle** (24 or more, and in touch in the last 30 days), **Regular** (6 or more, in the last 90 days), **Occasional** (in touch in the last year), **Dormant** (in touch before, not in the last year), **Never in touch**.
+- **Relationship tier** (T1), from the last 12 months of emails and meetings (an email counts 1, a meeting 3): **Inner circle** (24 or more, and in touch in the last 30 days), **Regular** (6 or more, in the last 90 days), **Occasional** (in touch in the last year), **Dormant** (in touch before, not in the last year), **Not in the past year** (no email or meeting in the 12 months the activity covers; older mail is not read, so the app does not say "never").
 - **Name script**: Hebrew, English, mixed (for clean-up).
 
 ### 4.19 Contacts: Public Profiles and the Dossier (Proposed)

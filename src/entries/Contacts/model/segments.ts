@@ -31,7 +31,8 @@ export const TIERS: { id: Tier; name: string }[] = [
   { id: 'regular', name: 'Regular' },
   { id: 'occasional', name: 'Occasional' },
   { id: 'dormant', name: 'Dormant' },
-  { id: 'never', name: 'Never in touch' },
+  // The activity covers the last 12 months: older mail is not seen
+  { id: 'never', name: 'Not in the past year' },
 ];
 
 /** Fields a rule can ask for */
@@ -395,7 +396,7 @@ export const describeRule = (r: SegmentRule, groups: Record<string, ContactGroup
       return `Birthday in ${MONTHS[r.value - 1] ?? '?'}`;
     case 'lastTouch':
       return r.op === 'never'
-        ? 'Never in touch'
+        ? 'Not in touch in the past year'
         : `In touch ${r.op === 'within' ? 'within' : 'more than'} ${r.days ?? 0} days${r.op === 'olderThan' ? ' ago' : ''}`;
     case 'tier':
       return `Tier: ${TIERS.find((t) => t.id === r.value)?.name ?? r.value}`;
