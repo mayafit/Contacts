@@ -75,7 +75,7 @@ const Dossier: React.FC<{
   const [open, setOpen] = useState(true);
   const [signature, setSignature] = useState<
     | { state: 'idle' | 'busy' }
-    | { state: 'done'; urls: string[]; emails: number }
+    | { state: 'done'; urls: string[]; emails: number; matched: number }
     | { state: 'error'; message: string }
   >({ state: 'idle' });
   const gravatar = data.gravatar.get(contact.resourceName) ?? [];
@@ -115,7 +115,12 @@ const Dossier: React.FC<{
     setSignature({ state: 'busy' });
     try {
       const r = await backendApiClient.signatureLinks(emails.slice(0, 5));
-      setSignature({ state: 'done', urls: r.urls, emails: r.emails });
+      setSignature({
+        state: 'done',
+        urls: r.urls,
+        emails: r.emails,
+        matched: r.matched ?? r.emails,
+      });
     } catch (e) {
       setSignature({ state: 'error', message: (e as Error).message });
     }
@@ -196,9 +201,11 @@ const Dossier: React.FC<{
               )}
               {signature.state === 'done' && (
                 <Typography variant="caption" component="div" sx={{ color: tokens.textMuted }}>
-                  {signature.emails === 0
+                  {signature.matched === 0
                     ? 'No email from them in the last 3 years.'
-                    : `Read their last ${signature.emails} emails: ${signatureFound ? `${signatureFound} links` : 'no profile link'} in their signatures.`}
+                    : signature.emails === 0
+                      ? `Their last ${signature.matched} emails were meeting invitations or had no text of their own.`
+                      : `Read their last ${signature.emails} emails: ${signatureFound ? `${signatureFound} links` : 'no profile link'} in their signatures.`}
                 </Typography>
               )}
               {signature.state === 'error' && (

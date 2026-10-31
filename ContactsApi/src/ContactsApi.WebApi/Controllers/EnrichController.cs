@@ -130,7 +130,7 @@ public class EnrichController : ControllerBase
             List<SignatureSample> samples;
             try
             {
-                samples = await reader.RecentFromAsync(t.Emails, EmailsPerContact, HttpContext.RequestAborted);
+                samples = (await reader.RecentFromAsync(t.Emails, EmailsPerContact, HttpContext.RequestAborted)).Samples;
             }
             catch (ActivityScanException ex) when (ex.Code is "NOT_CONNECTED" or "SCOPE_CONFLICT")
             {

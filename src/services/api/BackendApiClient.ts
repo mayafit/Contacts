@@ -719,12 +719,17 @@ export class BackendApiClient {
   }
 
   /** The links in the signatures of a contact's last 3 emails (T2) */
-  async signatureLinks(emails: string[]): Promise<{ emails: number; urls: string[] }> {
+  async signatureLinks(
+    emails: string[],
+  ): Promise<{ matched: number; emails: number; urls: string[] }> {
     return unwrap(
-      await this.request<{ emails: number; urls: string[] }>('/profiles/signatures', {
-        method: 'POST',
-        body: JSON.stringify({ emails }),
-      }),
+      await this.request<{ matched: number; emails: number; urls: string[] }>(
+        '/profiles/signatures',
+        {
+          method: 'POST',
+          body: JSON.stringify({ emails }),
+        },
+      ),
       'Failed to read the signatures',
     );
   }

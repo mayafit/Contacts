@@ -183,11 +183,12 @@ public class ProfilesController : ControllerBase
             await _tokens.GetAccessTokenAsync(HttpContext) ?? throw new ActivityScanException("NOT_CONNECTED", "Session ended"));
         try
         {
-            var samples = await reader.RecentFromAsync(emails, EmailsPerContact, HttpContext.RequestAborted);
+            var read = await reader.RecentFromAsync(emails, EmailsPerContact, HttpContext.RequestAborted);
             return Ok(ApiResponse<object>.SuccessResponse(new
             {
-                emails = samples.Count,
-                urls = SignatureLinks.Extract(samples.Select(s => s.Tail))
+                matched = read.Matched,
+                emails = read.Samples.Count,
+                urls = SignatureLinks.Extract(read.Samples.Select(s => s.Tail))
             }));
         }
         catch (ActivityScanException ex) when (ex.Code is "NOT_CONNECTED" or "SCOPE_CONFLICT")

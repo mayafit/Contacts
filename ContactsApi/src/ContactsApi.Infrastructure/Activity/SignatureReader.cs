@@ -14,6 +14,11 @@ namespace ContactsApi.Infrastructure.Activity;
 /// <param name="Tail">The sender's last lines (see <see cref="SignatureText.AuthorTail"/>)</param>
 public record SignatureSample(DateTime At, string Tail);
 
+/// <summary>What a read found</summary>
+/// <param name="Matched">Emails from the addresses that were looked at (invitations included)</param>
+/// <param name="Samples">The tails of those with text of the sender's own, newest first</param>
+public record SignatureRead(int Matched, List<SignatureSample> Samples);
+
 /// <summary>
 /// Fetches a person's most recent emails and keeps only the tail of the text
 /// they wrote. Needs the gmail.readonly scope; bodies are never stored.
@@ -31,14 +36,21 @@ public class SignatureReader
             ApplicationName = "ContactsApi"
         });
 
+    /// <summary>Emails looked at for each one kept: invitations and empty tails are skipped</summary>
+    public const int ScanFactor = 4;
+
     /// <summary>
-    /// The tails of the latest emails sent by any of the addresses.
+    /// The tails of the latest emails sent by any of the addresses. Meeting
+    /// invitations (a text/calendar part: Outlook's text opens with a rule of
+    /// underscores, read as quoted mail) and emails with no text of the sender's
+    /// own are skipped, and older ones read instead, up to <see cref="ScanFactor"/>
+    /// times <paramref name="max"/>.
     /// </summary>
     /// <param name="emails">The person's addresses</param>
-    /// <param name="max">Emails to read</param>
+    /// <param name="max">Emails to keep</param>
     /// <param name="ct">Cancellation</param>
-    /// <returns>Newest first</returns>
-    public async Task<List<SignatureSample>> RecentFromAsync(IReadOnlyList<string> emails, int max, CancellationToken ct)
+    /// <returns>How many matched, and the tails newest first</returns>
+    public async Task<SignatureRead> RecentFromAsync(IReadOnlyList<string> emails, int max, CancellationToken ct)
     {
         // Only plain addresses, quoted: a stored "address" must not widen the search
         var from = string.Join(" OR ", emails
@@ -49,25 +61,32 @@ public class SignatureReader
             .Select(e => $"\"{e}\""));
         if (from.Length == 0)
         {
-            return new();
+            return new SignatureRead(0, new());
         }
 
         try
         {
             var list = _gmail.Users.Messages.List("me");
             list.Q = $"from:({from}) newer_than:3y -in:chats";
-            list.MaxResults = max;
+            list.MaxResults = max * ScanFactor;
             list.Fields = "messages/id";
             // No match can come back as no response at all
             var page = await list.ExecuteAsync(ct);
             var samples = new List<SignatureSample>();
+            var matched = 0;
             foreach (var id in page?.Messages?.Select(m => m?.Id).OfType<string>() ?? Enumerable.Empty<string>())
             {
+                if (samples.Count >= max)
+                {
+                    break;
+                }
+
+                matched++;
                 var get = _gmail.Users.Messages.Get("me", id);
                 get.Format = UsersResource.MessagesResource.GetRequest.FormatEnum.Full;
                 get.Fields = "internalDate,payload(mimeType,headers,body/data,parts(mimeType,headers,body/data,parts(mimeType,headers,body/data,parts(mimeType,headers,body/data))))";
                 var m = await get.ExecuteAsync(ct);
-                if (m == null)
+                if (m == null || IsInvitation(m.Payload))
                 {
                     continue;
                 }
@@ -79,7 +98,7 @@ public class SignatureReader
                 }
             }
 
-            return samples;
+            return new SignatureRead(matched, samples);
         }
         catch (global::Google.GoogleApiException ex)
             when ((ex.Error?.Message ?? ex.Message).Contains("Metadata scope", StringComparison.OrdinalIgnoreCase))
@@ -95,6 +114,13 @@ public class SignatureReader
             throw GoogleActivityClient.Classify((int)ex.HttpStatusCode, ex.Error?.Message ?? ex.Message, "gmail", ex);
         }
     }
+
+    /// <summary>A meeting invitation: any part is a calendar</summary>
+    internal static bool IsInvitation(MessagePart? part) =>
+        part != null
+        && (string.Equals(part.MimeType, "text/calendar", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(part.MimeType, "application/ics", StringComparison.OrdinalIgnoreCase)
+            || (part.Parts ?? new List<MessagePart>()).Any(IsInvitation));
 
     /// <summary>The plain text of a message (the HTML part converted when there is none)</summary>
     internal static string BodyText(MessagePart? part)
