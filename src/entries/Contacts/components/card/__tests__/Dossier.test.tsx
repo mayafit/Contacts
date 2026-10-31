@@ -110,6 +110,7 @@ describe('the dossier (AD-46 rule 6)', () => {
 
   it('reads the signature links on request', async () => {
     client.signatureLinks.mockResolvedValue({
+      matched: 3,
       emails: 3,
       urls: ['https://x.com/dana', 'https://promo.example.com'],
     });
@@ -126,5 +127,25 @@ describe('the dossier (AD-46 rule 6)', () => {
     await waitFor(() => expect(screen.getByText(/1 links in their signatures/)).toBeTruthy());
     expect(client.signatureLinks).toHaveBeenCalledWith(['dana@acme.com']);
     expect(screen.queryByText('promo.example.com')).toBeNull();
+  });
+
+  it('does not say "no email" when their emails were only invitations', async () => {
+    client.signatureLinks.mockResolvedValue({ matched: 12, emails: 0, urls: [] });
+    render(
+      <Dossier
+        contact={dana}
+        draft={dana}
+        onDraftChange={jest.fn()}
+        groups={{}}
+        data={data({ gravatar: new Map() })}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Find links in their signatures' }));
+    expect(
+      await screen.findByText(
+        'Their last 12 emails were meeting invitations or had no text of their own.',
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(/No email from them/)).toBeNull();
   });
 });
