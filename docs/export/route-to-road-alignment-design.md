@@ -15,7 +15,7 @@
 
 **What it does.** The system takes GPS tracks (ordered, timestamped points) and produces, for each one, a line that follows the real roads, the names of the roads travelled, and a confidence score. A raw track drawn point to point cuts across fields and buildings, especially when points are far apart. The aligned line fixes that without ever altering the original recording.
 
-**How it works.** Each route passes through the same per-route pipeline:
+**How it works.** Each route passes automatically through the same per-route pipeline (steps 1 to 6). When that cannot produce a believable line, the user can invoke the similar-routes mechanism (step 7).
 
 1. **Assess** the track with cheap arithmetic: is it long enough, inside the mapped region, of a type worth matching, and not already matched in this form?
 2. **Match** it with an HMM map matcher (the open-source Valhalla engine over OpenStreetMap, self-hosted so no location data leaves the system). The matcher chooses the most likely connected road path through the candidate roads near each point.
@@ -23,9 +23,9 @@
 4. **Score** the result: a confidence from 0 to 1, the *minimum* of four factors (coverage, anchor quality, plausibility, continuity). Every stretch of the line is labelled observed, inferred or gap.
 5. **Store** the aligned line, its road names and its score as a derived layer beside the untouched recording.
 6. **Choose at read time**: draw the aligned line only if it is confident (or the user accepted it), its input has not changed since, and the user has not rejected it; otherwise draw the recording.
-7. **Rebuild** weak routes on demand by borrowing points from similar, confidently matched routes that follow the same corridor, or from points a user marks. The result is offered as a suggestion.
+7. **Find similar routes (user-invoked).** When the match failed or is too weak to draw, the user can ask for a rebuild from **similar routes**: the same user's confidently matched routes along this track's corridor (found through a grid index), that pass close to its points in order and fit its timing. The best is scored and chosen, points are borrowed along its road line, and the track is matched again. The result is shown as a **suggestion** and stored only if the user accepts it. Failing that, the user can mark the way on the map.
 
-**Batch or online.** The pipeline is a function of one route, so it runs the same way whichever way routes arrive (§9.8). In **batch mode** it works through a backlog: a first load, a reprocessing after a rule change, or a time range. In **online mode** each route is processed as it arrives, with a latency target of seconds; a vehicle still on the move can be shown with a provisional line matched over a sliding window. Both modes write the same derived records, so either can skip or redo the other's work without special handling. (The system described here runs batch mode and approximates online mode with wake signals and priority jobs; the per-route arrival queue and live matching are designed but not built.)
+**Batch or online.** The pipeline works on one route at a time, so it runs the same way in **batch mode** (a backlog: first load, reprocessing after a rule change, a time range) and in **online mode** (each route as it arrives, with a latency target of seconds), and both write the same derived records (§9.8). The system described here runs batch mode and approximates online mode; the arrival queue and live matching are designed but not built.
 
 ```mermaid
 flowchart LR
@@ -42,12 +42,15 @@ flowchart LR
   S --> D[(5 Derived layer)]
   D --> R{6 Read-time<br/>choice}
   R -->|confident| AL[Aligned line]
-  R -->|otherwise| K
-  D -.->|similar routes| RB[7 Rebuild<br/>weak routes]
-  RB -.->|accepted suggestion| D
+  R -->|failed or weak| K
+  K -.->|user invokes| SR[7 Find similar<br/>routes]
+  D -.->|confident routes<br/>as candidates| SR
+  SR -.-> RM[Borrow points,<br/>match again]
+  RM -.-> SG{Suggestion:<br/>user accepts?}
+  SG -.->|yes| D
 ```
 
-**Why this design.** Nearest-road snapping fails on sparse tracks, and hosted matching APIs send location history to a third party. Keeping the result as a derived layer, chosen at read time, means a threshold change needs no recomputation, a changed track hides its stale match immediately, and the original data is never at risk. All thresholds live in one versioned rule, so tuning for a new kind of data (§17) is a rule change and version bump, followed by background reprocessing.
+**Why this design.** Nearest-road snapping fails on sparse tracks, and hosted matching APIs send location history to a third party. A derived layer chosen at read time keeps the original data safe, makes threshold changes free, and hides stale matches at once. All thresholds live in one versioned rule, so new data (§17) needs a rule change and background reprocessing, not new code.
 
 ## 1. Purpose and scope
 
@@ -61,7 +64,7 @@ This document explains how a working system aligns recorded GPS tracks to the ro
 - every algorithm, as pseudocode, with its thresholds;
 - the quality model that decides whether an aligned line is used or rejected;
 - how road names are extracted and stored;
-- how similar trips are found and used to rebuild a weak track;
+- the user-invoked similar-routes mechanism: how similar trips are found and used to rebuild a track the automatic match could not align;
 - failure modes, and guidance for adapting the design to vehicle-fleet tracks.
 
 **Out of scope:** the user interface beyond what the data model needs, authentication details, and the upstream import of tracks from their sources.
@@ -985,9 +988,37 @@ keep(roads):
 | Matching only tracks that need improvement | Road search would miss every well-recorded trip. |
 | Searching road names through the general text search | "4" would match every name containing a 4. |
 
-## 14. Similar routes and rebuild
+## 14. Similar routes and rebuild (user-invoked)
 
 A rebuild is **on demand, for one record, interactive**. It never runs automatically, because a borrowed route is a guess the user should see first.
+
+**When it is used.** The automatic pipeline (§10 to §12) cannot draw a believable line for some tracks: too few points, long gaps, or points too far from any road. Those records end as `failed` or `low_confidence`, and the read-time choice (§12.3) shows the recording. The similar-routes mechanism is the user's way out:
+
+1. The user opens such a record and chooses **Rebuild from similar routes**. (The control is offered for any record with a single source that stage A judged matchable, so a user can also try it on a confident line they believe is wrong.)
+2. The service runs the rebuild as an **interactive job**, ahead of all batch work (§9.4), and the client polls the job. A typical rebuild takes well under a second of engine time (§14.7).
+3. The outcome is either a **suggestion**, drawn on the map beside the current line with its confidence and the similar route it was based on, or **no similar route** with a reason the user can act on (§14.9).
+4. The user **uses** the suggestion, which stores it as the record's match and records an `accept` decision so it is drawn, or **discards** it. An unused suggestion expires with its job after 7 days.
+5. If no similar route fits, the user can **mark the way**: place points on the map along the road actually taken, and the route is rebuilt through them (§14.8), with the same suggest-then-accept flow.
+
+```mermaid
+sequenceDiagram
+  actor U as User
+  participant App as Main application
+  participant Svc as Route-quality service
+  participant DB as Derived layer
+  U->>App: open a record shown as its recording (failed or weak match)
+  U->>App: Rebuild from similar routes
+  App->>Svc: POST /rebuild (method similar)
+  Svc->>DB: candidate routes by corridor cells
+  Svc->>Svc: fit, score, group into ways, borrow points, match
+  App->>Svc: poll GET /jobs/{id}
+  Svc-->>App: suggestion (line, confidence, basis) or no similar route
+  App-->>U: suggestion drawn on the map
+  U->>App: use it
+  App->>Svc: POST /apply
+  Svc->>DB: write matched route (method similar, basis)
+  App->>DB: accept decision
+```
 
 ### 14.1 Overview
 
