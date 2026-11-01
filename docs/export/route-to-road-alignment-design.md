@@ -3,13 +3,51 @@
 | | |
 |---|---|
 | **Document** | Route-to-road alignment design (portable edition) |
-| **Version** | 1.0 |
-| **Status** | Describes the system as built. Where the original planning documents and the code disagree, this document follows the code. |
+| **Version** | 1.1 |
+| **Status** | Describes the system as built. Where the original planning documents and the code disagree, this document follows the code. §9.8 (online mode) is a design extension and says which parts are built. |
 | **Date** | 2026-11-01 |
 | **Scope** | Assessing recorded GPS tracks, aligning them to the road network, deciding whether to show the aligned line, naming the roads travelled, and rebuilding weak tracks from similar trips |
 | **Engine** | Valhalla 3.9.1 (self-hosted), with its Meili map matcher, over an OpenStreetMap routing graph |
 
 ---
+
+## Executive summary
+
+**What it does.** The system takes GPS tracks (ordered, timestamped points) and produces, for each one, a line that follows the real roads, the names of the roads travelled, and a confidence score. A raw track drawn point to point cuts across fields and buildings, especially when points are far apart. The aligned line fixes that without ever altering the original recording.
+
+**How it works.** Each route passes through the same per-route pipeline:
+
+1. **Assess** the track with cheap arithmetic: is it long enough, inside the mapped region, of a type worth matching, and not already matched in this form?
+2. **Match** it with an HMM map matcher (the open-source Valhalla engine over OpenStreetMap, self-hosted so no location data leaves the system). The matcher chooses the most likely connected road path through the candidate roads near each point.
+3. **Fill gaps** the matcher could not bridge with one routing call each, accepted only when the route fits the elapsed time and the straight-line distance.
+4. **Score** the result: a confidence from 0 to 1, the *minimum* of four factors (coverage, anchor quality, plausibility, continuity). Every stretch of the line is labelled observed, inferred or gap.
+5. **Store** the aligned line, its road names and its score as a derived layer beside the untouched recording.
+6. **Choose at read time**: draw the aligned line only if it is confident (or the user accepted it), its input has not changed since, and the user has not rejected it; otherwise draw the recording.
+7. **Rebuild** weak routes on demand by borrowing points from similar, confidently matched routes that follow the same corridor, or from points a user marks. The result is offered as a suggestion.
+
+**Batch or online.** The pipeline is a function of one route, so it runs the same way whichever way routes arrive (§9.8). In **batch mode** it works through a backlog: a first load, a reprocessing after a rule change, or a time range. In **online mode** each route is processed as it arrives, with a latency target of seconds; a vehicle still on the move can be shown with a provisional line matched over a sliding window. Both modes write the same derived records, so either can skip or redo the other's work without special handling. (The system described here runs batch mode and approximates online mode with wake signals and priority jobs; the per-route arrival queue and live matching are designed but not built.)
+
+```mermaid
+flowchart LR
+  subgraph IN[Arrival]
+    B1[Batch:<br/>backlog, rule change,<br/>time range]
+    O1[Online:<br/>route completed]
+  end
+  B1 --> A[1 Assess]
+  O1 --> A
+  A -->|not matchable| K[Keep recording]
+  A -->|matchable| M[2 Match<br/>HMM engine]
+  M --> G[3 Fill gaps]
+  G --> S[4 Score and<br/>name roads]
+  S --> D[(5 Derived layer)]
+  D --> R{6 Read-time<br/>choice}
+  R -->|confident| AL[Aligned line]
+  R -->|otherwise| K
+  D -.->|similar routes| RB[7 Rebuild<br/>weak routes]
+  RB -.->|accepted suggestion| D
+```
+
+**Why this design.** Nearest-road snapping fails on sparse tracks, and hosted matching APIs send location history to a third party. Keeping the result as a derived layer, chosen at read time, means a threshold change needs no recomputation, a changed track hides its stale match immediately, and the original data is never at risk. All thresholds live in one versioned rule, so tuning for a new kind of data (§17) is a rule change and version bump, followed by background reprocessing.
 
 ## 1. Purpose and scope
 
@@ -19,6 +57,7 @@ This document explains how a working system aligns recorded GPS tracks to the ro
 
 - the alternatives that were considered and why the current design won;
 - the architecture: components, data flow, the matching engine and its road graph, job scheduling, storage, internal APIs and reprocessing;
+- running the pipeline in batch mode over a backlog and in online mode as routes arrive;
 - every algorithm, as pseudocode, with its thresholds;
 - the quality model that decides whether an aligned line is used or rejected;
 - how road names are extracted and stored;
@@ -31,7 +70,8 @@ This document explains how a working system aligns recorded GPS tracks to the ro
 
 The reader is an engineer who knows HTTP services, relational databases and basic geometry, but not this system.
 
-- Read **§4 Overview** and **§8 Decision** first for the shape of the design.
+- Read the **Executive summary**, **§4 Overview** and **§8 Decision** first for the shape of the design.
+- Read **§9.8 Processing modes** to choose between batch and online operation, or to run both.
 - Read **§9 to §14** to implement it. Each algorithm has pseudocode and a list of its constants.
 - Use **§15 Parameters** as the single reference for every number.
 - Read **§17 Adapting to vehicle-track data** before reusing any threshold: most of them were tuned for sparse, noisy phone location history.
@@ -76,6 +116,8 @@ Terms are defined here before the body uses them.
 | **Polyline5 / polyline6** | Google's encoded-polyline format at 5 or 6 decimal places. The engine returns precision 6; the system stores precision 5. |
 | **Stage A, stage B** | Stage A is the assessment of a track from its own points, with no engine (§10). Stage B is matching with the engine (§11). |
 | **Rollout phase** | Trip types are enabled for matching in phases. "Enabled" types are matched today; "planned" types are assessed but not yet matched; "never" types are not matched at all. |
+| **Batch mode** | Processing a set of routes that already exist: a first load, reprocessing after a rule change, a time range or an explicit list. Throughput matters more than latency (§9.8). |
+| **Online mode** | Processing each route as it arrives, with a latency target of seconds. **Live matching** is its variant for a trip still in progress, matched over a sliding window (§9.8). |
 | **Interactive job** | A job of at most 50 records started by a user who is waiting for it. It runs ahead of background work. |
 | **Circuit breaker** | A guard that pauses all engine calls after several consecutive engine failures, then lets one call through to test recovery. |
 | **CI** | Continuous integration: the build pipeline outside the production cluster, where the road graph is built. |
@@ -85,11 +127,11 @@ Terms are defined here before the body uses them.
 
 **The problem.** A sparse source records a car trip as about 13 points, for an average trip of 13.5 km (0.94 points per km across all drives). Drawn point to point, it is a chain of straight lines across fields and buildings. Snapping each point to its nearest road does not help: the road between two points 440 m to 2.8 km apart has to be *inferred* by routing, not snapped.
 
-**The design in one paragraph.** A separate background service pulls changed records from the main application, assesses every track with cheap arithmetic (**stage A**), and sends matchable ones to a self-hosted **Valhalla** engine whose HMM matcher routes between candidate roads (**stage B**). Gaps the matcher cannot bridge are filled with one extra routing call each, accepted only when the route fits the elapsed time and the straight-line distance. Every piece of the result is labelled observed, inferred or gap. A confidence from four factors (coverage, anchor quality, plausibility, continuity) sets a status. The aligned line is stored as a **derived layer** beside the untouched recording, and the read path chooses between the two at read time. Road names come free with the match. For weak tracks, the user can ask for a **rebuild**: points are borrowed from the same user's confidently matched trips that follow the same corridor, or from points the user marks on the map, and the result is offered as a suggestion.
+**The design in one paragraph.** A separate service pulls records from the main application as a backlog (batch mode; the online extension of §9.8 takes them one at a time as they arrive), assesses every track with cheap arithmetic (**stage A**), and sends matchable ones to a self-hosted **Valhalla** engine whose HMM matcher routes between candidate roads (**stage B**). Gaps the matcher cannot bridge are filled with one extra routing call each, accepted only when the route fits the elapsed time and the straight-line distance. Every piece of the result is labelled observed, inferred or gap. A confidence from four factors (coverage, anchor quality, plausibility, continuity) sets a status. The aligned line is stored as a **derived layer** beside the untouched recording, and the read path chooses between the two at read time. Road names come free with the match. For weak tracks, the user can ask for a **rebuild**: points are borrowed from the same user's confidently matched trips that follow the same corridor, or from points the user marks on the map, and the result is offered as a suggestion.
 
 ```mermaid
 flowchart LR
-  src[(Recorded tracks<br/>never modified)] -->|change feed, pull| A[Stage A<br/>assess every track]
+  src[(Recorded tracks<br/>never modified)] -->|batch backlog or<br/>online arrival| A[Stage A<br/>assess every track]
   A -->|matchable| B[Stage B<br/>trace calls]
   B --> F[Gap filling<br/>one route call per stretch]
   F --> C[Assemble line, pieces,<br/>roads, confidence]
@@ -224,7 +266,7 @@ Rejected options and the condition under which each would be reconsidered:
 | **A separate service with the engine as a sidecar, pulling work through an internal API** | **Chosen.** |
 | A worker inside the main API process | Rejected: the engine needs more memory than the API pod has, and would share the API's failure domain. |
 | The main application writes a queue table that the service drains | Rejected: two processes writing one queue, and the main application would need the service's rules. |
-| HTTP push from the main application | Rejected: a push sent while the service restarts is lost. |
+| HTTP push from the main application | Rejected: a push sent while the service restarts is lost. (Online mode, §9.8, keeps arrival events but makes them durable: a durable queue, or a hint backed by the pull cursor.) |
 | The service reads the main application's tables directly | Rejected: breaks module boundaries. |
 | One service instance per tenant | Rejected: one engine and tile cache per tenant multiplies memory. Row-level tenant scoping suffices. |
 
@@ -472,6 +514,57 @@ While a user's interactive reads are in flight, these calls answer **429** with 
 | **New graph version** | Stored on every new match. **Not implemented:** re-matching existing rows when the graph changes is planned; today, existing rows keep their graph version and only new or changed records use the new graph. |
 
 A re-match that fails never clears a line stored for the same input (§16).
+
+### 9.8 Processing modes: batch and online
+
+The pipeline of §9.2 is a function of **one record**: given a track, its type and the current rule, it produces a quality row and, if matchable, a matched route. Nothing in stages A and B depends on how the record arrived, on other records being processed in the same run, or on processing order. (The one cross-record input, the pool of similar routes used by a rebuild, is read from stored matches, §14.) The same code therefore serves two operating modes, and a system can run both at once.
+
+```mermaid
+flowchart LR
+  subgraph batch[Batch mode]
+    bl[Backlog source:<br/>first load, rule change,<br/>time range, id list] --> bq[Bounded batches,<br/>round-robin per tenant]
+  end
+  subgraph online[Online mode]
+    ev[Arrival event:<br/>route completed] --> oq[Durable arrival queue,<br/>high priority]
+    lv[Live points of a<br/>trip in progress] --> win[Sliding window]
+  end
+  bq --> P[Per-record pipeline:<br/>stage A, stage B,<br/>gap fill, assemble]
+  oq --> P
+  win --> LP[Same matcher over<br/>the window only]
+  P --> D[(Derived layer,<br/>one row per record,<br/>stamped with its input)]
+  LP --> LD[(Provisional live line)]
+  D --> RD{Read-time choice}
+  LD -.->|replaced when the<br/>completed route is matched| D
+```
+
+**Batch mode** (built, and the default of the system described here):
+
+- **Sources of work:** a backfill of every record for a new tenant (empty cursor), a pull from the change feed every poll interval, user or operator jobs over an id list (at most 2,000), a time range or everything, and the background re-match after a rule version bump (§9.7).
+- **Execution:** one bounded batch per tenant per turn (500 records for stage A, 25 for stage B), round-robin across tenants, one engine request at a time, pauses between batches, backoff and a circuit breaker (§9.4, §12.5).
+- **Optimised for** throughput, fairness and a fixed resource budget. Latency is minutes to hours, depending on backlog.
+
+**Online mode** (the system described here approximates it; a target system should build it explicitly):
+
+- **As built:** when new data is settled, the main application sends a **wake**; the tenant's feed becomes due, so the service assesses the changed records from its cursor in the next turn (after any queued batch job of that tenant) and matches them in the turns that follow, without waiting for the 2-minute poll. A user waiting for a result starts an **interactive job** (at most 50 records), which runs ahead of every batch; a running match batch yields to it between records (stage A batches are cheap and run to the end). Typical latency is therefore seconds to a minute, but arrival is still processed through the pull cursor, not as a per-route event.
+- **Design for a target system** that must align routes as they arrive:
+  1. **Arrival event.** When a route is complete (trip end detected, upload finished), publish an event with the record id, tenant id and updated-at to a **durable queue**. A plain push is not enough: an event sent while the service restarts would be lost (§7.4). Acknowledge an event only after its derived row (a result or a backoff state) is saved, so delivery is at least once. Keep the pull cursor as a safety net, so a lost event costs one poll interval, never a result.
+  2. **Priority.** Online work goes ahead of batch work, exactly like the interactive pass of §9.4: the batch loop checks for waiting online work between records and yields.
+  3. **Idempotency and ordering.** The event is only a trigger: the pipeline reads the record's current points, not the event's payload, and skips it when the stored rule version, updated-at, point count and type are unchanged, then re-matches only when the input hash or type differs (§10.4). A duplicate or late event is therefore a no-op. Every result stores the updated-at and input hash it was computed from, and the read-time check (§12.3) hides one that no longer fits the record. The system described here never writes a stale result over a newer one because a single worker processes records one at a time; with several workers or replicas, serialise work per record (partition the queue by record or tenant) or make the write conditional (store only if the row's stored updated-at is not newer), or an older result can land last and leave the record unmatched until it changes again.
+  4. **Latency budget.** One record costs one or a few trace calls plus at most 20 gap-fill calls (40 legs for a track built only from routes, §11.5); measured on sparse drives with one engine thread, the median was 0.13 s and the 95th percentile 0.73 s per drive (§8). Dense tracks must be down-sampled first (§17.2). Size engine threads or replicas so the arrival rate at peak stays below the engine's capacity, leaving headroom for batch work.
+  5. **Back-pressure.** If online arrivals exceed capacity, let the queue grow and coalesce events for the same record (only the current input matters); never drop events. The circuit breaker pauses both modes alike: while it is open, leave events unacknowledged rather than recording failures. When it closes, the queue drains in arrival order.
+  6. **Similar-route pool.** Each match is stored with its corridor cells (§14.2), so a new confident one (§14.4) is available as a basis for rebuilds as soon as it is saved. No batch index rebuild is needed.
+- **Live matching** of a trip still in progress (not built): match a sliding window of the most recent points (for example the last 2 to 5 minutes, overlapping the previous window), keep only the part behind the overlap as final, and store the result as a **provisional** line, separate from the derived layer. When the trip completes, its arrival event runs the full pipeline, and the provisional line is then deleted whatever the outcome: the read-time choice decides between the completed match and the recording, and a provisional line is never used as a basis for rebuilds. The matcher sees a finished trace in both cases; only the window differs.
+
+**Running both modes.** Both modes write the same derived rows, one per record, each stamped with the input and rule version it was computed from, so they do not conflict as long as the write rule of item 3 holds: the result computed on the current input with the current rule wins, and the read-time choice (§12.3) hides anything stale. Typical use: online mode for new arrivals, batch mode for the first load, for re-matching after a rule or graph change, and for catching up after an outage.
+
+| Concern | Batch mode | Online mode |
+|---|---|---|
+| Trigger | Backlog, poll interval, job, rule change | Arrival event (durable), with the poll as safety net |
+| Unit of work | Bounded batch per tenant | One record |
+| Priority | Background | Ahead of batch, pre-empts it between records |
+| Latency | Minutes to hours | Seconds (target) |
+| Failure handling | Per-record backoff 1/10/60 min, then failed; circuit breaker | Same; the event is acknowledged only once the result or backoff is stored |
+| Built in the system described | Yes | Approximated by wake + interactive jobs; arrival queue and live matching are not built |
 
 ## 10. Stage A: assessment
 
@@ -1258,7 +1351,7 @@ The design was tuned for **sparse, noisy, minute-rounded phone location history*
 | **Device-reported speed and heading** | Extra evidence not used here. | Use speed to detect stops and implausible jumps directly; use heading, where the engine version supports it per point, to disambiguate carriageways. Check the engine's API before relying on it. |
 | **Tunnels, underground car parks, urban canyons** | Real gaps in a dense track. | Keep gap filling. Reduce the cut-gap distance (for example 1 to 2 km) and `breakage_distance` (1 to 2 km): in dense data a long gap is an anomaly, not the norm. Keep the elapsed-time test. |
 | **Many vehicles, large volume** | One engine thread will not keep up. | Run several engine replicas or threads on larger hardware (re-measure memory per thread), parallelise by vehicle, and keep bounded batches for fairness. Consider OSRM for car-only throughput. |
-| **Real-time requirements** | `trace_attributes` matches a finished trace. | For live views, match a sliding window (for example the last 2 to 5 minutes with overlap) and finalise only the part behind the overlap; run the full batch match after the trip ends and let it replace the live result through the same derived-layer mechanism. |
+| **Real-time requirements** | `trace_attributes` matches a finished trace. | Run online mode (§9.8): a durable arrival event per completed trip, processed ahead of batch work. For live views, match a sliding window (for example the last 2 to 5 minutes with overlap) and finalise only the part behind the overlap; the full match after the trip ends replaces the live result. |
 | **Fixed and repeated routes** (bus lines, delivery rounds) | The similarity machinery becomes more valuable. | Build the similar-trip pool per vehicle or per route, not per user. Use it to detect deviations from an expected route, not only to repair weak tracks. Make the kinds of day and the time zone configurable and local. |
 | **Driver privacy and data protection** | Fleet data is personal data about drivers. | Keep the self-hosted engine, the egress lockdown and tenant-first scoping; add retention limits. |
 
@@ -1287,6 +1380,7 @@ The design was tuned for **sparse, noisy, minute-rounded phone location history*
 
 | Item | Status |
 |---|---|
+| Online mode: durable per-route arrival queue and live (sliding-window) matching | Designed in §9.8; **not built**. Today arrivals are picked up by a wake signal plus the pull cursor, and interactive jobs give users low latency. |
 | Re-match existing rows when the graph version changes | Designed (lowest priority, oldest first, round-robin, old line served until replaced); **not implemented**. |
 | Scheduled CI build of the tiles image and automatic tag bumps | Designed; **not in the repository**. The current image was built by hand with the same commands. |
 | Foot and bicycle matching | Profiles defined; phase not enabled. Risk: trails missing from OpenStreetMap. |
