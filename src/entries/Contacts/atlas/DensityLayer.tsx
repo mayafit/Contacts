@@ -78,7 +78,7 @@ const DensityLayer: React.FC<DensityLayerProps> = ({ data }) => {
       pane.style.pointerEvents = 'none';
     }
     (async () => {
-      await Promise.all([import('maplibre-gl'), import('@maplibre/maplibre-gl-leaflet')]);
+      await Promise.all([import('./maplibreSetup'), import('@maplibre/maplibre-gl-leaflet')]);
       if (cancelled) {
         return;
       }

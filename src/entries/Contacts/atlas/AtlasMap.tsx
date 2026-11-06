@@ -530,7 +530,7 @@ const BaseMap: React.FC<{ style: MapStyle }> = ({ style: choice }) => {
           }
           return r.json();
         }),
-        import('maplibre-gl'),
+        import('./maplibreSetup'),
         import('@maplibre/maplibre-gl-leaflet'),
       ]);
       if (cancelled) {
