@@ -91,7 +91,7 @@ flowchart LR
 
 | Concern | As built |
 |---|---|
-| Backend | `ContactsApi` on `net9.0`: Core / Infrastructure / WebApi; Swagger at `/`; `/health`; Serilog compact JSON to the console and to files |
+| Backend | `ContactsApi` on `net10.0`: Core / Infrastructure / WebApi; Swagger at `/`; `/health`; Serilog compact JSON to the console and to files |
 | Frontend | WebKit/BlueFiber template running standalone: React 18.3.1, TS 5.7.2 strict, MUI 6, Redux Toolkit 2.4 (Contacts), `useState` in `AtlasHome.tsx` (Atlas), react-router 7, one `BackendApiClient` |
 | Shell | `SiteShell` with a rail for `/contacts` and `/atlas`; `/` opens the last Area used |
 | Identity | Google OAuth code flow on the server; the `sub` is the Owner id; a 7-day Redis session; `app.UseAuthentication()` is commented out, and each controller resolves the Owner through `GoogleTokenService`; any Google account that completes sign-in gets a session (no allowlist, no roles) |
@@ -591,6 +591,7 @@ flowchart LR
 - **Binds:** every backend project and image, including the face worker; NFR-17 (supported runtimes, PRD Phase 0), NFR-02, NFR-16.
 - **Prevents:** running an unsupported runtime. .NET 9 support ends on **2026-11-10**, and .NET 10 LTS is supported to 2028-11-14.
 - **Rule:** `TargetFramework` becomes `net10.0`. `Microsoft.AspNetCore.*`, EF Core and Npgsql move to their 10.x lines, and the base images to `mcr.microsoft.com/dotnet/aspnet:10.0` (arm64). Do this first in Phase 0, before the new DbContexts are added. *Deadline (2026-11-04):* done before 2026-11-10, ahead of the rest of Phase 0, with the base images (the `-alpine` variants the Dockerfiles already use) pinned by digest (AD-54 rule 1).
+- **Status:** Adopted 2026-11-04. All five projects target `net10.0`; Microsoft.* / EF Core 10.0.14, Npgsql EF 10.0.3, Swashbuckle 10.3.1. The backend and routes images build on `sdk:10.0.403` / `aspnet:10.0.14` (alpine 3.24), pinned by digest. No migration was needed: both DbContexts report no pending model changes. In force on the cluster once the next backend and routes images are deployed.
 
 ### AD-24 — Nightly encrypted off-node backups with a restore drill each phase
 
@@ -1911,9 +1912,9 @@ flowchart LR
 
 | Name | Version |
 |---|---|
-| .NET (target after AD-23) | 10.0 LTS (currently 9.0; end of support 2026-11-10) |
-| EF Core / Npgsql EF provider | 9.0.10 / 9.0.2 today, moving to the 10.x lines with AD-23 |
-| ModelContextProtocol.AspNetCore | 2.3.0 (repo pin) |
+| .NET (AD-23) | 10.0 LTS (`net10.0` since 2026-11-04; supported to 2028-11-14) |
+| EF Core / Npgsql EF provider | 10.0.14 / 10.0.3 |
+| ModelContextProtocol.AspNetCore | 2.3.1 (repo pin) |
 | StackExchange.Redis | 2.10.1 |
 | Serilog.AspNetCore | 10.0.0 |
 | Google.Apis (Auth, Calendar, Gmail, People) | 1.77.x / 1.72.x |
@@ -2081,7 +2082,7 @@ routing/regions.txt                  # Geofabrik regions built into the tiles im
 | NFR-14 Background job observability | Partial | AD-25 | 0–2 |
 | NFR-15 Accessibility | Partial | §6 Tests convention (no AD) | 1–2 |
 | NFR-16 Security of external access | Partial | AD-3, AD-18, AD-50, AD-53 | 0–1 |
-| NFR-17 Supported runtimes | Proposed (deadline 2026-11-10) | AD-23, AD-54 | 0 |
+| NFR-17 Supported runtimes | Partial (2026-11-04: .NET 10, Node.js 24 build, nginx 1.30 on Alpine 3.24; the secrets store is still to move) | AD-23, AD-54 | 0 |
 | NFR-18 Per-user fairness and capacity | Proposed | AD-30, AD-8, AD-29 | 0 (caps, allowlist maximum), 1 (worker fairness) |
 | NFR-19 Google verification before opening up | Planned | AD-26, AD-29 | gate, not in a phase |
 | NFR-20 Route matching stays home | Proposed | AD-32 (rules 3, 4, 7), AD-33 (rule 2), AD-7 | R1 |
