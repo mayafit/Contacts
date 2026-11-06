@@ -107,9 +107,10 @@ through GitOps is done only when the **live object** shows it, not when its PR m
 - [ ] The Owner revokes and re-grants Google, and reconnects OneDrive and Sports Tracker.
 
 **Runbook: wrap the key ring and retire the exposed keys (operator).** Every step is a
-Vault write plus a backend restart; the backend logs counts only, never values. Run it
-before the RLS policies are on (Wave 2 step 4): the job reads `source_connections` across
-Owners.
+Vault write plus a backend restart; the backend logs counts only, never values. It works
+with the RLS policies on or off: it finds the Owners with connections through the definer
+function `sys_owners('source_connections')` and reads and rewrites each Owner's secrets
+under that Owner's scope (AD-49 rule 5).
 
 0. *Before:* the backend runs this branch's image with `Echo__AllowedEmails` set. Take a
    copy of the ring for rollback, kept encrypted off the cluster and deleted after step 6:
@@ -223,7 +224,13 @@ roll-over: the new PEM in `DataProtection__Certificate`, the old one in
 
 - [x] `access_tokens` gains `ExpiresAt` (default 90 days, at most 365) and a `write`
   scope; update and delete tools require it; expired tokens are refused (AD-50 rule 9,
-  AD-18). *Migration `AccessTokenExpiry`; all twelve tools that change data need `write`.*
+  AD-18). *Migration `20261106120050_AccessTokenExpiry`, ordered between
+  `AtlasSystemFunctions` and `AtlasRowLevelSecurity` so it applies while the policy gate is
+  closed (EchoMigrator stops before the policy migration and refuses anything after it); it
+  also makes `sys_resolve_access_token` refuse expired tokens (same signature and security
+  attributes; `atlas_system` gets `SELECT ("ExpiresAt")`, also in `db-roles.sql`). The write
+  scope is read from the token's row under its Owner once the definer function has named
+  the Owner. All twelve tools that change data need `write`.*
 - [x] A per-token rate limit; the token list shows the last use and the expiry.
   *`Mcp__RateLimit__PerMinute` (60) and `__PerDay` (5000), in process memory (one replica).*
 - [x] Existing tokens get an expiry 90 days from the migration, with a notice.
