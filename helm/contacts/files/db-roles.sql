@@ -171,7 +171,7 @@ $runtime$;
 
 -- ---- 5. The sys_* functions: EXECUTE for one runtime role, column grants for their owner
 DO $sys$
-DECLARE f text;
+DECLARE f text; g record;
 BEGIN
   FOREACH f IN ARRAY ARRAY['atlas.sys_owners(text)', 'atlas.sys_owners_with_connection(text)',
                            'atlas.sys_fail_interrupted_syncs(text)', 'atlas.sys_resolve_access_token(text)']
@@ -190,22 +190,26 @@ BEGIN
     END IF;
   END LOOP;
 
-  IF to_regclass('atlas.activities') IS NOT NULL THEN
-    GRANT SELECT ("OwnerId", "Type") ON atlas.activities TO atlas_system;
-    GRANT SELECT ("OwnerId") ON atlas.fusion_queue TO atlas_system;
-    GRANT SELECT ("OwnerId") ON atlas.activity_fusion TO atlas_system;
-    GRANT SELECT ("OwnerId", "Placed") ON atlas.photos TO atlas_system;
-    GRANT SELECT ("OwnerId", "IdentifyState") ON atlas.places TO atlas_system;
-    GRANT SELECT ("OwnerId", "Provider", "Status") ON atlas.source_connections TO atlas_system;
-    GRANT UPDATE ("Status", "LastError") ON atlas.source_connections TO atlas_system;
-    GRANT SELECT ("OwnerId", "TokenHash", "LastUsedAt") ON atlas.access_tokens TO atlas_system;
-    GRANT UPDATE ("LastUsedAt") ON atlas.access_tokens TO atlas_system;
-  END IF;
-  IF to_regclass('routes.jobs') IS NOT NULL THEN
-    GRANT SELECT ("OwnerId", "Priority", "State", "NextAttemptAt", "FinishedAt") ON routes.jobs TO routes_system;
-    GRANT DELETE ON routes.jobs TO routes_system;
-    GRANT SELECT ("OwnerId") ON routes.owner_cursors TO routes_system;
-  END IF;
+  -- What each function reads and writes, and nothing else (each grant where its table exists)
+  FOR g IN SELECT * FROM (VALUES
+      ('atlas.activities',         'SELECT ("OwnerId", "Type")',                                    'atlas_system'),
+      ('atlas.fusion_queue',       'SELECT ("OwnerId")',                                            'atlas_system'),
+      ('atlas.activity_fusion',    'SELECT ("OwnerId")',                                            'atlas_system'),
+      ('atlas.photos',             'SELECT ("OwnerId", "Placed")',                                  'atlas_system'),
+      ('atlas.places',             'SELECT ("OwnerId", "IdentifyState")',                           'atlas_system'),
+      ('atlas.source_connections', 'SELECT ("OwnerId", "Provider", "Status")',                      'atlas_system'),
+      ('atlas.source_connections', 'UPDATE ("Status", "LastError")',                                'atlas_system'),
+      ('atlas.access_tokens',      'SELECT ("OwnerId", "TokenHash", "LastUsedAt")',                 'atlas_system'),
+      ('atlas.access_tokens',      'UPDATE ("LastUsedAt")',                                         'atlas_system'),
+      ('routes.jobs',              'SELECT ("OwnerId", "Priority", "State", "NextAttemptAt", "FinishedAt")', 'routes_system'),
+      ('routes.jobs',              'DELETE',                                                        'routes_system'),
+      ('routes.owner_cursors',     'SELECT ("OwnerId")',                                            'routes_system')
+    ) AS v(tbl, priv, grantee)
+  LOOP
+    IF to_regclass(g.tbl) IS NOT NULL THEN
+      EXECUTE format('GRANT %s ON %s TO %I', g.priv, g.tbl, g.grantee);
+    END IF;
+  END LOOP;
 END
 $sys$;
 
