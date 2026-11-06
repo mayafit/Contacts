@@ -70,14 +70,17 @@ public class AuthSessionTests
     }
 
     [Fact]
-    public async Task With_no_allowlist_nobody_signs_in()
+    public async Task With_no_allowlist_nobody_signs_in_and_no_grant_is_revoked()
     {
         await using var host = await SecurityTestHost.StartAsync(allowedEmails: null);
 
         var callback = await host.SignInAsync();
 
         Assert.Equal(HttpStatusCode.Forbidden, callback.StatusCode);
+        Assert.Contains("NOT_INVITED", await callback.Content.ReadAsStringAsync());
         Assert.Empty(host.TicketKeys());
+        // A missing Echo__AllowedEmails is a configuration fault: the Owner's grant survives it
+        Assert.Empty(host.Google.Revoked);
     }
 
     [Fact]

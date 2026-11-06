@@ -284,13 +284,23 @@ public class AuthController : ControllerBase
             var payload = await _google.ValidateIdTokenAsync(tokenResponse.IdToken);
             if (!_allowed.IsAllowed(payload.Email, payload.EmailVerified))
             {
+                // An empty or missing list is a configuration fault, not a refusal: the grant is
+                // kept, or a missing Echo__AllowedEmails would revoke the Owner's and the family's
+                // Google grants (the background work's refresh tokens) at their next sign-in
+                if (!_allowed.IsConfigured)
+                {
+                    _logger.LogError("Sign-in refused: the allowlist ({Key}) is empty or missing; the grant is kept", "Echo__AllowedEmails");
+                    HttpContext.Session.Clear();
+                    return NotInvited(revoked: false);
+                }
+
                 _logger.LogWarning("Sign-in refused: the account is not invited (verified: {Verified})", payload.EmailVerified);
                 // The grant just issued is revoked; a refresh token revokes the whole grant
                 await _google.RevokeAsync(
                     string.IsNullOrEmpty(tokenResponse.RefreshToken) ? tokenResponse.AccessToken : tokenResponse.RefreshToken,
                     HttpContext.RequestAborted);
                 HttpContext.Session.Clear();
-                return NotInvited();
+                return NotInvited(revoked: true);
             }
 
             // Google's consent screen lets the user untick individual permissions.
@@ -415,7 +425,8 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>The static "invitation needed" page, 403 NOT_INVITED (AD-29, AD-9)</summary>
-    private ContentResult NotInvited()
+    /// <param name="revoked">Whether the grant was withdrawn (not when the allowlist is missing)</param>
+    private ContentResult NotInvited(bool revoked)
     {
         var home = System.Net.WebUtility.HtmlEncode((_configuration["Frontend:BaseUrl"] ?? "http://localhost:3002").TrimEnd('/'));
         return new ContentResult
@@ -426,7 +437,8 @@ public class AuthController : ControllerBase
                       + "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Invitation needed</title></head>\n"
                       + "<body data-error-code=\"NOT_INVITED\" style=\"font-family: system-ui, sans-serif; max-width: 36rem; margin: 4rem auto; padding: 0 1rem; line-height: 1.5\">\n"
                       + "<h1>Invitation needed</h1>\n"
-                      + "<p>Echo is invite-only, and this Google account is not on the list. Nothing was saved, and the access you just granted has been withdrawn.</p>\n"
+                      + "<p>Echo is invite-only, and this Google account is not on the list. Nothing was saved"
+                      + (revoked ? ", and the access you just granted has been withdrawn" : string.Empty) + ".</p>\n"
                       + "<p>If you were invited with another address, sign in with that account.</p>\n"
                       + $"<p><a href=\"{home}/\">Back to the start page</a></p>\n</body></html>\n"
         };
