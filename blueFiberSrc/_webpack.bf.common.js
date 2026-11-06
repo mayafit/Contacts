@@ -61,6 +61,14 @@ module.exports = {
           fullySpecified: false,
         },
       },
+      // MapLibre 6's worker (src/entries/Contacts/atlas/maplibreSetup.ts): emitted
+      // as is, under a .js name so nginx serves it as JavaScript (MapLibre still
+      // starts it as a module worker; only a .cjs URL makes it a classic one)
+      {
+        test: /maplibre-gl-worker\.mjs$/,
+        type: 'asset/resource',
+        generator: { filename: 'maplibre-gl-worker.[contenthash:8].js' },
+      },
 
       {
         test: /\.(le|c)ss$/,

@@ -128,7 +128,9 @@ module.exports = (env, args) => {
         minimize: process.env?.DEV_BUILD !== 'true',
         minimizer: [
           new TerserPlugin({
-            exclude: ['env.config.json'],
+            // The MapLibre worker ships minified and is an ES module, which
+            // Terser would parse as a script under its .js name
+            exclude: ['env.config.json', /maplibre-gl-worker\./],
 
             terserOptions: {
               compress: {
