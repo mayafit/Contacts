@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.DataProtection.KeyManagement;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
+using ContactsApi.Infrastructure.Tenancy;
 using StackExchange.Redis;
 
 namespace ContactsApi.WebApi.Services.KeyRing;
@@ -32,7 +33,8 @@ public enum RotationMode
 /// <summary>One protected value</summary>
 /// <param name="Id">Where it is (a Redis key or a row id); logged never</param>
 /// <param name="Protected">The protected string (base64url Data Protection payload)</param>
-public record ProtectedValue(string Id, string Protected);
+/// <param name="Owner">The Owner a database row belongs to (its writes run under that Owner, AD-49)</param>
+public record ProtectedValue(string Id, string Protected, string? Owner = null);
 
 /// <summary>A place that holds values protected with one purpose</summary>
 public interface IProtectedValueSource
@@ -373,7 +375,12 @@ public class RedisProtectedValues : IProtectedValueSource
     }
 }
 
-/// <summary><c>atlas.source_connections.SecretProtected</c>: the Sports Tracker session keys and OneDrive refresh tokens</summary>
+/// <summary>
+/// <c>atlas.source_connections.SecretProtected</c>: the Sports Tracker session keys and OneDrive
+/// refresh tokens. Under row-level security (AD-49 rule 5) the Owners come from the definer
+/// function <c>sys_owners('source_connections')</c> (ids only, unscoped); every read and write
+/// then runs in a fresh DI scope of one Owner.
+/// </summary>
 public class SourceSecretValues : IProtectedValueSource
 {
     private readonly IServiceScopeFactory _scopes;
@@ -390,26 +397,36 @@ public class SourceSecretValues : IProtectedValueSource
     /// <inheritdoc />
     public async IAsyncEnumerable<ProtectedValue> ReadAllAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
     {
-        using var scope = _scopes.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<AtlasDbContext>();
-        var rows = await db.Connections.AsNoTracking()
-            .Where(c => c.SecretProtected != null)
-            .Select(c => new { c.Id, c.SecretProtected })
-            .ToListAsync(ct);
-        foreach (var row in rows)
+        List<string> owners;
+        using (var unscoped = _scopes.CreateUnscopedScope())
         {
-            yield return new ProtectedValue(row.Id.ToString(), row.SecretProtected!);
+            owners = await unscoped.ServiceProvider.GetRequiredService<AtlasDbContext>()
+                .SysOwnersAsync(SysOwnerKinds.SourceConnections, ct);
+        }
+
+        foreach (var owner in owners)
+        {
+            using var scope = _scopes.CreateOwnerScope(owner);
+            var rows = await scope.ServiceProvider.GetRequiredService<AtlasDbContext>().Connections.AsNoTracking()
+                .Where(c => c.OwnerId == owner && c.SecretProtected != null)
+                .Select(c => new { c.Id, c.SecretProtected })
+                .ToListAsync(ct);
+            foreach (var row in rows)
+            {
+                yield return new ProtectedValue(row.Id.ToString(), row.SecretProtected!, owner);
+            }
         }
     }
 
     /// <inheritdoc />
     public async Task<bool> ReplaceAsync(ProtectedValue value, string newProtected, CancellationToken ct)
     {
-        using var scope = _scopes.CreateScope();
+        var owner = value.Owner ?? throw new InvalidOperationException("A source connection value without its Owner");
+        using var scope = _scopes.CreateOwnerScope(owner);
         var db = scope.ServiceProvider.GetRequiredService<AtlasDbContext>();
         var id = Guid.Parse(value.Id);
         return await db.Connections
-            .Where(c => c.Id == id && c.SecretProtected == value.Protected)
+            .Where(c => c.Id == id && c.OwnerId == owner && c.SecretProtected == value.Protected)
             .ExecuteUpdateAsync(s => s.SetProperty(c => c.SecretProtected, newProtected), ct) == 1;
     }
 }

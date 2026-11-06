@@ -28,6 +28,9 @@ public static class SysOwnerKinds
 
     /// <summary>Every Owner with activities while no fused activity exists at all (data from before fusion)</summary>
     public const string FusionBackfill = "fusion_backfill";
+
+    /// <summary>Every Owner with a source connection, expired ones included (the key-ring rotation, AD-50 rule 2)</summary>
+    public const string SourceConnections = "source_connections";
 }
 
 /// <summary>
@@ -48,7 +51,7 @@ public static class AtlasSystemQueries
     public static async Task<int> SysFailInterruptedSyncsAsync(this AtlasDbContext db, string provider, CancellationToken ct = default) =>
         (await db.Database.SqlQuery<int>($"SELECT atlas.sys_fail_interrupted_syncs({provider}) AS \"Value\"").ToListAsync(ct)).Single();
 
-    /// <summary>The Owner of an access token's hash (and stamps its use, at most hourly), or null</summary>
+    /// <summary>The Owner of an access token's hash (and stamps its use, at most hourly), or null; null too once it has expired</summary>
     public static async Task<string?> SysResolveAccessTokenAsync(this AtlasDbContext db, string hash, CancellationToken ct = default) =>
         (await db.Database.SqlQuery<string?>($"SELECT atlas.sys_resolve_access_token({hash}) AS \"Value\"").ToListAsync(ct)).SingleOrDefault();
 

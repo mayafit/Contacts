@@ -43,8 +43,9 @@ public static class RowLevelSecurity
 }
 
 /// <summary>
-/// Sets the request's Owner from the session for /api/** (AD-49 rule 4); /api/mcp gets
-/// it from its token instead. Runs after the session is loaded.
+/// Sets the request's Owner from the EchoSession ticket for /api/** (AD-49 rule 4, AD-50
+/// rule 4: the <c>sub</c> claim, never the ASP.NET session); /api/mcp gets it from its token
+/// instead. Runs after <see cref="EchoSessionMiddleware"/>.
 /// </summary>
 public class OwnerScopeMiddleware
 {
@@ -53,12 +54,11 @@ public class OwnerScopeMiddleware
     /// <summary>Creates the middleware</summary>
     public OwnerScopeMiddleware(RequestDelegate next) => _next = next;
 
-    /// <summary>Sets the Owner when the session has a valid one</summary>
+    /// <summary>Sets the Owner when the request is signed in with a valid one</summary>
     public Task InvokeAsync(HttpContext context, OwnerScope owners)
     {
         if (context.Request.Path.StartsWithSegments("/api") && !context.Request.Path.StartsWithSegments("/api/mcp")
-            && context.Session.IsAvailable
-            && context.Session.GetString(GoogleTokenService.UserIdKey) is { } owner && OwnerScope.IsValid(owner))
+            && context.OwnerId() is { } owner && OwnerScope.IsValid(owner))
         {
             owners.Set(owner);
         }

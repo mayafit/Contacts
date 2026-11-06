@@ -210,6 +210,12 @@ BEGIN
       EXECUTE format('GRANT %s ON %s TO %I', g.priv, g.tbl, g.grantee);
     END IF;
   END LOOP;
+
+  -- The resolver refuses expired tokens (AD-50 rule 9; migration AccessTokenExpiry adds the column)
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = 'atlas' AND table_name = 'access_tokens' AND column_name = 'ExpiresAt') THEN
+    GRANT SELECT ("ExpiresAt") ON atlas.access_tokens TO atlas_system;
+  END IF;
 END
 $sys$;
 

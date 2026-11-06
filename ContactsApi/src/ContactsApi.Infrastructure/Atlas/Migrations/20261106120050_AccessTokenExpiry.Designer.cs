@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace ContactsApi.Infrastructure.Atlas.Migrations
 {
     [DbContext(typeof(AtlasDbContext))]
-    [Migration("20261106161258_AccessTokenExpiry")]
+    [Migration("20261106120050_AccessTokenExpiry")]
     partial class AccessTokenExpiry
     {
         /// <inheritdoc />
@@ -21,7 +21,7 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
 #pragma warning disable 612, 618
             modelBuilder
                 .HasDefaultSchema("atlas")
-                .HasAnnotation("ProductVersion", "9.0.10")
+                .HasAnnotation("ProductVersion", "10.0.14")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);

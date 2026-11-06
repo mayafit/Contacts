@@ -94,6 +94,19 @@ public class AccessTokenTests
     }
 
     [Fact]
+    public void The_token_migration_applies_while_the_policy_migration_is_held_back()
+    {
+        // EchoMigrator stops before AtlasRowLevelSecurity while RowLevelSecurity__Policies is
+        // off and throws for anything ordered after it: the policy migration must stay last
+        using var db = new AtlasDbContext(new DbContextOptionsBuilder<AtlasDbContext>().UseNpgsql("Host=unset").Options);
+        var ids = db.Database.GetMigrations().ToList();
+
+        Assert.Equal(ContactsApi.Infrastructure.Atlas.Migrations.AtlasRowLevelSecurity.Id, ids[^1]);
+        Assert.Contains("20261106120050_AccessTokenExpiry", ids);
+        Assert.True(ids.IndexOf("20261106120000_AtlasSystemFunctions") < ids.IndexOf("20261106120050_AccessTokenExpiry"));
+    }
+
+    [Fact]
     public void The_rate_limit_holds_per_minute_and_per_day_and_per_token()
     {
         var clock = new TestClock(new DateTimeOffset(2026, 11, 6, 10, 0, 0, TimeSpan.Zero));
@@ -122,7 +135,10 @@ public class AccessTokenTests
     }
 }
 
-/// <summary>Token expiry and the write scope against a real PostgreSQL when ATLAS_TEST_DB is set (skipped otherwise)</summary>
+/// <summary>
+/// The legacy backfill of migration AccessTokenExpiry against a real PostgreSQL when
+/// ATLAS_TEST_DB is set (skipped otherwise; it migrates that database down and up)
+/// </summary>
 public class AccessTokenDbTests
 {
     private static AtlasDbContext? Db()
@@ -135,7 +151,7 @@ public class AccessTokenDbTests
     }
 
     [Fact]
-    public async Task New_tokens_are_read_only_for_90_days_and_expired_tokens_are_refused()
+    public async Task With_the_policy_gate_closed_the_migrator_applies_the_token_migration_and_stops_before_the_policies()
     {
         await using var db = Db();
         if (db == null)
@@ -143,27 +159,17 @@ public class AccessTokenDbTests
             return;
         }
 
+        // A database as dev left it: the system functions applied, the policies held back
+        await db.GetService<IMigrator>().MigrateAsync("20261106120000_AtlasSystemFunctions");
+
+        await ContactsApi.Infrastructure.Tenancy.EchoMigrator.MigrateAsync(db,
+            ContactsApi.Infrastructure.Atlas.Migrations.AtlasRowLevelSecurity.Id, policies: false,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance, CancellationToken.None);
+
+        Assert.Contains("20261106120050_AccessTokenExpiry", await db.Database.GetAppliedMigrationsAsync());
+        Assert.Equal(new[] { ContactsApi.Infrastructure.Atlas.Migrations.AtlasRowLevelSecurity.Id },
+            await db.Database.GetPendingMigrationsAsync());
         await db.Database.MigrateAsync();
-        var clock = new TestClock(DateTimeOffset.UtcNow);
-        var svc = new AccessTokenService(db, clock);
-        var owner = "test-" + Guid.NewGuid();
-
-        var (readOnly, info) = await svc.CreateAsync(owner, "client");
-        var (writer, writeInfo) = await svc.CreateAsync(owner, "writer", allowWrite: true, days: 1000);
-
-        Assert.False(info.CanWrite);
-        Assert.Equal(90, Math.Round((info.ExpiresAt - info.CreatedAt).TotalDays));
-        Assert.True(writeInfo.CanWrite);
-        Assert.Equal(365, Math.Round((writeInfo.ExpiresAt - writeInfo.CreatedAt).TotalDays));
-        Assert.False((await svc.CheckAsync(readOnly))!.CanWrite);
-        Assert.True((await svc.CheckAsync(writer))!.CanWrite);
-        Assert.NotNull((await svc.ListAsync(owner)).Single(t => t.Id == info.Id).LastUsedAt);
-
-        clock.Advance(TimeSpan.FromDays(91));
-        Assert.Null(await svc.CheckAsync(readOnly));
-        Assert.NotNull(await svc.CheckAsync(writer));
-
-        await db.AccessTokens.Where(t => t.OwnerId == owner).ExecuteDeleteAsync();
     }
 
     [Fact]
@@ -176,7 +182,7 @@ public class AccessTokenDbTests
         }
 
         var migrator = db.GetService<IMigrator>();
-        await migrator.MigrateAsync("20261030163812_Flights");
+        await migrator.MigrateAsync("20261106120000_AtlasSystemFunctions");
         var id = Guid.NewGuid();
         await db.Database.ExecuteSqlInterpolatedAsync(
             $"""INSERT INTO atlas.access_tokens ("Id", "OwnerId", "Name", "TokenHash", "Prefix", "CreatedAt") VALUES ({id}, 'legacy-owner', 'old', {Guid.NewGuid().ToString()}, 'atl_xxxx', now())""");
