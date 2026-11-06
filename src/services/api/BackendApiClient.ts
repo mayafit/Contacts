@@ -66,6 +66,9 @@ interface ApiResponse<T> {
   status?: number;
 }
 
+/** Header the backend requires on state-changing requests (CSRF, AD-50 rule 7) */
+export const ECHO_REQUEST_HEADER = 'X-Echo-Request';
+
 /** Window event raised when an API call reports the Google session has ended */
 export const SESSION_EXPIRED_EVENT = 'contacts:session-expired';
 
@@ -390,6 +393,9 @@ export class BackendApiClient {
       headers: {
         'Content-Type': 'application/json',
         ...options.headers,
+        // Required on every state-changing call (AD-50 rule 7); sent on all of them so
+        // no call can forget it. Last, so a caller cannot drop it.
+        [ECHO_REQUEST_HEADER]: '1',
       },
     };
 

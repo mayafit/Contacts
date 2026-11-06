@@ -6,6 +6,7 @@
 using ContactsApi.WebApi.Configuration;
 using Google.Apis.Auth.OAuth2;
 using Google.Apis.Auth.OAuth2.Flows;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Options;
@@ -19,17 +20,15 @@ namespace ContactsApi.WebApi.Services;
 /// </summary>
 public class GoogleTokenService
 {
-    /// <summary>Session keys</summary>
-    public const string AccessTokenKey = "AccessToken";
-    public const string ExpiresAtKey = "TokenExpiresAt";
-    public const string UserIdKey = "UserId";
-
     /// <summary>Refresh this long before the token expires</summary>
     private static readonly TimeSpan RefreshMargin = TimeSpan.FromMinutes(2);
 
     private readonly GoogleOAuthOptions _options;
     private readonly IDistributedCache _cache;
     private readonly IDataProtector _protector;
+    private readonly IDataProtector _accessProtector;
+    private readonly IGoogleSignIn _google;
+    private readonly RedisTicketStore _tickets;
     private readonly ILogger<GoogleTokenService> _logger;
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string AccessToken, DateTime ExpiresAt)> _userTokens = new();
 
@@ -37,13 +36,57 @@ public class GoogleTokenService
         IOptions<GoogleOAuthOptions> options,
         IDistributedCache cache,
         IDataProtectionProvider dataProtection,
+        IGoogleSignIn google,
+        RedisTicketStore tickets,
         ILogger<GoogleTokenService> logger)
     {
         _options = options.Value;
         _cache = cache;
-        _protector = dataProtection.CreateProtector("ContactsApi.GoogleRefreshToken.v1");
+        _protector = dataProtection.CreateProtector(RefreshTokenPurpose);
+        _accessProtector = dataProtection.CreateProtector(EchoSessionDefaults.AccessTokenPurpose);
+        _google = google;
+        _tickets = tickets;
         _logger = logger;
     }
+
+    /// <summary>Data Protection purpose of the remembered refresh tokens</summary>
+    public const string RefreshTokenPurpose = "ContactsApi.GoogleRefreshToken.v1";
+
+    /// <summary>
+    /// Puts the Google access token into a session ticket's properties, protected with the
+    /// purpose <c>ContactsApi.Session.GoogleAccessToken.v1</c> (AD-50 rule 3): the ticket in
+    /// Redis never holds it in clear.
+    /// </summary>
+    public void SetAccessToken(AuthenticationProperties properties, string accessToken, DateTime expiresAt)
+    {
+        properties.Items[EchoSessionDefaults.AccessTokenItem] = _accessProtector.Protect(accessToken);
+        properties.Items[EchoSessionDefaults.AccessTokenExpiresItem] = expiresAt.ToString("o");
+    }
+
+    /// <summary>The access token in a ticket's properties, or null (none, or no longer readable)</summary>
+    public string? ReadAccessToken(AuthenticationProperties properties)
+    {
+        if (!properties.Items.TryGetValue(EchoSessionDefaults.AccessTokenItem, out var stored) || string.IsNullOrEmpty(stored))
+        {
+            return null;
+        }
+
+        try
+        {
+            return _accessProtector.Unprotect(stored);
+        }
+        catch (System.Security.Cryptography.CryptographicException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>When the session's access token expires (UTC), or null</summary>
+    public static DateTime? AccessTokenExpiry(AuthenticationProperties properties) =>
+        DateTime.TryParse((properties.Items.TryGetValue(EchoSessionDefaults.AccessTokenExpiresItem, out var at) ? at : null), null,
+            System.Globalization.DateTimeStyles.RoundtripKind, out var expiresAt)
+            ? expiresAt
+            : null;
 
     /// <summary>
     /// A Google access token valid for at least two more minutes, or null when the
@@ -53,23 +96,28 @@ public class GoogleTokenService
     /// <returns>Access token or null</returns>
     public async Task<string?> GetAccessTokenAsync(HttpContext http)
     {
-        var session = http.Session;
-        var accessToken = session.GetString(AccessTokenKey);
-        if (string.IsNullOrEmpty(accessToken))
+        var userId = http.OwnerId();
+        if (userId == null)
         {
             return null;
         }
 
-        if (DateTime.TryParse(session.GetString(ExpiresAtKey), null,
-                System.Globalization.DateTimeStyles.RoundtripKind, out var expiresAt)
-            && expiresAt - DateTime.UtcNow > RefreshMargin)
+        // Cached for the request: the session middleware already authenticated it
+        var auth = await http.AuthenticateAsync(EchoSessionDefaults.Scheme);
+        if (!auth.Succeeded || auth.Properties == null || auth.Principal == null)
+        {
+            return null;
+        }
+
+        var properties = auth.Properties;
+        var accessToken = ReadAccessToken(properties);
+        if (accessToken != null && AccessTokenExpiry(properties) is { } expiresAt && expiresAt - DateTime.UtcNow > RefreshMargin)
         {
             return accessToken;
         }
 
-        // Only the encrypted copy exists; the session holds just the account id
-        var userId = session.GetString(UserIdKey);
-        var refreshToken = userId == null ? null : await GetStoredRefreshTokenAsync(userId);
+        // Only the encrypted copy exists; the ticket holds just the account id
+        var refreshToken = await GetStoredRefreshTokenAsync(userId);
 
         if (string.IsNullOrEmpty(refreshToken))
         {
@@ -82,14 +130,18 @@ public class GoogleTokenService
         {
             // Google refused (revoked, or 7 days old while the app is in Testing):
             // end the session so the status check stops reporting "signed in".
-            session.Clear();
-            await session.CommitAsync();
+            await http.SignOutAsync(EchoSessionDefaults.Scheme);
+            http.Session.Clear();
+            http.User = new System.Security.Claims.ClaimsPrincipal(new System.Security.Claims.ClaimsIdentity());
             return null;
         }
 
-        session.SetString(AccessTokenKey, refreshed.Value.AccessToken);
-        session.SetString(ExpiresAtKey, refreshed.Value.ExpiresAt.ToString("o"));
-        await session.CommitAsync();
+        SetAccessToken(properties, refreshed.Value.AccessToken, refreshed.Value.ExpiresAt);
+        if (properties.Items.TryGetValue(EchoSessionDefaults.TicketKeyItem, out var key) && key != null)
+        {
+            await _tickets.RenewAsync(key, new AuthenticationTicket(auth.Principal, properties, EchoSessionDefaults.Scheme));
+        }
+
         _logger.LogInformation("Google access token refreshed");
         return refreshed.Value.AccessToken;
     }
@@ -152,24 +204,8 @@ public class GoogleTokenService
     /// </summary>
     /// <param name="refreshToken">Refresh token</param>
     /// <returns>New token and its expiry, or null when Google refuses</returns>
-    public async Task<(string AccessToken, DateTime ExpiresAt)?> RefreshAsync(string refreshToken)
-    {
-        try
-        {
-            var flow = new GoogleAuthorizationCodeFlow(new GoogleAuthorizationCodeFlow.Initializer
-            {
-                ClientSecrets = new ClientSecrets { ClientId = _options.ClientId, ClientSecret = _options.ClientSecret }
-            });
-            var response = await flow.RefreshTokenAsync("user", refreshToken, CancellationToken.None);
-            return (response.AccessToken, DateTime.UtcNow.AddSeconds(response.ExpiresInSeconds ?? 3600));
-        }
-        catch (Exception ex)
-        {
-            // Revoked, expired (7 days for apps in Testing mode) or invalid
-            _logger.LogWarning(ex, "Google refused the refresh token");
-            return null;
-        }
-    }
+    public Task<(string AccessToken, DateTime ExpiresAt)?> RefreshAsync(string refreshToken) =>
+        _google.RefreshAsync(refreshToken);
 
     /// <summary>
     /// An access token for a user's stored sign-in, telling a refused sign-in (none stored,
@@ -241,10 +277,12 @@ public class GoogleTokenService
         {
             return _protector.Unprotect(stored);
         }
-        catch (Exception ex)
+        catch (System.Security.Cryptography.CryptographicException ex)
         {
-            _logger.LogWarning(ex, "Stored refresh token could not be decrypted; discarding it");
-            await ForgetRefreshTokenAsync(userId);
+            // Kept, not deleted: a key ring that is only briefly unreadable (a certificate
+            // roll-over, AD-50 rule 2) must not cost the user their grant. A new sign-in
+            // overwrites it.
+            _logger.LogWarning(ex, "Stored refresh token could not be decrypted");
             return null;
         }
     }

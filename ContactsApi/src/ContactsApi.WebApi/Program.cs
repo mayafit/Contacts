@@ -53,6 +53,9 @@ builder.Services.Configure<GoogleOAuthOptions>(options =>
 
 // Register hosted service to load secrets from Vault at startup
 builder.Services.AddHostedService<VaultConfigurationService>();
+// Google's OAuth endpoints (code exchange, ID token, refresh, revoke)
+builder.Services.AddHttpClient(GoogleSignIn.HttpClientName, c => c.Timeout = TimeSpan.FromSeconds(10));
+builder.Services.AddSingleton<IGoogleSignIn, GoogleSignIn>();
 builder.Services.AddSingleton<GoogleTokenService>();
 builder.Services.AddSingleton<ActivityStore>();
 // Public profiles by email hash (AD-46 rule 3); Gravatar__ApiKey is optional
@@ -215,27 +218,10 @@ builder.Services.AddStackExchangeRedisCache(options =>
     options.InstanceName = "ContactsApi_";
 });
 
-builder.Services.AddSession(options =>
-{
-    options.IdleTimeout = TimeSpan.FromDays(7); // Session expires after 7 days
-    options.Cookie.HttpOnly = true; // Prevent JavaScript access
-    // Secure outside local development: the app is served over HTTPS (TLS ends at
-    // Cloudflare/nginx, so the request scheme here is http and SameAsRequest
-    // would never set it). Browsers treat http://localhost as secure anyway.
-    options.Cookie.SecurePolicy = builder.Environment.IsDevelopment()
-        ? CookieSecurePolicy.SameAsRequest
-        : CookieSecurePolicy.Always;
-    options.Cookie.SameSite = SameSiteMode.Lax; // Allow OAuth redirects while maintaining CSRF protection
-    options.Cookie.IsEssential = true; // Required for GDPR compliance
-    options.Cookie.Name = ".ContactsApi.Session";
-    // No Cookie.Domain: a host-only cookie works on whichever host serves the
-    // app (cookies ignore ports, so localhost:3002 -> :5000 still works), while
-    // a hardcoded "localhost" made browsers drop the cookie everywhere else.
-    options.Cookie.Path = "/"; // Cookie available for all paths
-    // Persistent, so closing the browser does not sign the user out; the
-    // session itself still expires after 7 idle days.
-    options.Cookie.MaxAge = TimeSpan.FromDays(7);
-});
+// EchoSession (AD-3 rule 3, AD-50 rule 4): cookie authentication with the ticket in Redis,
+// re-keyed at sign-in, under __Host- cookies; the ASP.NET session keeps only non-identity
+// state (the pre-sign-in OAuth flow). The allowlist (AD-50 rule 6) comes from Echo__AllowedEmails.
+builder.Services.AddEchoSession(builder.Configuration);
 
 // Configure CORS
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? Array.Empty<string>();
@@ -253,6 +239,14 @@ builder.Services.AddCors(options =>
 // EchoService: internal services' tokens (Routes__ServiceToken from Vault), each
 // accepted only on its own /internal path (AD-3 rule 3, AD-33 rule 2); never the default scheme
 builder.Services.AddEchoServiceAuth(builder.Configuration["Routes:ServiceToken"]);
+
+// CSRF (AD-50 rule 7): the public origin and, in Development, the CORS origins
+builder.Services.AddSingleton(new ContactsApi.WebApi.Middleware.CsrfOptions
+{
+    PublicOrigin = builder.Configuration["Frontend:BaseUrl"],
+    DevelopmentOrigins = allowedOrigins,
+    IsDevelopment = builder.Environment.IsDevelopment()
+});
 
 // Add API documentation
 builder.Services.AddEndpointsApiExplorer();
@@ -287,6 +281,9 @@ app.UseSwaggerUI(c =>
 // CORS must come before authentication
 app.UseCors();
 
+// State-changing /api calls need X-Echo-Request and same-origin fetch metadata (AD-50 rule 7)
+app.UseMiddleware<ContactsApi.WebApi.Middleware.CsrfProtectionMiddleware>();
+
 // Map and timeline reads in flight: the route-quality service's batch calls wait
 app.UseMiddleware<InteractiveLoadMiddleware>();
 
@@ -303,46 +300,10 @@ app.UseWhen(ctx => ctx.Request.Path.StartsWithSegments("/internal"), internalApi
     await next();
 }));
 
-// Session management
+// Session management: the ASP.NET session (non-identity state), loaded up front, then the
+// EchoSession ticket for /api (not /api/mcp, and not the OAuth callback, AD-50 rule 4)
 app.UseSession();
-
-// Load the session up front. Lazily, a Redis timeout is swallowed and the session
-// looks empty, so a signed-in user got 401 and was sent to sign in (2026-10-24, a
-// merge on a busy Pi). One retry, then 503: the app keeps the user signed in.
-app.UseWhen(ctx => ctx.Request.Path.StartsWithSegments("/api") && !ctx.Request.Path.StartsWithSegments("/api/mcp"),
-    api => api.Use(async (ctx, next) =>
-    {
-        for (var attempt = 1; ; attempt++)
-        {
-            try
-            {
-                await ctx.Session.LoadAsync(ctx.RequestAborted);
-                break;
-            }
-            catch (Exception ex) when (!ctx.RequestAborted.IsCancellationRequested)
-            {
-                if (attempt < 2)
-                {
-                    // A busy Redis: give it a moment
-                    await Task.Delay(300, ctx.RequestAborted);
-                    continue;
-                }
-
-                ctx.RequestServices.GetRequiredService<ILogger<Program>>()
-                    .LogWarning(ex, "Session store unavailable; answering 503 instead of signing the user out");
-                ctx.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
-                ctx.Response.Headers.RetryAfter = "2";
-                await ctx.Response.WriteAsJsonAsync(new
-                {
-                    success = false,
-                    error = new { code = "SESSION_STORE_UNAVAILABLE", message = "The server is busy. Try again in a moment.", timestamp = DateTime.UtcNow }
-                });
-                return;
-            }
-        }
-
-        await next();
-    }));
+app.UseMiddleware<EchoSessionMiddleware>();
 
 // The request's Owner from the session (AD-49 rule 4); /api/mcp sets it from its token below
 app.UseMiddleware<OwnerScopeMiddleware>();
@@ -394,6 +355,15 @@ app.MapHealthChecks("/health/ready");
 
 // Log application startup
 Log.Information("ContactsApi starting up");
+var allowlist = app.Services.GetRequiredService<AllowedEmails>();
+if (allowlist.IsConfigured)
+{
+    Log.Information("Sign-in allowlist: {Count} addresses", allowlist.Count);
+}
+else
+{
+    Log.Warning("Sign-in allowlist ({Key}) is empty or missing: nobody can sign in, and existing sessions are refused", "Echo__AllowedEmails");
+}
 
 try
 {

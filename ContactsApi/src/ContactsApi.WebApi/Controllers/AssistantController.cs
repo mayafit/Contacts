@@ -210,7 +210,7 @@ public class AssistantController : ControllerBase
             return Unauthorized(ApiResponse<object>.ErrorResponse("SESSION_EXPIRED", "Your Google session expired. Please sign in again."));
         }
 
-        var user = HttpContext.Session.GetString(GoogleTokenService.UserIdKey) ?? string.Empty;
+        var user = HttpContext.OwnerId() ?? string.Empty;
         var spellings = new JsonObject();
         var sources = new JsonObject();
         // Why Google Translate gave nothing, said when nothing else spells the words
@@ -294,7 +294,7 @@ public class AssistantController : ControllerBase
                 ApiResponse<object>.ErrorResponse("ASSISTANT_DISABLED", "The assistant is not configured (no Gemini key)."));
         }
 
-        var user = HttpContext.Session.GetString(GoogleTokenService.UserIdKey) ?? string.Empty;
+        var user = HttpContext.OwnerId() ?? string.Empty;
         var refusal = _gemini.TryConsume(user, kind, perMinute, DailyLimit);
         return refusal == null
             ? null

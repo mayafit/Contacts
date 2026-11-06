@@ -464,7 +464,7 @@ public class ActivityController : ControllerBase
 
         var snapshot = await _worker.EnqueueAsync(
             new ActivityJob(
-                userId, HttpContext.Session.GetString("UserEmail") ?? string.Empty, full, connected.Gmail, connected.Calendar));
+                userId, HttpContext.UserEmail(), full, connected.Gmail, connected.Calendar));
         return Ok(ApiResponse<ActivityStatusResponse>.SuccessResponse(Fill(new ActivityStatusResponse(), snapshot)));
     }
 
@@ -513,7 +513,7 @@ public class ActivityController : ControllerBase
         var connected = Connection();
         var snapshot = changed && (connected.Gmail || connected.Calendar)
             ? await _worker.EnqueueAsync(new ActivityJob(
-                userId, HttpContext.Session.GetString("UserEmail") ?? string.Empty, true, connected.Gmail, connected.Calendar))
+                userId, HttpContext.UserEmail(), true, connected.Gmail, connected.Calendar))
             : await _store.GetAsync(userId);
         var status = Fill(new ActivityStatusResponse(), snapshot);
         status.WindowYears = request.Years;
@@ -632,11 +632,11 @@ public class ActivityController : ControllerBase
     private async Task<string?> SignedInUserAsync() =>
         await _tokens.GetAccessTokenAsync(HttpContext) == null
             ? null
-            : HttpContext.Session.GetString(GoogleTokenService.UserIdKey);
+            : HttpContext.OwnerId();
 
     private ActivityConnection Connection()
     {
-        var granted = (HttpContext.Session.GetString(ActivityScopes.SessionKey) ?? string.Empty)
+        var granted = HttpContext.GrantedScopes()
             .Split(' ', StringSplitOptions.RemoveEmptyEntries);
         return new ActivityConnection
         {

@@ -99,7 +99,7 @@ public class EnrichController : ControllerBase
             return Unauthorized(ApiResponse<object>.ErrorResponse("SESSION_EXPIRED", "Your Google session expired. Please sign in again."));
         }
 
-        var granted = (HttpContext.Session.GetString(ActivityScopes.SessionKey) ?? string.Empty).Split(' ');
+        var granted = HttpContext.GrantedScopes().Split(' ');
         if (!granted.Contains(ActivityScopes.GmailRead))
         {
             return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.ErrorResponse(
@@ -113,7 +113,7 @@ public class EnrichController : ControllerBase
         }
 
         var targets = (request.Contacts ?? new()).Where(c => c.Emails.Count > 0).Take(10).ToList();
-        var user = HttpContext.Session.GetString(GoogleTokenService.UserIdKey) ?? string.Empty;
+        var user = HttpContext.OwnerId() ?? string.Empty;
         var reader = new SignatureReader(async _ =>
             await _tokens.GetAccessTokenAsync(HttpContext) ?? throw new ActivityScanException("NOT_CONNECTED", "Session ended"));
         var results = new JsonObject();
