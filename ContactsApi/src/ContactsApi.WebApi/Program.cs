@@ -25,6 +25,14 @@ Log.Logger = new LoggerConfiguration()
 
 builder.Host.UseSerilog();
 
+// The migrate-only init container (AD-49 rule 3): apply the Atlas migrations and exit
+if (ContactsApi.Infrastructure.Tenancy.EchoMigrator.MigrateOnlyRequested(args))
+{
+    Environment.ExitCode = await RowLevelSecurity.MigrateOnlyAsync(builder.Configuration);
+    Log.CloseAndFlush();
+    return;
+}
+
 // Add services to the container
 builder.Services.AddControllers();
 
@@ -69,16 +77,22 @@ builder.Services.AddHttpClient("gemini", c =>
 });
 // Atlas: PostgreSQL (Database__ConnectionString from Vault); without it Atlas
 // stays off and the rest of the app works as before
-var atlasConnection = builder.Configuration["Database:ConnectionString"];
+// Row-level security (AD-49): the owner scope, its interceptor on every DbContext, and the
+// connection string guards (no multiplexing, reset on close, application name, pool size)
+builder.Services.AddEchoRowLevelSecurity(builder.Configuration);
+var atlasConnection = ContactsApi.Infrastructure.Tenancy.OwnerConnectionStrings.Prepare(
+    builder.Configuration["Database:ConnectionString"], RowLevelSecurity.ApplicationName, RowLevelSecurity.MaxPoolSize);
 builder.Services.AddSingleton(new AtlasReadiness { Configured = !string.IsNullOrWhiteSpace(atlasConnection) });
-builder.Services.AddDbContext<ContactsApi.Infrastructure.Atlas.AtlasDbContext>(o =>
-    o.UseNpgsql(string.IsNullOrWhiteSpace(atlasConnection) ? "Host=unset" : atlasConnection,
-        npgsql => npgsql.MigrationsHistoryTable("__ef_migrations", "atlas")));
+builder.Services.AddDbContext<ContactsApi.Infrastructure.Atlas.AtlasDbContext>((sp, o) =>
+    ContactsApi.Infrastructure.Tenancy.OwnerScopeServices.UseOwnerRls(
+        o.UseNpgsql(string.IsNullOrWhiteSpace(atlasConnection) ? "Host=unset" : atlasConnection,
+            npgsql => npgsql.MigrationsHistoryTable("__ef_migrations", "atlas")), sp));
 builder.Services.AddScoped<ContactsApi.Infrastructure.Atlas.AtlasService>();
 // Routes module (AD-34): reads routes (matched lines, quality) and writes decisions only,
 // with the backend's own role; the schema's migrations belong to the route-quality service
-builder.Services.AddDbContext<ContactsApi.Infrastructure.Routes.RoutesDbContext>(o =>
-    o.UseNpgsql(string.IsNullOrWhiteSpace(atlasConnection) ? "Host=unset" : atlasConnection));
+builder.Services.AddDbContext<ContactsApi.Infrastructure.Routes.RoutesDbContext>((sp, o) =>
+    ContactsApi.Infrastructure.Tenancy.OwnerScopeServices.UseOwnerRls(
+        o.UseNpgsql(string.IsNullOrWhiteSpace(atlasConnection) ? "Host=unset" : atlasConnection), sp));
 builder.Services.AddSingleton(new ContactsApi.Infrastructure.Routes.RouteGeometryOptions
 {
     Enabled = !string.IsNullOrWhiteSpace(atlasConnection) && !string.IsNullOrWhiteSpace(builder.Configuration["Routes:ServiceUrl"])
@@ -328,6 +342,9 @@ app.UseWhen(ctx => ctx.Request.Path.StartsWithSegments("/api") && !ctx.Request.P
         await next();
     }));
 
+// The request's Owner from the session (AD-49 rule 4); /api/mcp sets it from its token below
+app.UseMiddleware<OwnerScopeMiddleware>();
+
 // Authorization: only the EchoService policy of /internal/** so far; the session and
 // PAT schemes of AD-3 rule 3 are still per controller and per path
 app.UseAuthorization();
@@ -340,9 +357,16 @@ app.UseWhen(ctx => ctx.Request.Path.StartsWithSegments("/api/mcp"), mcp => mcp.U
     var readiness = ctx.RequestServices.GetRequiredService<AtlasReadiness>();
     var header = ctx.Request.Headers.Authorization.ToString();
     var token = header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) ? header[7..].Trim() : string.Empty;
-    var owner = readiness.Ready && token.Length > 0
-        ? await ctx.RequestServices.GetRequiredService<AccessTokenService>().ValidateAsync(token)
-        : null;
+    string? owner = null;
+    if (readiness.Ready && token.Length > 0)
+    {
+        // The token's Owner is not known yet: resolved through a definer function (AD-49 rule 5)
+        using (ctx.RequestServices.GetRequiredService<ContactsApi.Infrastructure.Tenancy.OwnerScope>().AllowUnscoped())
+        {
+            owner = await ctx.RequestServices.GetRequiredService<AccessTokenService>().ValidateAsync(token);
+        }
+    }
+
     if (owner == null)
     {
         ctx.Response.StatusCode = readiness.Ready ? StatusCodes.Status401Unauthorized : StatusCodes.Status503ServiceUnavailable;
@@ -352,6 +376,7 @@ app.UseWhen(ctx => ctx.Request.Path.StartsWithSegments("/api/mcp"), mcp => mcp.U
     }
 
     ctx.Items[AtlasMcpTools.OwnerItem] = owner;
+    ctx.RequestServices.GetRequiredService<ContactsApi.Infrastructure.Tenancy.OwnerScope>().Set(owner);
     await next();
 }));
 

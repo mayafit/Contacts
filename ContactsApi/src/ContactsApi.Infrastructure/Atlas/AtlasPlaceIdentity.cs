@@ -90,13 +90,14 @@ public partial class AtlasService
     /// second). Places where nothing was found are looked at again after 30 days. Each
     /// place is written only if it still waits (the user may have named it meanwhile).
     /// </summary>
+    /// <param name="owner">The owner whose places are looked at (one owner at a time, AD-49 rule 5)</param>
     /// <returns>How many places it looked at (0: none left, or the lookups fail — try later)</returns>
-    public async Task<int> IdentifyPendingPlacesAsync(GeoLookupClient geo, int limit, CancellationToken ct = default)
+    public async Task<int> IdentifyPendingPlacesAsync(string owner, GeoLookupClient geo, int limit, CancellationToken ct = default)
     {
         var unnamed = PlaceIdentity.UnnamedNames.ToList();
         var recheck = DateTime.UtcNow.AddDays(-30);
         var todo = await _db.Places.AsNoTracking()
-            .Where(p => unnamed.Contains(p.Name)
+            .Where(p => p.OwnerId == owner && unnamed.Contains(p.Name)
                         && (p.IdentifyState == "pending"
                             || (p.IdentifyState == "none" && (p.IdentifyCheckedAt == null || p.IdentifyCheckedAt < recheck))))
             .OrderByDescending(p => _db.Visits.Count(v => v.PlaceId == p.Id))
@@ -111,7 +112,7 @@ public partial class AtlasService
 
         // How long visits there typically last (the median)
         var ids = todo.Select(t => t.Id).ToList();
-        var stays = (await _db.Visits.AsNoTracking().Where(v => v.PlaceId != null && ids.Contains(v.PlaceId.Value))
+        var stays = (await _db.Visits.AsNoTracking().Where(v => v.OwnerId == owner && v.PlaceId != null && ids.Contains(v.PlaceId.Value))
                 .Select(v => new { PlaceId = v.PlaceId!.Value, v.StartTime, v.EndTime }).ToListAsync(ct))
             .GroupBy(v => v.PlaceId)
             .ToDictionary(g => g.Key, g =>
@@ -146,7 +147,7 @@ public partial class AtlasService
         foreach (var (id, address, around) in answers)
         {
             var decision = PlaceIdentity.Decide(around, stays.GetValueOrDefault(id) >= PlaceIdentity.LongStayHours);
-            var waiting = _db.Places.Where(p => p.Id == id && unnamed.Contains(p.Name)
+            var waiting = _db.Places.Where(p => p.Id == id && p.OwnerId == owner && unnamed.Contains(p.Name)
                                                 && (p.IdentifyState == "pending" || p.IdentifyState == "none"));
             if (decision.Choice is { } c)
             {

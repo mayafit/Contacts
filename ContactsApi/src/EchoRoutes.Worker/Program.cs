@@ -5,6 +5,7 @@
  * @module EchoRoutes.Worker
  */
 using ContactsApi.Infrastructure.Routes;
+using ContactsApi.Infrastructure.Tenancy;
 using EchoRoutes.Worker;
 using EchoRoutes.Worker.Api;
 using EchoRoutes.Worker.Assess;
@@ -29,10 +30,28 @@ builder.Host.UseSerilog();
 
 builder.Services.Configure<RoutesOptions>(builder.Configuration.GetSection("Routes"));
 var options = builder.Configuration.GetSection("Routes").Get<RoutesOptions>() ?? new RoutesOptions();
+var rls = builder.Configuration.GetSection(RowLevelSecurityOptions.Section).Get<RowLevelSecurityOptions>() ?? new RowLevelSecurityOptions();
 
-builder.Services.AddDbContext<RoutesDbContext>(o =>
-    o.UseNpgsql(string.IsNullOrWhiteSpace(options.ConnectionString) ? "Host=unset" : options.ConnectionString,
-        npgsql => npgsql.MigrationsHistoryTable(RoutesDbContext.HistoryTable, RoutesDbContext.Schema)));
+// The migrate-only init container (AD-49 rule 3): apply the routes migrations as routes_migrator and exit
+if (EchoMigrator.MigrateOnlyRequested(args))
+{
+    Environment.ExitCode = await EchoMigrator.RunMigrateOnlyAsync<RoutesDbContext>(
+        builder.Configuration["Routes:MigrationConnectionString"],
+        cs => new DbContextOptionsBuilder<RoutesDbContext>()
+            .UseNpgsql(cs, n => n.MigrationsHistoryTable(RoutesDbContext.HistoryTable, RoutesDbContext.Schema)).Options,
+        ContactsApi.Infrastructure.Routes.Migrations.RoutesRowLevelSecurity.Id, rls.Policies,
+        new Serilog.Extensions.Logging.SerilogLoggerFactory(Log.Logger).CreateLogger("EchoMigrator"));
+    Log.CloseAndFlush();
+    return;
+}
+
+// Row-level security (AD-49 rule 4): the owner scope and its interceptor, and the
+// connection string guards (no multiplexing, reset on close, application name, pool 10)
+builder.Services.AddOwnerScoping(rls);
+var routesConnection = OwnerConnectionStrings.Prepare(options.ConnectionString, "echo-routes", 10);
+builder.Services.AddDbContext<RoutesDbContext>((sp, o) =>
+    o.UseNpgsql(string.IsNullOrWhiteSpace(routesConnection) ? "Host=unset" : routesConnection,
+        npgsql => npgsql.MigrationsHistoryTable(RoutesDbContext.HistoryTable, RoutesDbContext.Schema)).UseOwnerRls(sp));
 
 builder.Services.AddHttpClient(ValhallaClient.HttpClientName, c =>
 {

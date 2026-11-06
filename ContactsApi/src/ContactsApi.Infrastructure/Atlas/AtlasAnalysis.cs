@@ -128,15 +128,16 @@ public partial class AtlasService
     }
 
     /// <summary>
-    /// Computes best efforts for activities that have none yet, or stale ones (all owners).
-    /// The fusion service calls it in small batches while idle.
+    /// Computes best efforts for the owner's activities that have none yet, or stale ones.
+    /// The fusion service calls it in small batches while idle, one owner at a time
+    /// (AD-49 rule 5: the owners come from atlas.sys_owners).
     /// </summary>
     /// <param name="after">Continue after this activity id (keyset paging; null from the start)</param>
     /// <returns>The last activity id looked at, or null when nothing is left</returns>
-    public async Task<Guid?> AnalyzePendingEffortsAsync(int limit, Guid? after = null, CancellationToken ct = default)
+    public async Task<Guid?> AnalyzePendingEffortsAsync(string owner, int limit, Guid? after = null, CancellationToken ct = default)
     {
         var todo = await _db.Activities.AsNoTracking()
-            .Where(a => (a.ClusterId == null || a.ClusterId == a.Id) && a.PointCount > 1)
+            .Where(a => a.OwnerId == owner && (a.ClusterId == null || a.ClusterId == a.Id) && a.PointCount > 1)
             .Where(a => after == null || a.Id > after)
             .Select(a => new { a.Id, a.OwnerId, a.PointCount, Type = a.Fusion != null && a.Fusion.Type != null ? a.Fusion.Type : a.Type })
             .Where(a => EffortTypes.Contains(a.Type))

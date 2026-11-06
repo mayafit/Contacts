@@ -7,6 +7,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using ContactsApi.Infrastructure.Routes;
+using ContactsApi.Infrastructure.Tenancy;
 using EchoRoutes.Worker.Matching;
 using EchoRoutes.Worker.Scheduling;
 using EchoRoutes.Worker.Valhalla;
@@ -30,24 +31,31 @@ public record ApiEnvelope(bool Success, object? Data, ApiError? Error)
 /// <summary>An error of the envelope</summary>
 public record ApiError(string Code, string Message, DateTime Timestamp);
 
+/// <summary>A request that names its Owner (the backend's, AD-33 trust)</summary>
+public interface IOwnerRequest
+{
+    /// <summary>The Owner the backend names</summary>
+    string? OwnerId { get; }
+}
+
 /// <summary>Queue an assessment</summary>
 /// <param name="Interactive">Started by the Owner from the UI or MCP (≤ 50 ids makes it interactive)</param>
 /// <param name="Force">improve only: skip the "needs improvement" gate; never overrides a reject decision</param>
-public record AssessRequest(string? OwnerId, JobScope? Scope, bool? Interactive, bool? Force = null);
+public record AssessRequest(string? OwnerId, JobScope? Scope, bool? Interactive, bool? Force = null) : IOwnerRequest;
 
 /// <summary>New fused data for an Owner</summary>
-public record WakeRequest(string? OwnerId);
+public record WakeRequest(string? OwnerId) : IOwnerRequest;
 
 /// <summary>Rebuild one record on demand (AD-38)</summary>
 /// <param name="Method">similar or waypoints</param>
 /// <param name="Waypoints">waypoints only: [[lat, lon]…] in the order marked</param>
-public record RebuildRequest(string? OwnerId, Guid? ActivityId, string? Method, List<double[]>? Waypoints);
+public record RebuildRequest(string? OwnerId, Guid? ActivityId, string? Method, List<double[]>? Waypoints) : IOwnerRequest;
 
 /// <summary>Use a rebuild's suggestion</summary>
-public record ApplyRequest(string? OwnerId, Guid? JobId, Guid? ActivityId);
+public record ApplyRequest(string? OwnerId, Guid? JobId, Guid? ActivityId) : IOwnerRequest;
 
 /// <summary>Clear the points the Owner marked for a record</summary>
-public record ClearMarksRequest(string? OwnerId, Guid? ActivityId);
+public record ClearMarksRequest(string? OwnerId, Guid? ActivityId) : IOwnerRequest;
 
 /// <summary>The /internal/v1 endpoints and their token check</summary>
 public static class InternalApi
@@ -88,6 +96,8 @@ public static class InternalApi
     public static void MapInternalApi(this IEndpointRouteBuilder app)
     {
         var v1 = app.MapGroup("/internal/v1");
+        // Every query of a request runs under the Owner the backend names (AD-49 rule 4)
+        v1.AddEndpointFilter(SetOwnerAsync);
         v1.MapPost("/assess", (AssessRequest request, RoutesDbContext db, WakeSignal wake, CancellationToken ct) =>
             QueueAsync(RouteJobKinds.Assess, request, db, wake, ct));
         // Assessment and matching; force skips the "needs improvement" gate, never a reject
@@ -200,6 +210,27 @@ public static class InternalApi
             var status = await StatusAsync(ownerId!, db, matcher, graph, coverage, valhalla, breaker, options.Value, ct);
             return ApiEnvelope.Ok(status);
         });
+    }
+
+    /// <summary>
+    /// Sets the request's Owner from its body (<see cref="IOwnerRequest"/>) or its ownerId
+    /// query; a malformed one is refused, a missing one is left to the endpoint's own check
+    /// </summary>
+    internal static async ValueTask<object?> SetOwnerAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
+    {
+        var owner = context.Arguments.OfType<IOwnerRequest>().FirstOrDefault()?.OwnerId
+                    ?? context.HttpContext.Request.Query["ownerId"].FirstOrDefault();
+        if (!string.IsNullOrEmpty(owner))
+        {
+            if (!OwnerScope.IsValid(owner))
+            {
+                return ApiEnvelope.Fail(StatusCodes.Status400BadRequest, "INVALID_INPUT", "ownerId is malformed.");
+            }
+
+            context.HttpContext.RequestServices.GetRequiredService<OwnerScope>().Set(owner);
+        }
+
+        return await next(context);
     }
 
     private static async Task<IResult> QueueAsync(string kind, AssessRequest request, RoutesDbContext db, WakeSignal wake, CancellationToken ct)

@@ -5,6 +5,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using ContactsApi.Infrastructure.Atlas;
+using ContactsApi.Infrastructure.Tenancy;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -25,19 +26,23 @@ public class AtlasReadiness
 
 /// <summary>
 /// Applies the Atlas migrations at startup, retrying while PostgreSQL is not
-/// reachable. Contacts keep working meanwhile; Atlas answers 503 until ready.
+/// reachable; or, once the migrate-only init container applies them (AD-49 rule 3,
+/// RowLevelSecurity__MigrateOnStartup=false), only waits until none is pending.
+/// Contacts keep working meanwhile; Atlas answers 503 until ready.
 /// </summary>
 public class AtlasMigrator : BackgroundService
 {
     private readonly IServiceProvider _services;
     private readonly AtlasReadiness _readiness;
+    private readonly RowLevelSecurityOptions _rls;
     private readonly ILogger<AtlasMigrator> _logger;
 
     /// <summary>Creates the migrator</summary>
-    public AtlasMigrator(IServiceProvider services, AtlasReadiness readiness, ILogger<AtlasMigrator> logger)
+    public AtlasMigrator(IServiceProvider services, AtlasReadiness readiness, RowLevelSecurityOptions rls, ILogger<AtlasMigrator> logger)
     {
         _services = services;
         _readiness = readiness;
+        _rls = rls;
         _logger = logger;
     }
 
@@ -55,11 +60,24 @@ public class AtlasMigrator : BackgroundService
         {
             try
             {
-                using var scope = _services.CreateScope();
+                // Migrations and the readiness check have no Owner (AD-49 rule 4)
+                using var scope = _services.GetRequiredService<IServiceScopeFactory>().CreateUnscopedScope();
                 var db = scope.ServiceProvider.GetRequiredService<AtlasDbContext>();
-                // Some migrations fix data across all track points: more than the default 30 s
-                db.Database.SetCommandTimeout(TimeSpan.FromMinutes(20));
-                await db.Database.MigrateAsync(stoppingToken);
+                if (_rls.MigrateOnStartup)
+                {
+                    // Some migrations fix data across all track points: more than the default 30 s
+                    db.Database.SetCommandTimeout(TimeSpan.FromMinutes(20));
+                    await EchoMigrator.MigrateAsync(db, Infrastructure.Atlas.Migrations.AtlasRowLevelSecurity.Id, _rls.Policies, _logger, stoppingToken);
+                }
+                else
+                {
+                    var pending = await EchoMigrator.BlockingPendingAsync(db, Infrastructure.Atlas.Migrations.AtlasRowLevelSecurity.Id, _rls.Policies, stoppingToken);
+                    if (pending.Count > 0)
+                    {
+                        throw new InvalidOperationException($"{pending.Count} migrations wait for the migrate init container");
+                    }
+                }
+
                 _readiness.Ready = true;
                 _readiness.Error = null;
                 _logger.LogInformation("Atlas database ready");
@@ -83,24 +101,24 @@ public class AtlasMigrator : BackgroundService
 
     /// <summary>
     /// Data imported before fusion existed: fuse every owner's activities once
-    /// (when no fused activity exists yet). Failures are logged; the app works on.
+    /// (when no fused activity exists yet), each under its own scope (AD-49 rule 5).
+    /// Failures are logged; the app works on.
     /// </summary>
     private async Task BackfillFusionAsync(CancellationToken ct)
     {
         try
         {
-            using var scope = _services.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<AtlasDbContext>();
-            if (await db.Fusions.AnyAsync(ct))
+            var scopes = _services.GetRequiredService<IServiceScopeFactory>();
+            List<string> owners;
+            using (var scope = scopes.CreateUnscopedScope())
             {
-                return;
+                owners = await scope.ServiceProvider.GetRequiredService<AtlasDbContext>().SysOwnersAsync(SysOwnerKinds.FusionBackfill, ct);
             }
 
-            var owners = await db.Activities.Select(a => a.OwnerId).Distinct().ToListAsync(ct);
-            var atlas = scope.ServiceProvider.GetRequiredService<AtlasService>();
             foreach (var owner in owners)
             {
-                var result = await atlas.FuseAsync(owner, ct);
+                using var scope = scopes.CreateOwnerScope(owner);
+                var result = await scope.ServiceProvider.GetRequiredService<AtlasService>().FuseAsync(owner, ct);
                 _logger.LogInformation("Fusion backfill: {Fused} fused activities from {Activities} records", result.Fused, result.Activities);
             }
         }
@@ -154,7 +172,11 @@ public class AccessTokenService
     public async Task<bool> RevokeAsync(string owner, Guid id) =>
         await _db.AccessTokens.Where(t => t.Id == id && t.OwnerId == owner).ExecuteDeleteAsync() > 0;
 
-    /// <summary>The owner a token belongs to, or null</summary>
+    /// <summary>
+    /// The owner a token belongs to, or null. The Owner is not known yet, so the lookup
+    /// goes through atlas.sys_resolve_access_token (AD-49 rule 5), which also stamps
+    /// LastUsedAt at most hourly; the caller marks the work unscoped.
+    /// </summary>
     public async Task<string?> ValidateAsync(string token)
     {
         if (string.IsNullOrEmpty(token) || !token.StartsWith("atl_", StringComparison.Ordinal))
@@ -162,20 +184,7 @@ public class AccessTokenService
             return null;
         }
 
-        var hash = Hash(token);
-        var row = await _db.AccessTokens.FirstOrDefaultAsync(t => t.TokenHash == hash);
-        if (row == null)
-        {
-            return null;
-        }
-
-        if (row.LastUsedAt == null || DateTime.UtcNow - row.LastUsedAt > TimeSpan.FromHours(1))
-        {
-            row.LastUsedAt = DateTime.UtcNow;
-            await _db.SaveChangesAsync();
-        }
-
-        return row.OwnerId;
+        return await _db.SysResolveAccessTokenAsync(Hash(token));
     }
 
     private static AccessTokenInfo Info(AccessToken t) => new(t.Id, t.Name, t.Prefix, t.CreatedAt, t.LastUsedAt);

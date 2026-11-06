@@ -6,6 +6,7 @@
  */
 using ContactsApi.Infrastructure.Atlas;
 using ContactsApi.Infrastructure.Routes;
+using ContactsApi.Infrastructure.Tenancy;
 using ContactsApi.WebApi.Models.Responses;
 using ContactsApi.WebApi.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -29,12 +30,14 @@ public class InternalRoutesController : ControllerBase
 {
     private readonly AtlasReadiness _readiness;
     private readonly AtlasRoutesFeed _feed;
+    private readonly OwnerScope _owners;
 
     /// <summary>Creates the controller</summary>
-    public InternalRoutesController(AtlasReadiness readiness, AtlasRoutesFeed feed)
+    public InternalRoutesController(AtlasReadiness readiness, AtlasRoutesFeed feed, OwnerScope owners)
     {
         _readiness = readiness;
         _feed = feed;
+        _owners = owners;
     }
 
     /// <summary>The ids of Owners with Atlas data</summary>
@@ -77,13 +80,21 @@ public class InternalRoutesController : ControllerBase
                 "ATLAS_NOT_READY", "The Atlas database is starting. Try again in a minute."));
         }
 
-        if (ownerRequired && (string.IsNullOrWhiteSpace(ownerId) || ownerId.Length > 64))
+        if (ownerRequired && !OwnerScope.IsValid(ownerId))
         {
             return BadRequest(ApiResponse<object>.ErrorResponse("INVALID_INPUT", "ownerId is required."));
         }
 
         try
         {
+            // The Owner the route service names (AD-33 trust): every query runs under it
+            // (AD-49 rule 4); the owner list alone has none and asks a definer function
+            using var unscoped = ownerRequired ? null : _owners.AllowUnscoped();
+            if (ownerRequired)
+            {
+                _owners.Set(ownerId!);
+            }
+
             return Ok(ApiResponse<T>.SuccessResponse(await action()));
         }
         catch (DerivationNotReadyException ex)

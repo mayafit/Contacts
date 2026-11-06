@@ -261,7 +261,7 @@ public class RoutesHardeningDbTests
         using (var scope = sp.CreateScope())
         {
             var runner = scope.ServiceProvider.GetRequiredService<MatchRunner>();
-            while (await runner.FillLinesAsync(1, default) > 0)
+            while (await runner.FillLinesAsync(owner, 1, default) > 0)
             {
             }
         }

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using ContactsApi.Infrastructure.Routes;
+using ContactsApi.Infrastructure.Tenancy;
 using EchoRoutes.Worker;
 using EchoRoutes.Worker.Assess;
 using EchoRoutes.Worker.Backend;
@@ -94,6 +95,8 @@ public class RoutesMatchDbTests
         options?.Invoke(o);
         var services = new ServiceCollection();
         services.AddLogging();
+        // The owner scope the scheduler opens per Owner; no interceptor here (AD-49 tests are in RowLevelSecurityTests)
+        services.AddOwnerScoping(new RowLevelSecurityOptions { Mode = OwnerRlsMode.Off });
         services.AddDbContext<RoutesDbContext>(x => x.UseNpgsql(cs, n => n.MigrationsHistoryTable(RoutesDbContext.HistoryTable, RoutesDbContext.Schema)));
         services.AddSingleton<IRoutesBackend>(backend);
         services.AddSingleton(engine);
@@ -320,7 +323,7 @@ public class RoutesMatchDbTests
         var preparing = await Rebuild(sp).RunAsync(owner, list[^2].Id, RebuildMethods.Similar, null, default);
         Assert.Contains("1 of your drives are still being prepared", preparing.Message);
         var runner = sp.CreateScope().ServiceProvider.GetRequiredService<MatchRunner>();
-        while (await runner.FillLinesAsync(50, default) > 0)
+        while (await runner.FillLinesAsync(owner, 50, default) > 0)
         {
         }
 

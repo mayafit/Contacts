@@ -5,6 +5,7 @@
  */
 using System.Threading.Channels;
 using ContactsApi.Infrastructure.Atlas;
+using ContactsApi.Infrastructure.Tenancy;
 using ContactsApi.Infrastructure.Atlas.Flights;
 using Microsoft.EntityFrameworkCore;
 
@@ -864,7 +865,7 @@ public class FlightWorker : BackgroundService
                     continue;
                 }
 
-                using var scope = _scopes.CreateScope();
+                using var scope = _scopes.CreateOwnerScope(owner);
                 await scope.ServiceProvider.GetRequiredService<FlightService>().CheckAsync(owner, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -884,9 +885,9 @@ public class FlightWorker : BackgroundService
     {
         try
         {
-            using var scope = _scopes.CreateScope();
-            var owners = await scope.ServiceProvider.GetRequiredService<AtlasDbContext>().Activities.AsNoTracking()
-                .Where(a => a.Type == "flight").Select(a => a.OwnerId).Distinct().ToListAsync(ct);
+            // Across Owners: ids only, through a definer function (AD-49 rule 5)
+            using var scope = _scopes.CreateUnscopedScope();
+            var owners = await scope.ServiceProvider.GetRequiredService<AtlasDbContext>().SysOwnersAsync(SysOwnerKinds.Flights, ct);
             owners.ForEach(_queue.Enqueue);
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
