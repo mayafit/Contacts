@@ -13,3 +13,8 @@ app.kubernetes.io/part-of: contacts
 app.kubernetes.io/name: backend
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
+
+{{- /* The Redis master Service as StackExchange.Redis takes it (host:port) */ -}}
+{{- define "backend.redisHost" -}}
+{{- printf "%s-redis-master:%v" .Release.Name (.Values.global.redis.port | int) -}}
+{{- end }}

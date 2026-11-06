@@ -14,6 +14,43 @@ vault:
   kvPath: "secret/data/contacts"
   role: "contacts"
   authPath: "auth/kubernetes"
+  # The agent's projected token (AD-51 rule 6): audience = the Vault role's audience;
+  # "" asks for the API server's default audience
+  tokenAudience: vault
+  tokenExpirationSeconds: 3600
+  # Render Redis__ConnectionString with the password from this Vault key (AD-50
+  # rule 1). The backend parses it with StackExchange.Redis and the agent writes it
+  # into a shell file, so the password must not contain , = " $ \ or a backtick
+  # (generate it as hex)
+  redisPasswordKey: Redis__Password
+
+# Without Vault: the name of an existing Secret with the backend's secret env (AD-52
+# rule 1: the chart renders no Secret and has no default values)
+secrets:
+  existingSecret: ""
+
+# Restricted pod (AD-51 rule 5). The pod-level seccomp also covers the injected Vault
+# Agent containers. The backend writes only /tmp (an emptyDir). Init containers added
+# to this pod (the AD-49 migrate container) use containerSecurityContext too.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1001
+  runAsGroup: 1001
+  fsGroup: 1001
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+# Network policy (AD-51 rule 2). Ingress on 5000 from the frontend, the routes pod
+# (when routes.enabled) and these extra peers; egress to Postgres, Redis, the routes
+# Service, Vault and TCP 443 on the public internet (Google, Microsoft, OpenSky, ...)
+networkPolicy:
+  extraIngressFrom: []
 
 # The route-quality service (Epic 12). Set enabled together with the umbrella's
 # routes.enabled: the backend then calls <release>-routes on /internal/v1 with

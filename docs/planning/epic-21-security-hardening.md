@@ -67,12 +67,20 @@ through GitOps is done only when the **live object** shows it, not when its PR m
 
 #### 21.4 Redis locked down — Wave 1
 
-- [ ] `redis.auth.enabled: true` as the chart default, the server reading
+- [x] `redis.auth.enabled: true` as the chart default, the server reading
   `auth.existingSecret`, the backend's connection string rendered from Vault
-  `Redis__Password` (AD-50 rule 1).
+  `Redis__Password` (AD-50 rule 1). *(Chart, `fix/chart-hardening`: rendering fails
+  without `redis.auth.existingSecret`, with auth off, or with a password in values; the
+  Vault Agent template builds `Redis__ConnectionString` from `Redis__Password`, so the
+  backend needs no code change. The Vault key and the Secret
+  (`helm/scripts/secrets-from-vault.sh`, with the rollout order in its header) are
+  operator steps, done before the release upgrade.)*
 - [ ] The Redis NetworkPolicy admits 6379 only from the backend pod; a connection from
-  another pod and from another namespace is refused.
-- [ ] `bitnami/redis` pinned to a current digest with `pullPolicy: IfNotPresent`.
+  another pod and from another namespace is refused. *(Chart: `allowExternal: false`,
+  `allowExternalEgress: false`, `extraIngress` from the backend only; rendering fails on
+  `allowExternal: true`. The refusal is checked live after the rollout.)*
+- [x] `bitnami/redis` pinned to a current digest with `pullPolicy: IfNotPresent`.
+  *(The chart default is the digest the live pod ran on 2026-11-03.)*
 
 #### 21.5 The key ring wrapped, the exposed keys retired — Wave 1
 
@@ -92,12 +100,20 @@ through GitOps is done only when the **live object** shows it, not when its PR m
   `psql` with the old password fails (AD-49 rule 8 step 1, AD-52 rules 1 and 3).
 - [ ] `postgresql.auth.password` removed from `helm/contacts/values.yaml` and from the
   release in `raspberry_deployment`; `auth.existingSecret` used; the `postgres`
-  superuser password moved to Vault `secret/data/contacts-pg-admin`.
-- [ ] The Postgres NetworkPolicy admits 5432 only from the backend, the route service and
-  the backup job.
-- [ ] Postgres re-pinned to a current digest of major 18 (AD-54 rule 3).
+  superuser password moved to Vault `secret/data/contacts-pg-admin`. *(Chart: done. The
+  password is gone, `auth.existingSecret` is required, and rendering fails when
+  `password` or `postgresPassword` is set, so the release must drop it in the same
+  change. The Vault path and the Secret are operator steps; the live superuser password
+  sits only in the Bitnami Secret `contacts-postgresql`, which the upgrade deletes, so it
+  is copied to Vault first.)*
+- [x] The Postgres NetworkPolicy admits 5432 only from the backend, the route service and
+  the backup job. *(Chart: `allowExternal: false`, no egress but DNS, `extraIngress` for
+  the `backend`, `routes` and `backup` pod labels.)*
+- [x] Postgres re-pinned to a current digest of major 18 (AD-54 rule 3). *(The live
+  18.6.0 digest is now the chart default, not only the release's.)*
 - [ ] A CI check fails when rendered values set a non-empty password, secret, token or
-  key (AD-51 rule 8).
+  key (AD-51 rule 8). *(The check exists, `helm/scripts/conformance.py --values`; wiring
+  it into CI waits for AD-22.)*
 
 #### 21.7 Invite-only sign-in from Vault configuration — Wave 1
 
@@ -151,18 +167,31 @@ through GitOps is done only when the **live object** shows it, not when its PR m
 
 - [ ] Every Contacts container has the restricted securityContext, Valhalla included
   (`runAsUser` 1001), and the tiles, migrate and backup containers (AD-51 rule 5).
-- [ ] `automountServiceAccountToken: false` everywhere; the frontend has its own
+  *(Chart: done for every container that exists, Valhalla and tiles included; Valhalla
+  as 1001 was checked against the pinned image and tiles (AA-19). The migrate init
+  container (21.15) and the backup job (21.20) must use the charts'
+  `containerSecurityContext` when they are added.)*
+- [x] `automountServiceAccountToken: false` everywhere; the frontend has its own
   ServiceAccount; the Vault Agent gets a projected token with audience `vault` (AD-51
-  rule 6).
-- [ ] Requests and limits on every container; a `LimitRange` in `contacts` (AD-51
-  rule 7).
+  rule 6). *(Chart. The Vault roles' `audience` (21.21) is set after the new pods run:
+  a role without one checks the token against its own audience, so the projected token
+  logs in; a role with one rejects the old pods' default tokens. Rollout order:
+  `helm/scripts/secrets-from-vault.sh`.)*
+- [x] Requests and limits on every container; a `LimitRange` in `contacts` (AD-51
+  rule 7). *(The Vault Agent containers get the injector's defaults.)*
 - [ ] The chart ships the default-deny policy and the allows of AD-51 rule 2, with
   `routes.backendIngressPolicy` on; every pod's probes stay green; the backend reaches
-  Google over 443 and cannot reach a home-network address.
-- [ ] The namespace enforces `restricted` and every pod is admitted.
+  Google over 443 and cannot reach a home-network address. *(Chart: done, with the
+  backup job's policy and `global.networkPolicy.nodeAddresses` for AA-18. The probe,
+  Google and home-network checks are live checks after the rollout.)*
+- [ ] The namespace enforces `restricted` and every pod is admitted. *(The label belongs
+  in `raspberry_deployment` `apps/contacts/namespace.yaml`; the rendered chart passes
+  the restricted checks of `helm/scripts/conformance.py`.)*
 - [ ] The conformance check of AD-51 rule 8 runs on the rendered manifests in CI: no
   `:latest`, no `NodePort`, the rule 5 securityContext on every container, a
-  NetworkPolicy selecting every pod, no `allowExternal: true`.
+  NetworkPolicy selecting every pod, no `allowExternal: true`. *(The check is
+  `helm/scripts/conformance.py`; CI waits for AD-22. With the live values it still
+  fails on the frontend and backend `:latest` images, which 21.24 pins.)*
 
 #### 21.12 Frontend image and dependencies — Wave 1
 

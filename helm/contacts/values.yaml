@@ -4,14 +4,58 @@
 
 global:
   # The URL users open in the browser. Drives the OAuth redirect URI, the
-  # post-login redirect and the CORS origin. Override per environment.
-  publicUrl: "http://contacts.lan"
+  # post-login redirect and the CORS origin. Override per environment. HTTPS only:
+  # the plain-HTTP LAN host is gone (AD-53 rule 4), and the AD-50 cookies are Secure.
+  publicUrl: "https://contacts.mayaffit.com"
   postgresql:
     port: 5432
     database: contactsdb
     username: contactsapi
   redis:
     port: 6379
+
+  # Default-deny networking for the contacts namespace (AD-51 rules 1 and 2). Every
+  # chart pod gets its own allow-list on top of a namespace-wide deny; the shared
+  # settings live here so every subchart reads the same ones.
+  networkPolicy:
+    enabled: true
+    # Cluster DNS: every pod may reach it (AD-51 rule 1)
+    dns:
+      namespace: kube-system
+      podLabels:
+        k8s-app: kube-dns
+    # The Vault Agent sidecars reach the Vault server here (AD-51 rule 2)
+    vault:
+      namespace: vault
+      port: 8200
+    # Internet egress (TCP 443 only) excludes these: RFC 1918, the CGNAT range the
+    # tailnet uses, link-local. In-cluster targets are allowed by pod selectors
+    privateRanges:
+      - 10.0.0.0/8
+      - 172.16.0.0/12
+      - 192.168.0.0/16
+      - 100.64.0.0/10
+      - 169.254.0.0/16
+    # AA-18: kubelet probes come from the node. If the CNI drops node-originated
+    # traffic once the policies are on, list the node addresses here (CIDRs, e.g.
+    # "192.0.2.10/32"); they are then admitted on the probe ports only
+    nodeAddresses: []
+    # The future backup CronJob (AD-24, AD-55) carries app.kubernetes.io/name: backup;
+    # its policy (Postgres, Vault, 443 out; no ingress) ships now so the job only
+    # needs the label
+    backup:
+      enabled: true
+
+# A LimitRange in the namespace: a container that forgets its limits still gets a
+# memory limit (AD-51 rule 7). Every chart container sets its own.
+limitRange:
+  enabled: true
+  default:
+    cpu: 500m
+    memory: 256Mi
+  defaultRequest:
+    cpu: 50m
+    memory: 64Mi
 
 # =============================================================================
 # Frontend subchart (React + Nginx)
@@ -29,8 +73,11 @@ frontend:
     type: ClusterIP
     port: 8080
 
+  # The Traefik IngressRoute is off by default: the Cloudflare tunnel is the only way
+  # in (AD-53 rule 4). While a release still turns it on, the frontend's policy also
+  # admits Traefik. Removing the template and its catch-all is story 21.23
   ingress:
-    enabled: true
+    enabled: false
     host: contacts.lan
     entryPoints:
       - web
@@ -102,12 +149,12 @@ backend:
     OTEL_EXPORTER_OTLP_ENDPOINT: "http://glutenguardian-seq.glutguard.svc.cluster.local:4317"
     JAEGER_ENDPOINT: "http://glutenguardian-jaeger-all-in-one.glutguard.svc.cluster.local:14268/api/traces"
 
-  # Secret values - override at install time via --set or Vault
+  # Secrets come from Vault (vault.enabled). Without Vault, only an existing Secret
+  # is accepted (AD-52 rule 1): it must hold GoogleOAuth__ClientId,
+  # GoogleOAuth__ClientSecret, Database__ConnectionString and, with Redis auth on,
+  # Redis__ConnectionString ("<host>:6379,password=<pw>"). The chart renders none.
   secrets:
     existingSecret: ""
-    googleClientId: "CHANGE_ME"
-    googleClientSecret: "CHANGE_ME"
-    dbPassword: "CHANGE_ME"
 
   # Vault Agent Injector settings
   vault:
@@ -115,6 +162,11 @@ backend:
     kvPath: "secret/data/contacts"
     role: "contacts"
     authPath: "auth/kubernetes"
+    # The agent authenticates with a projected token mounted into the agent
+    # containers only (AD-51 rule 6). Its audience must equal the Vault role's
+    # `audience`; "" requests the API server's default audience (a role without one)
+    tokenAudience: vault
+    tokenExpirationSeconds: 3600
 
   probes:
     liveness:
@@ -145,19 +197,32 @@ routes:
     # The routes pod's own path (only its three keys); its role reads nothing else
     kvPath: "secret/data/contacts-routes"
     role: "contacts-routes"
-  # A policy on the backend pod; list the live peers before switching it on (README)
+  # The routes pod is admitted to the backend (AD-32 rule 7, turned on by AD-51 rule 2)
   backendIngressPolicy:
-    enabled: false
+    enabled: true
     extraBackendIngressFrom: []
 
 # =============================================================================
 # Bitnami PostgreSQL
 # =============================================================================
 postgresql:
+  image:
+    # Bitnami publishes only `latest`, which crosses majors; pinned to the 18.6.0
+    # digest the live pod runs (AD-54 rule 3). `tag` is inert while digest is set
+    digest: "sha256:9a7d0a522a8658fecf55f269f05c0b29ebe88c4ad89d52fbde0f2c9cd8d2ca48"
+    tag: latest
+    pullPolicy: IfNotPresent
   auth:
     username: contactsapi
-    password: contactspassword
     database: contactsdb
+    # No password in values (AD-52 rule 1). REQUIRED: a Secret the operator creates
+    # from Vault, with the keys below: the `postgres` superuser's password
+    # (secret/data/contacts-pg-admin) and contactsapi's (secret/data/contacts).
+    # helm/scripts/secrets-from-vault.sh creates it. Rendering fails while it is empty.
+    existingSecret: ""
+    secretKeys:
+      adminPasswordKey: postgres-password
+      userPasswordKey: password
   primary:
     persistence:
       enabled: true
@@ -170,13 +235,64 @@ postgresql:
       limits:
         cpu: 500m
         memory: 512Mi
+    # 5432 only from the backend, the route service and the backup job; nothing out
+    # but DNS (AD-51 rule 2). The chart also admits its own pods and any pod labelled
+    # <release>-postgresql-client: "true" (none is)
+    networkPolicy:
+      enabled: true
+      allowExternal: false
+      allowExternalEgress: false
+      extraIngress:
+        - ports:
+            - port: 5432
+              protocol: TCP
+          from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: backend
+                  app.kubernetes.io/instance: "{{ .Release.Name }}"
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: routes
+                  app.kubernetes.io/instance: "{{ .Release.Name }}"
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: backup
+                  app.kubernetes.io/instance: "{{ .Release.Name }}"
 
 # =============================================================================
 # Bitnami Redis
 # =============================================================================
 redis:
+  image:
+    # Pinned to the digest the live pod runs instead of a moving `latest` (21.4)
+    digest: "sha256:98cf67395e80506c7bc21b889107980365558ef30d59059ac6d76aab2678bf7e"
+    tag: latest
+    pullPolicy: IfNotPresent
+  # Redis holds sessions, Google tokens and the key ring: a password is the chart
+  # default (AD-50 rule 1). REQUIRED: a Secret the operator creates from Vault
+  # secret/data/contacts key Redis__Password (helm/scripts/secrets-from-vault.sh);
+  # rendering fails while it is empty.
+  # The backend gets the same value through its Vault Agent template.
   auth:
-    enabled: false
+    enabled: true
+    existingSecret: ""
+    existingSecretPasswordKey: redis-password
+  # 6379 only from the backend; nothing out (AD-50 rule 1, AD-51 rule 2). The chart
+  # also admits its own pods and any pod labelled <release>-redis-client: "true"
+  networkPolicy:
+    enabled: true
+    allowExternal: false
+    allowExternalEgress: false
+    extraIngress:
+      - ports:
+          - port: 6379
+            protocol: TCP
+        from:
+          - podSelector:
+              matchLabels:
+                app.kubernetes.io/name: backend
+                app.kubernetes.io/instance: "{{ .Release.Name }}"
   master:
     persistence:
       enabled: true

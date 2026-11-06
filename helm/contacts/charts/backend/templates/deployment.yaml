@@ -15,28 +15,37 @@ spec:
         {{- include "backend.selectorLabels" . | nindent 8 }}
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
-        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
         {{- if .Values.vault.enabled }}
         vault.hashicorp.com/agent-inject: "true"
         vault.hashicorp.com/role: {{ .Values.vault.role | quote }}
+        # The agent logs in with the projected token below, which the injector mounts
+        # into the agent containers only; the backend container gets no token (AD-51 rule 6)
+        vault.hashicorp.com/agent-service-account-token-volume-name: vault-token
         vault.hashicorp.com/agent-inject-secret-env: {{ .Values.vault.kvPath | quote }}
+        # Redis__ConnectionString is built from the Redis password (AD-50 rule 1) and
+        # overrides the password-less one in the ConfigMap. Rendering only the keys the
+        # backend uses, instead of every key, is story 21.21 (AD-52 rule 2)
         vault.hashicorp.com/agent-inject-template-env: |
           {{`{{ with secret "`}}{{ .Values.vault.kvPath }}{{`" }}`}}
           {{`{{ range $k, $v := .Data.data }}`}}
           export {{`{{ $k }}`}}="{{`{{ $v }}`}}"
           {{`{{ end }}`}}
+          {{- if .Values.vault.redisPasswordKey }}
+          {{`{{ with index .Data.data "`}}{{ .Values.vault.redisPasswordKey }}{{`" }}`}}
+          export Redis__ConnectionString="{{ include "backend.redisHost" . }},password={{`{{ . }}`}}"
+          {{`{{ end }}`}}
+          {{- end }}
           {{`{{ end }}`}}
         {{- end }}
     spec:
       serviceAccountName: {{ include "backend.fullname" . }}
+      automountServiceAccountToken: false
       {{- if .Values.image.pullSecret }}
       imagePullSecrets:
         - name: {{ .Values.image.pullSecret }}
       {{- end }}
       securityContext:
-        runAsUser: 1001
-        runAsGroup: 1001
-        fsGroup: 1001
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
         - name: backend
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -61,7 +70,7 @@ spec:
                 name: {{ include "backend.fullname" . }}-config
             {{- if not .Values.vault.enabled }}
             - secretRef:
-                name: {{ .Values.secrets.existingSecret | default (printf "%s-secret" (include "backend.fullname" .)) }}
+                name: {{ required "backend.secrets.existingSecret is required when backend.vault.enabled is false (AD-52 rule 1)" .Values.secrets.existingSecret }}
             {{- end }}
           livenessProbe:
             httpGet:
@@ -82,8 +91,7 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           securityContext:
-            readOnlyRootFilesystem: true
-            allowPrivilegeEscalation: false
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           volumeMounts:
             - name: tmp
               mountPath: /tmp
@@ -92,3 +100,16 @@ spec:
           # Takeout exports are downloaded here for as long as their reviews are read (AD-40)
           emptyDir:
             sizeLimit: 1Gi
+        {{- if .Values.vault.enabled }}
+        # The Vault Agent's login token: short-lived, audience-bound, mounted by the
+        # injector into the agent containers only (AD-51 rule 6)
+        - name: vault-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: {{ .Values.vault.tokenExpirationSeconds }}
+                  {{- with .Values.vault.tokenAudience }}
+                  audience: {{ . }}
+                  {{- end }}
+        {{- end }}

@@ -7,3 +7,35 @@ image:
 service:
   type: ClusterIP
   port: 8080
+
+# Restricted pod (AD-51 rule 5): nginx runs as 101; it writes only /var/cache/nginx
+# and /tmp (the pid file), both emptyDirs
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 101
+  runAsGroup: 101
+  fsGroup: 101
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+# Network policy (AD-51 rule 2): ingress from these peers on 8080, egress to the
+# backend only. The Cloudflare tunnel is the only way in (AD-53)
+networkPolicy:
+  ingressFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: cloudflared
+  # Admitted only while ingress.enabled (the IngressRoute still exists)
+  traefikFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: traefik

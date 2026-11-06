@@ -8,7 +8,9 @@ data:
   ASPNETCORE_ENVIRONMENT: {{ .Values.config.ASPNETCORE_ENVIRONMENT | quote }}
   ASPNETCORE_URLS: {{ .Values.config.ASPNETCORE_URLS | quote }}
   DOTNET_RUNNING_IN_CONTAINER: {{ .Values.config.DOTNET_RUNNING_IN_CONTAINER | quote }}
-  Redis__ConnectionString: {{ printf "%s-redis-master:%v" .Release.Name (.Values.global.redis.port | int) | quote }}
+  # Host only. With Redis auth on, the Vault Agent template renders the full string
+  # (with the password) and it overrides this one
+  Redis__ConnectionString: {{ include "backend.redisHost" . | quote }}
   {{- $publicUrl := required "global.publicUrl is required (e.g. https://contacts.example.com)" .Values.global.publicUrl | trimSuffix "/" }}
   # All three derive from the URL the browser uses. RedirectUri must also be
   # registered on the Google OAuth client, character for character.

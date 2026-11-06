@@ -153,6 +153,31 @@ vault:
   # The Vault agent sidecar must reach Vault through the egress policy
   namespace: vault
   port: 8200
+  # The agent's projected token (AD-51 rule 6): audience = the Vault role's audience;
+  # "" asks for the API server's default audience
+  tokenAudience: vault
+  tokenExpirationSeconds: 3600
+
+# Restricted pod (AD-51 rule 5), all three containers as 1001 (the pod-level seccomp
+# also covers the injected Vault Agent). Valhalla's image declares no user and ran as
+# root; it reads only /data (the tiles emptyDir, read-only) and writes only /tmp (an
+# emptyDir), so it runs as 1001 too (AA-19; checked against the pinned image and
+# tiles: /status and a /route answer as 1001 on a read-only root with no capabilities)
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1001
+  runAsGroup: 1001
+  fsGroup: 1001
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1001
+  runAsGroup: 1001
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
 
 # The routes pod's own policy (egress to the backend, Postgres, DNS and Vault only;
 # ingress from the backend only)
@@ -165,11 +190,10 @@ networkPolicy:
       app.kubernetes.io/name: postgresql
 
 # A policy on the BACKEND pod admitting only the frontend's nginx, the routes pod and
-# the peers listed below. Off by default: once on, every peer not listed is cut off
-# (an ingress controller, an in-cluster Cloudflare tunnel, metrics scrapes), so list
-# the live peers first (README, "Network policies")
+# the peers listed below. On since AD-51 rule 2 (the contacts namespace is
+# default-deny, and the backend chart's own policy admits the same peers)
 backendIngressPolicy:
-  enabled: false
+  enabled: true
   # Each entry is a NetworkPolicy "from" peer
   extraBackendIngressFrom: []
 
