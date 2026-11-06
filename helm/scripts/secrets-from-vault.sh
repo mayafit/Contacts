@@ -13,6 +13,27 @@
 # a file in a private temporary directory that is removed on exit.
 #
 # Usage: helm/scripts/secrets-from-vault.sh [namespace]   (default: contacts)
+#
+# First upgrade of a live release to chart 0.6.0, in this order:
+#  1. Before anything else, save the `postgres` superuser password. Today it exists only
+#     in the Bitnami-generated Secret `contacts-postgresql`, which the upgrade DELETES
+#     (the chart stops rendering it once auth.existingSecret is set):
+#       kubectl -n contacts get secret contacts-postgresql -o jsonpath='{.data.postgres-password}' \
+#         | base64 -d > "$f" && vault kv put secret/contacts-pg-admin postgres-password=@"$f"
+#     (with f a file in a private directory; `@file` keeps the value off the command line)
+#  2. Add to secret/contacts (vault kv patch ... KEY=@file): Redis__Password (new, hex)
+#     and Database__Password (the password inside Database__ConnectionString). Without
+#     Redis__Password in Vault BEFORE the upgrade, the backend gets the password-less
+#     connection string while Redis now requires one, and sessions fail.
+#  3. Run this script.
+#  4. In the release (raspberry_deployment apps/contacts/release.yaml), in one commit:
+#     drop postgresql.auth.password, set postgresql.auth.existingSecret and
+#     redis.auth.{enabled: true, existingSecret}. The chart refuses to render otherwise,
+#     so a chart that reaches `main` first only leaves the HelmRelease failed, unchanged.
+#  5. After the new pods are Ready, set `audience=vault` on the Vault roles `contacts`
+#     and `contacts-routes` (story 21.21). Not before: a role with an audience rejects
+#     the old pods' default tokens. Login works in between because a role without an
+#     audience has Vault ask the API server for the token's own audience.
 set -euo pipefail
 
 NS="${1:-contacts}"

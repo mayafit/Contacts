@@ -73,7 +73,8 @@ through GitOps is done only when the **live object** shows it, not when its PR m
   without `redis.auth.existingSecret`, with auth off, or with a password in values; the
   Vault Agent template builds `Redis__ConnectionString` from `Redis__Password`, so the
   backend needs no code change. The Vault key and the Secret
-  (`helm/scripts/secrets-from-vault.sh`) are operator steps.)*
+  (`helm/scripts/secrets-from-vault.sh`, with the rollout order in its header) are
+  operator steps, done before the release upgrade.)*
 - [ ] The Redis NetworkPolicy admits 6379 only from the backend pod; a connection from
   another pod and from another namespace is refused. *(Chart: `allowExternal: false`,
   `allowExternalEgress: false`, `extraIngress` from the backend only; rendering fails on
@@ -102,7 +103,9 @@ through GitOps is done only when the **live object** shows it, not when its PR m
   superuser password moved to Vault `secret/data/contacts-pg-admin`. *(Chart: done. The
   password is gone, `auth.existingSecret` is required, and rendering fails when
   `password` or `postgresPassword` is set, so the release must drop it in the same
-  change. The Vault path and the Secret are operator steps.)*
+  change. The Vault path and the Secret are operator steps; the live superuser password
+  sits only in the Bitnami Secret `contacts-postgresql`, which the upgrade deletes, so it
+  is copied to Vault first.)*
 - [x] The Postgres NetworkPolicy admits 5432 only from the backend, the route service and
   the backup job. *(Chart: `allowExternal: false`, no egress but DNS, `extraIngress` for
   the `backend`, `routes` and `backup` pod labels.)*
@@ -170,7 +173,10 @@ through GitOps is done only when the **live object** shows it, not when its PR m
   `containerSecurityContext` when they are added.)*
 - [x] `automountServiceAccountToken: false` everywhere; the frontend has its own
   ServiceAccount; the Vault Agent gets a projected token with audience `vault` (AD-51
-  rule 6). *(Chart. The Vault roles' `audience` (21.21) must be set at the same time.)*
+  rule 6). *(Chart. The Vault roles' `audience` (21.21) is set after the new pods run:
+  a role without one checks the token against its own audience, so the projected token
+  logs in; a role with one rejects the old pods' default tokens. Rollout order:
+  `helm/scripts/secrets-from-vault.sh`.)*
 - [x] Requests and limits on every container; a `LimitRange` in `contacts` (AD-51
   rule 7). *(The Vault Agent containers get the injector's defaults.)*
 - [ ] The chart ships the default-deny policy and the allows of AD-51 rule 2, with
