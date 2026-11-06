@@ -26,15 +26,17 @@ spec:
         # containers only (AD-51 rule 6); only the routes container mounts the
         # rendered secrets, Valhalla does not
         vault.hashicorp.com/agent-service-account-token-volume-name: vault-token
-        vault.hashicorp.com/agent-inject-containers: routes
+        vault.hashicorp.com/agent-inject-containers: {{ ternary "migrate,routes" "routes" .Values.migrations.initContainer | quote }}
         vault.hashicorp.com/agent-inject-secret-env: {{ .Values.vault.kvPath | quote }}
         # Only the routes keys: the backend's database credentials never enter this pod
         vault.hashicorp.com/agent-inject-template-env: |
-          {{`{{ with secret "`}}{{ .Values.vault.kvPath }}{{`" }}`}}
-          export Routes__ServiceToken="{{`{{ .Data.data.Routes__ServiceToken }}`}}"
-          export Routes__BackendToken="{{`{{ .Data.data.Routes__BackendToken }}`}}"
-          export Routes__ConnectionString="{{`{{ .Data.data.Routes__ConnectionString }}`}}"
-          {{`{{ end }}`}}
+          {{- include "routes.vaultEnvTemplate" . | nindent 10 }}
+        {{- if .Values.migrations.initContainer }}
+        # AD-49 rule 3: only the agent's init container (run first) renders the migrator's
+        # credential; the migrate init container deletes it (vault-agent-configmap.yaml)
+        vault.hashicorp.com/agent-configmap: {{ include "routes.fullname" . }}-vault-agent
+        vault.hashicorp.com/agent-init-first: "true"
+        {{- end }}
         {{- end }}
     spec:
       serviceAccountName: {{ include "routes.fullname" . }}
@@ -71,6 +73,35 @@ spec:
           volumeMounts:
             - name: tiles
               mountPath: /data
+        {{- if .Values.migrations.initContainer }}
+        {{- if not .Values.vault.enabled }}
+        {{- fail "routes.migrations.initContainer needs routes.vault.enabled (the migrator's credential comes from Vault, AD-49 rule 3)" }}
+        {{- end }}
+        # The routes migrations as routes_migrator, then the credential is deleted before
+        # the routes container starts (AD-49 rule 3). A failed run keeps the pod in Init
+        - name: migrate
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              set -a
+              . /vault/secrets/migrate
+              set +a
+              dotnet EchoRoutes.Worker.dll --migrate-only
+              rm -f /vault/secrets/migrate
+          envFrom:
+            - configMapRef:
+                name: {{ include "routes.fullname" . }}-config
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.migrations.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+        {{- end }}
       containers:
         - name: routes
           {{- if or (not .Values.image.tag) (eq (toString .Values.image.tag) "latest") }}

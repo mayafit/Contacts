@@ -23,6 +23,25 @@ vault:
   # into a shell file, so the password must not contain , = " $ \ or a backtick
   # (generate it as hex)
   redisPasswordKey: Redis__Password
+  # Only with migrations.initContainer: the custom agent config (AD-49 rule 3) names
+  # the Vault server itself, as the injector's own config does not apply then
+  address: "http://vault.vault.svc:8200"
+
+# Row-level security (AD-49 rule 8): Shadow (log-only) until the logs show no
+# "owner scope missing", then Enforce; policies on at rollout step 4
+rowLevelSecurity:
+  mode: Shadow
+  policies: false
+
+# The migrate-only init container (AD-49 rule 3). Off until db-roles.sql has run and
+# the migration path holds Database__MigrationConnectionString (atlas_migrator); the
+# backend's Vault role must read that path too. On: the API stops migrating at startup.
+migrations:
+  initContainer: false
+  kvPath: "secret/data/contacts-migrate"
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 384Mi }
 
 # Without Vault: the name of an existing Secret with the backend's secret env (AD-52
 # rule 1: the chart renders no Secret and has no default values)
