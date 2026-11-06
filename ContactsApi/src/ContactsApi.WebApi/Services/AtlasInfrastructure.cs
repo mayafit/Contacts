@@ -22,6 +22,28 @@ public class AtlasReadiness
 
     /// <summary>Last migration error, for the status endpoint</summary>
     public string? Error { get; set; }
+
+    /// <summary>Migrations are pending and the API does not apply them (it waits for the migrate init container)</summary>
+    public volatile bool MigrationsPending;
+}
+
+/// <summary>/health/ready: unready while Atlas migrations are pending (AD-49 rule 3); /health (liveness) ignores it</summary>
+public class AtlasMigrationsCheck : Microsoft.Extensions.Diagnostics.HealthChecks.IHealthCheck
+{
+    /// <summary>The tag of the readiness-only checks</summary>
+    public const string ReadyTag = "ready";
+
+    private readonly AtlasReadiness _readiness;
+
+    /// <summary>Creates the check</summary>
+    public AtlasMigrationsCheck(AtlasReadiness readiness) => _readiness = readiness;
+
+    /// <inheritdoc />
+    public Task<Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult> CheckHealthAsync(
+        Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckContext context, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_readiness.MigrationsPending
+            ? Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Unhealthy("Atlas migrations are pending")
+            : Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Healthy());
 }
 
 /// <summary>
@@ -72,12 +94,14 @@ public class AtlasMigrator : BackgroundService
                 else
                 {
                     var pending = await EchoMigrator.BlockingPendingAsync(db, Infrastructure.Atlas.Migrations.AtlasRowLevelSecurity.Id, _rls.Policies, stoppingToken);
+                    _readiness.MigrationsPending = pending.Count > 0;
                     if (pending.Count > 0)
                     {
                         throw new InvalidOperationException($"{pending.Count} migrations wait for the migrate init container");
                     }
                 }
 
+                _readiness.MigrationsPending = false;
                 _readiness.Ready = true;
                 _readiness.Error = null;
                 _logger.LogInformation("Atlas database ready");

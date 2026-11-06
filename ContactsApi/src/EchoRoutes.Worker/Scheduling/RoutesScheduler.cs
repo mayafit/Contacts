@@ -130,6 +130,7 @@ public class RoutesScheduler : BackgroundService
     private readonly ILogger<RoutesScheduler> _logger;
     private readonly EngineBreaker? _breaker;
     private readonly RowLevelSecurityOptions _rls;
+    private readonly RoutesMigrationState? _migrations;
     private readonly TimeSpan[] _backoff;
     private readonly Dictionary<string, OwnerState> _state = new();
     private List<string> _owners = new();
@@ -142,7 +143,7 @@ public class RoutesScheduler : BackgroundService
     /// <summary>Creates the scheduler</summary>
     public RoutesScheduler(IServiceScopeFactory scopes, IRoutesBackend backend, WakeSignal wake, IPause pause,
         IOptions<RoutesOptions> options, ILogger<RoutesScheduler> logger, EngineBreaker? breaker = null,
-        RowLevelSecurityOptions? rls = null)
+        RowLevelSecurityOptions? rls = null, RoutesMigrationState? migrations = null)
     {
         _scopes = scopes;
         _backend = backend;
@@ -152,6 +153,7 @@ public class RoutesScheduler : BackgroundService
         _logger = logger;
         _breaker = breaker;
         _rls = rls ?? new RowLevelSecurityOptions();
+        _migrations = migrations;
         _backoff = _options.Backoff();
     }
 
@@ -762,6 +764,11 @@ public class RoutesScheduler : BackgroundService
                 }
 
                 var pending = await EchoMigrator.BlockingPendingAsync(db, ContactsApi.Infrastructure.Routes.Migrations.RoutesRowLevelSecurity.Id, _rls.Policies, ct);
+                if (_migrations != null)
+                {
+                    _migrations.Pending = pending.Count > 0;
+                }
+
                 if (pending.Count == 0)
                 {
                     return;

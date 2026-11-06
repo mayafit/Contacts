@@ -91,6 +91,7 @@ builder.Services.AddScoped<MatchRunner>();
 builder.Services.AddScoped<RebuildRunner>();
 builder.Services.AddSingleton<WakeSignal>();
 builder.Services.AddSingleton<IPause, TaskPause>();
+builder.Services.AddSingleton<RoutesMigrationState>();
 builder.Services.AddHostedService<RoutesScheduler>();
 
 builder.Services.AddHealthChecks().AddCheck<RoutesReadyCheck>("ready", tags: new[] { "ready" });

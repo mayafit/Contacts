@@ -259,7 +259,9 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 // Add health checks
-builder.Services.AddHealthChecks();
+builder.Services.AddHealthChecks()
+    // Unready while a migration waits for the migrate init container (AD-49 rule 3)
+    .AddCheck<AtlasMigrationsCheck>("atlas-migrations", tags: new[] { AtlasMigrationsCheck.ReadyTag });
 
 var app = builder.Build();
 
@@ -384,7 +386,11 @@ app.MapControllers();
 app.MapMcp("/api/mcp");
 
 // Health check endpoint
-app.MapHealthChecks("/health");
+app.MapHealthChecks("/health", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+{
+    Predicate = c => !c.Tags.Contains(AtlasMigrationsCheck.ReadyTag)
+});
+app.MapHealthChecks("/health/ready");
 
 // Log application startup
 Log.Information("ContactsApi starting up");
