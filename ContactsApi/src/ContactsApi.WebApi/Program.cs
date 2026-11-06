@@ -3,6 +3,7 @@ using ContactsApi.Infrastructure.Vault;
 using ContactsApi.WebApi.Configuration;
 using ContactsApi.WebApi.Middleware;
 using ContactsApi.WebApi.Services;
+using ContactsApi.WebApi.Services.KeyRing;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.DataProtection;
 using Serilog;
@@ -192,18 +193,19 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<ActivityWorker>())
 // With the flag off, Connect() returns immediately with a multiplexer that
 // reconnects in the background. A cold or briefly absent Redis then costs a
 // few seconds of degraded sessions instead of an outage.
-var redisConnectionString = builder.Configuration["Redis:ConnectionString"] ?? "localhost:6379";
-var redisOptions = ConfigurationOptions.Parse(redisConnectionString);
-redisOptions.AbortOnConnectFail = false;
-redisOptions.ConnectRetry = 5;
-redisOptions.ConnectTimeout = 5000;
+//
+// Redis requires a password (AD-50 rule 1): Redis__Password from Vault is added to the
+// connection string the ConfigMap renders without it.
+var redisOptions = RedisSettings.Options(builder.Configuration);
 
 var redis = ConnectionMultiplexer.Connect(redisOptions);
+builder.Services.AddSingleton<IConnectionMultiplexer>(redis);
 
-// Configure Data Protection to persist keys to Redis
-builder.Services.AddDataProtection()
-    .PersistKeysToStackExchangeRedis(redis, "DataProtection-Keys")
-    .SetApplicationName("ContactsApi");
+// Data Protection (AD-12, AD-50 rule 2): the ring in Redis (DataProtection-Keys, as before),
+// wrapped with the Vault certificate (DataProtection__Certificate) when it is configured;
+// without it the ring stays unwrapped and a warning is logged. DataProtection__Rotation runs
+// the one-shot re-protection (dry-run, reprotect, retire).
+builder.Services.AddEchoDataProtection(builder.Configuration, redis);
 
 // Configure session management with Redis
 builder.Services.AddStackExchangeRedisCache(options =>

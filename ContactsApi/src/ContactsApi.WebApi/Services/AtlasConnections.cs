@@ -52,7 +52,10 @@ public class AtlasConnectionService
     }
 
     /// <summary>The protector for source secrets</summary>
-    public static IDataProtector Protector(IDataProtectionProvider protection) => protection.CreateProtector("Atlas.SourceSecrets.v1");
+    public static IDataProtector Protector(IDataProtectionProvider protection) => protection.CreateProtector(ProtectorPurpose);
+
+    /// <summary>Data Protection purpose of <c>source_connections.SecretProtected</c></summary>
+    public const string ProtectorPurpose = "Atlas.SourceSecrets.v1";
 
     /// <summary>The owner's connections</summary>
     public async Task<List<SourceConnectionInfo>> ListAsync(string owner, CancellationToken ct = default) =>

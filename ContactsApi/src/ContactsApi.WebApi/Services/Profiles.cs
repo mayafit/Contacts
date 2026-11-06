@@ -62,11 +62,14 @@ public class ProfileStore
     private readonly ILogger<ProfileStore> _logger;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new();
 
+    /// <summary>Data Protection purpose of the profile documents</summary>
+    public const string Purpose = "Echo.Contacts.Profiles.v1";
+
     /// <summary>Creates the store</summary>
     public ProfileStore(IDistributedCache cache, IDataProtectionProvider dataProtection, ILogger<ProfileStore> logger)
     {
         _cache = cache;
-        _protector = dataProtection.CreateProtector("Echo.Contacts.Profiles.v1");
+        _protector = dataProtection.CreateProtector(Purpose);
         _logger = logger;
     }
 
