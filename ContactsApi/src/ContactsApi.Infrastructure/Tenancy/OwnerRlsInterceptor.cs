@@ -86,7 +86,10 @@ public sealed class OwnerRlsInterceptor : DbConnectionInterceptor, IDbCommandInt
     /// <inheritdoc />
     public override InterceptionResult ConnectionClosing(DbConnection connection, ConnectionEventData eventData, InterceptionResult result)
     {
-        if (Active && Forget(connection) && connection.State == ConnectionState.Open)
+        // Whether or not the connection is still tracked: after a rollback the interceptor
+        // forgot it, but the session may still carry the Owner applied before the transaction
+        Forget(connection);
+        if (Active && connection.State == ConnectionState.Open)
         {
             try
             {
@@ -107,7 +110,10 @@ public sealed class OwnerRlsInterceptor : DbConnectionInterceptor, IDbCommandInt
     /// <inheritdoc />
     public override async ValueTask<InterceptionResult> ConnectionClosingAsync(DbConnection connection, ConnectionEventData eventData, InterceptionResult result)
     {
-        if (Active && Forget(connection) && connection.State == ConnectionState.Open)
+        // Whether or not the connection is still tracked: after a rollback the interceptor
+        // forgot it, but the session may still carry the Owner applied before the transaction
+        Forget(connection);
+        if (Active && connection.State == ConnectionState.Open)
         {
             try
             {

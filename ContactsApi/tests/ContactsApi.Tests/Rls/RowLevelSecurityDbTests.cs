@@ -325,6 +325,40 @@ public class RowLevelSecurityDbTests
     }
 
     [DockerFact]
+    public async Task Closing_right_after_a_rollback_still_resets_the_owner()
+    {
+        // No Reset On Close (which the app refuses) takes away DISCARD ALL, so only the
+        // interceptor's own RESET stands between this Owner and the next pool user
+        var b = new NpgsqlConnectionStringBuilder(_db.As("contactsapi", maxPool: 1)) { NoResetOnClose = true };
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddOwnerScoping(new RowLevelSecurityOptions { Mode = OwnerRlsMode.Enforce });
+        services.AddDbContext<AtlasDbContext>((sp, o) =>
+            o.UseNpgsql(b.ConnectionString, n => n.MigrationsHistoryTable("__ef_migrations", "atlas")).UseOwnerRls(sp));
+        await using var sp = services.BuildServiceProvider();
+
+        using (var scope = sp.CreateScope())
+        {
+            scope.ServiceProvider.GetRequiredService<OwnerScope>().Set(A);
+            var db = scope.ServiceProvider.GetRequiredService<AtlasDbContext>();
+            await db.Database.OpenConnectionAsync();
+            Assert.Equal(1, await db.Activities.CountAsync());
+            await using (var tx = await db.Database.BeginTransactionAsync())
+            {
+                await tx.RollbackAsync();
+            }
+
+            // Closed with no command after the rollback
+            await db.Database.CloseConnectionAsync();
+        }
+
+        await using var raw = new NpgsqlConnection(b.ConnectionString);
+        await raw.OpenAsync();
+        await using var setting = new NpgsqlCommand("SELECT coalesce(current_setting('app.owner_id', true), '')", raw);
+        Assert.Equal(string.Empty, (string)(await setting.ExecuteScalarAsync())!);
+    }
+
+    [DockerFact]
     public async Task The_owner_cannot_change_inside_a_transaction()
     {
         await using var sp = _db.Backend();
