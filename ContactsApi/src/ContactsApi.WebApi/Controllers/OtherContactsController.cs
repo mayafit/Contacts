@@ -48,7 +48,7 @@ public class OtherContactsController : ControllerBase
             return SessionExpired();
         }
 
-        var granted = (HttpContext.Session.GetString(ActivityScopes.SessionKey) ?? string.Empty)
+        var granted = HttpContext.GrantedScopes()
             .Split(' ', StringSplitOptions.RemoveEmptyEntries);
         if (!granted.Contains(OtherContactsScopes.Read))
         {
@@ -122,7 +122,7 @@ public class OtherContactsController : ControllerBase
     private async Task<string?> SignedInUserAsync() =>
         await _tokens.GetAccessTokenAsync(HttpContext) == null
             ? null
-            : HttpContext.Session.GetString(GoogleTokenService.UserIdKey);
+            : HttpContext.OwnerId();
 
     private ObjectResult NotConnected(string message) =>
         StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.ErrorResponse("NOT_CONNECTED", message));

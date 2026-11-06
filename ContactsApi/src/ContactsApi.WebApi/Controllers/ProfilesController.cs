@@ -166,7 +166,7 @@ public class ProfilesController : ControllerBase
             return SessionExpired();
         }
 
-        var granted = (HttpContext.Session.GetString(ActivityScopes.SessionKey) ?? string.Empty).Split(' ');
+        var granted = HttpContext.GrantedScopes().Split(' ');
         if (!granted.Contains(ActivityScopes.GmailRead))
         {
             return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.ErrorResponse(
@@ -219,7 +219,7 @@ public class ProfilesController : ControllerBase
     private async Task<string?> OwnerAsync() =>
         await _tokens.GetAccessTokenAsync(HttpContext) == null
             ? null
-            : HttpContext.Session.GetString(GoogleTokenService.UserIdKey);
+            : HttpContext.OwnerId();
 
     private IActionResult SessionExpired() =>
         Unauthorized(ApiResponse<object>.ErrorResponse("SESSION_EXPIRED", "Your Google session expired. Please sign in again."));

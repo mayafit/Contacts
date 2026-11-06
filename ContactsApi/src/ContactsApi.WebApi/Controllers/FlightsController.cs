@@ -80,7 +80,7 @@ public class FlightsController : ControllerBase
                 ApiResponse<object>.ErrorResponse("ATLAS_NOT_READY", "The database is starting. Try again in a minute."));
         }
 
-        var owner = HttpContext.Session.GetString(GoogleTokenService.UserIdKey)!;
+        var owner = HttpContext.OwnerId()!;
         try
         {
             var flight = await action(HttpContext.RequestServices.GetRequiredService<FlightService>(), owner);

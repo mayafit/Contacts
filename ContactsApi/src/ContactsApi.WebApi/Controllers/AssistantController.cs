@@ -80,10 +80,12 @@ public class AssistantController : ControllerBase
     }
 
     /// <summary>Whether the assistant is available</summary>
-    /// <returns>Enabled flag and model</returns>
+    /// <returns>Enabled flag and model; 401 without a session (it reveals the model, AD-50 rule 10)</returns>
     [HttpGet("status")]
     public IActionResult Status() =>
-        Ok(ApiResponse<object>.SuccessResponse(new { enabled = _gemini.Enabled, model = _gemini.Model }));
+        HttpContext.OwnerId() == null
+            ? Unauthorized(ApiResponse<object>.ErrorResponse("SESSION_EXPIRED", "Your Google session expired. Please sign in again."))
+            : Ok(ApiResponse<object>.SuccessResponse(new { enabled = _gemini.Enabled, model = _gemini.Model }));
 
     /// <summary>
     /// One generateContent call. Body: systemInstruction, contents, tools, toolConfig
@@ -210,7 +212,7 @@ public class AssistantController : ControllerBase
             return Unauthorized(ApiResponse<object>.ErrorResponse("SESSION_EXPIRED", "Your Google session expired. Please sign in again."));
         }
 
-        var user = HttpContext.Session.GetString(GoogleTokenService.UserIdKey) ?? string.Empty;
+        var user = HttpContext.OwnerId() ?? string.Empty;
         var spellings = new JsonObject();
         var sources = new JsonObject();
         // Why Google Translate gave nothing, said when nothing else spells the words
@@ -294,7 +296,7 @@ public class AssistantController : ControllerBase
                 ApiResponse<object>.ErrorResponse("ASSISTANT_DISABLED", "The assistant is not configured (no Gemini key)."));
         }
 
-        var user = HttpContext.Session.GetString(GoogleTokenService.UserIdKey) ?? string.Empty;
+        var user = HttpContext.OwnerId() ?? string.Empty;
         var refusal = _gemini.TryConsume(user, kind, perMinute, DailyLimit);
         return refusal == null
             ? null

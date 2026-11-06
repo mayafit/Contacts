@@ -21,12 +21,18 @@ public class ActivityStore
     private readonly IDataProtector _historyProtector;
     private readonly ILogger<ActivityStore> _logger;
 
+    /// <summary>Data Protection purpose of the snapshots and own addresses</summary>
+    public const string Purpose = "ContactsApi.Activity.v1";
+
+    /// <summary>Data Protection purpose of the Contacts' histories</summary>
+    public const string HistoryPurpose = "ContactsApi.Activity.History.v1";
+
     /// <summary>Creates the store</summary>
     public ActivityStore(IDistributedCache cache, IDataProtectionProvider dataProtection, ILogger<ActivityStore> logger)
     {
         _cache = cache;
-        _protector = dataProtection.CreateProtector("ContactsApi.Activity.v1");
-        _historyProtector = dataProtection.CreateProtector("ContactsApi.Activity.History.v1");
+        _protector = dataProtection.CreateProtector(Purpose);
+        _historyProtector = dataProtection.CreateProtector(HistoryPurpose);
         _logger = logger;
     }
 

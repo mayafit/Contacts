@@ -10,7 +10,8 @@ using Microsoft.AspNetCore.Mvc;
 namespace ContactsApi.WebApi.Controllers;
 
 /// <summary>Request to create an access token</summary>
-public record CreateTokenRequest(string Name);
+/// <summary>A new MCP token: its name, "allow changes" (the write scope) and its lifetime in days (default 90, at most 365)</summary>
+public record CreateTokenRequest(string Name, bool AllowWrite = false, int? ExpiresInDays = null);
 
 /// <summary>Insights for a query, in a time zone</summary>
 public record InsightsRequest(AtlasQuery? Query, string? Tz);
@@ -172,7 +173,7 @@ public class AtlasController : ControllerBase
             return Back("error", "session");
         }
 
-        var owner = HttpContext.Session.GetString(GoogleTokenService.UserIdKey)!;
+        var owner = HttpContext.OwnerId()!;
         var expected = HttpContext.Session.GetString(OneDrivePhotoService.StateKey);
         HttpContext.Session.Remove(OneDrivePhotoService.StateKey);
         if (error != null)
@@ -264,7 +265,7 @@ public class AtlasController : ControllerBase
     [HttpPost("connections/google-drive")]
     public Task<IActionResult> ConnectTakeoutDrive() =>
         RunWith<TakeoutDriveService, TakeoutDriveStatus>((svc, owner) =>
-            svc.ConnectAsync(owner, HttpContext.Session.GetString("UserEmail"), HttpContext.RequestAborted));
+            svc.ConnectAsync(owner, HttpContext.UserEmail(), HttpContext.RequestAborted));
 
     /// <summary>Checks the Owner's Drive for new Takeout exports now</summary>
     [HttpPost("connections/google-drive/sync")]
@@ -315,7 +316,7 @@ public class AtlasController : ControllerBase
             return StatusCode(StatusCodes.Status503ServiceUnavailable, ApiResponse<object>.ErrorResponse("ATLAS_NOT_READY", "Atlas is starting."));
         }
 
-        var owner = HttpContext.Session.GetString(GoogleTokenService.UserIdKey)!;
+        var owner = HttpContext.OwnerId()!;
         try
         {
             var thumb = await HttpContext.RequestServices.GetRequiredService<OneDrivePhotoService>()
@@ -439,7 +440,7 @@ public class AtlasController : ControllerBase
     public Task<IActionResult> CreateToken([FromBody] CreateTokenRequest request) =>
         RunWith<AccessTokenService, object>(async (svc, owner) =>
         {
-            var (token, info) = await svc.CreateAsync(owner, request.Name);
+            var (token, info) = await svc.CreateAsync(owner, request.Name, request.AllowWrite, request.ExpiresInDays);
             return new { token, info };
         });
 
@@ -464,7 +465,7 @@ public class AtlasController : ControllerBase
                 "ATLAS_NOT_READY", _readiness.Configured ? "The Atlas database is starting. Try again in a minute." : "Atlas is not configured."));
         }
 
-        var owner = HttpContext.Session.GetString(GoogleTokenService.UserIdKey)!;
+        var owner = HttpContext.OwnerId()!;
         try
         {
             var service = HttpContext.RequestServices.GetRequiredService<TService>();

@@ -54,7 +54,7 @@ public class SettingsController : ControllerBase
                 ApiResponse<object>.ErrorResponse("ATLAS_NOT_READY", "The database is starting. Try again in a minute."));
         }
 
-        var owner = HttpContext.Session.GetString(GoogleTokenService.UserIdKey)!;
+        var owner = HttpContext.OwnerId()!;
         try
         {
             return Ok(ApiResponse<T>.SuccessResponse(await action(HttpContext.RequestServices.GetRequiredService<OwnerSettingsService>(), owner)));

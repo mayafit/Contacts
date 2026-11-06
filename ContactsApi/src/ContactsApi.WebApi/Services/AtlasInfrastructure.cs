@@ -154,33 +154,68 @@ public class AtlasMigrator : BackgroundService
 }
 
 /// <summary>A token as listed (never the secret)</summary>
-public record AccessTokenInfo(Guid Id, string Name, string Prefix, DateTime CreatedAt, DateTime? LastUsedAt);
+/// <param name="CanWrite">Whether the update and delete tools may be used (the <c>write</c> scope)</param>
+/// <param name="Legacy">A token from before expiry existed: it keeps write access until it expires</param>
+public record AccessTokenInfo(Guid Id, string Name, string Prefix, DateTime CreatedAt, DateTime? LastUsedAt,
+    DateTime ExpiresAt, bool CanWrite, bool Legacy);
+
+/// <summary>A token that checked out: whose it is and what it may do</summary>
+public record ValidatedToken(Guid Id, string OwnerId, bool CanWrite);
 
 /// <summary>
-/// Personal access tokens for MCP clients. The token is shown once; only its
-/// SHA-256 is stored.
+/// Personal access tokens for MCP clients (AD-18, amended by AD-50 rule 9). The token is
+/// shown once; only its SHA-256 is stored. Tokens expire (default 90 days, at most 365) and
+/// are read-only unless created with "allow changes" (the <c>write</c> scope).
 /// </summary>
 public class AccessTokenService
 {
+    /// <summary>Default lifetime of a new token</summary>
+    public const int DefaultDays = 90;
+
+    /// <summary>Longest lifetime of a token</summary>
+    public const int MaxDays = 365;
+
+    /// <summary>The scope that allows the update and delete tools</summary>
+    public const string WriteScope = "write";
+
+    /// <summary>Marks tokens that existed before expiry (the migration gives them write until they expire)</summary>
+    public const string LegacyScope = "legacy";
+
     private readonly AtlasDbContext _db;
+    private readonly OwnerScope? _owners;
+    private readonly TimeProvider _time;
 
     /// <summary>Creates the service</summary>
-    public AccessTokenService(AtlasDbContext db) => _db = db;
+    /// <param name="db">The Atlas database</param>
+    /// <param name="owners">The request's Owner scope (DI); without it a check knows only the Owner</param>
+    /// <param name="time">The clock (tests)</param>
+    public AccessTokenService(AtlasDbContext db, OwnerScope? owners = null, TimeProvider? time = null)
+    {
+        _db = db;
+        _owners = owners;
+        _time = time ?? TimeProvider.System;
+    }
 
     /// <summary>Creates a token</summary>
     /// <param name="owner">Google account id</param>
     /// <param name="name">What it is for ("Claude Desktop")</param>
+    /// <param name="allowWrite">"Allow changes": the update and delete tools</param>
+    /// <param name="days">Lifetime in days (default 90, clamped to 1..365)</param>
     /// <returns>The token (only now) and its listing</returns>
-    public async Task<(string Token, AccessTokenInfo Info)> CreateAsync(string owner, string name)
+    public async Task<(string Token, AccessTokenInfo Info)> CreateAsync(string owner, string name, bool allowWrite = false, int? days = null)
     {
         var token = "atl_" + Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
             .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        var now = _time.GetUtcNow().UtcDateTime;
         var row = new AccessToken
         {
             OwnerId = owner,
             Name = string.IsNullOrWhiteSpace(name) ? "MCP client" : name.Trim()[..Math.Min(100, name.Trim().Length)],
             TokenHash = Hash(token),
-            Prefix = token[..8]
+            Prefix = token[..8],
+            CreatedAt = now,
+            ExpiresAt = now.AddDays(Math.Clamp(days ?? DefaultDays, 1, MaxDays)),
+            Scopes = allowWrite ? "atlas " + WriteScope : "atlas"
         };
         _db.AccessTokens.Add(row);
         await _db.SaveChangesAsync();
@@ -196,22 +231,51 @@ public class AccessTokenService
     public async Task<bool> RevokeAsync(string owner, Guid id) =>
         await _db.AccessTokens.Where(t => t.Id == id && t.OwnerId == owner).ExecuteDeleteAsync() > 0;
 
+    /// <summary>The owner a token belongs to, or null (unknown, or expired: refused like a revoked one)</summary>
+    public async Task<string?> ValidateAsync(string token) => (await CheckAsync(token))?.OwnerId;
+
     /// <summary>
-    /// The owner a token belongs to, or null. The Owner is not known yet, so the lookup
-    /// goes through atlas.sys_resolve_access_token (AD-49 rule 5), which also stamps
-    /// LastUsedAt at most hourly; the caller marks the work unscoped.
+    /// The token's owner and rights, or null when it is unknown or expired. The Owner is not
+    /// known yet, so it is resolved through atlas.sys_resolve_access_token (AD-49 rule 5; it
+    /// refuses an expired token and stamps LastUsedAt at most hourly), unscoped. With an
+    /// <see cref="OwnerScope"/>, the request's Owner is then set to it and the token's row is
+    /// read under that Owner, for its id (the rate limit), expiry and write scope.
     /// </summary>
-    public async Task<string?> ValidateAsync(string token)
+    public async Task<ValidatedToken?> CheckAsync(string token)
     {
         if (string.IsNullOrEmpty(token) || !token.StartsWith("atl_", StringComparison.Ordinal))
         {
             return null;
         }
 
-        return await _db.SysResolveAccessTokenAsync(Hash(token));
+        var hash = Hash(token);
+        string? owner;
+        using (_owners?.AllowUnscoped())
+        {
+            owner = await _db.SysResolveAccessTokenAsync(hash);
+        }
+
+        if (owner == null || _owners == null)
+        {
+            // Without a scope to read the row under, only the Owner is known (read-only)
+            return owner == null ? null : new ValidatedToken(Guid.Empty, owner, false);
+        }
+
+        _owners.Set(owner);
+        var row = await _db.AccessTokens.AsNoTracking().FirstOrDefaultAsync(t => t.TokenHash == hash && t.OwnerId == owner);
+        if (row == null || row.ExpiresAt <= _time.GetUtcNow().UtcDateTime)
+        {
+            return null;
+        }
+
+        return new ValidatedToken(row.Id, row.OwnerId, HasScope(row, WriteScope));
     }
 
-    private static AccessTokenInfo Info(AccessToken t) => new(t.Id, t.Name, t.Prefix, t.CreatedAt, t.LastUsedAt);
+    private static bool HasScope(AccessToken t, string scope) =>
+        t.Scopes.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains(scope, StringComparer.Ordinal);
+
+    private static AccessTokenInfo Info(AccessToken t) =>
+        new(t.Id, t.Name, t.Prefix, t.CreatedAt, t.LastUsedAt, t.ExpiresAt, HasScope(t, WriteScope), HasScope(t, LegacyScope));
 
     private static string Hash(string token) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
 }

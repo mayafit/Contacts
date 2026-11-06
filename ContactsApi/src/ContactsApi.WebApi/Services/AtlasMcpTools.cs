@@ -18,6 +18,9 @@ public class AtlasMcpTools
     /// <summary>HttpContext item holding the token's owner</summary>
     public const string OwnerItem = "AtlasOwner";
 
+    /// <summary>HttpContext item: whether the token has the <c>write</c> scope</summary>
+    public const string CanWriteItem = "AtlasCanWrite";
+
     private readonly AtlasService _atlas;
     private readonly IHttpContextAccessor _http;
     private readonly GeoLookupClient _geo;
@@ -32,6 +35,15 @@ public class AtlasMcpTools
 
     private string Owner => _http.HttpContext?.Items[OwnerItem] as string
                             ?? throw new UnauthorizedAccessException("No access token");
+
+    /// <summary>
+    /// The Owner, for a tool that changes data: only a token created with "allow changes"
+    /// (the <c>write</c> scope) may use it (AD-50 rule 9)
+    /// </summary>
+    private string Writer => _http.HttpContext?.Items[CanWriteItem] is true
+        ? Owner
+        : throw new ModelContextProtocol.McpException(
+            "This access token is read-only. Create a token with \"Allow changes\" in Atlas → AI access to use this tool.");
 
     [McpServerTool(Name = "atlas_identify_location"), Description("What is at a point, from OpenStreetMap: the street address, and named places around it (shops, restaurants, sites, offices, parks, buildings…) nearest first, with category, distance, address, website, phone and opening hours when known. Use it to find out what a visited place is.")]
     public Task<LocationLookup> IdentifyLocation(
@@ -68,16 +80,16 @@ public class AtlasMcpTools
     public Task<ActivityDetail> Merge(
         [Description("Activity id")] Guid id,
         [Description("Id of the activity to merge with it")] Guid otherId) =>
-        _atlas.MergeActivitiesAsync(Owner, id, otherId);
+        _atlas.MergeActivitiesAsync(Writer, id, otherId);
 
     [McpServerTool(Name = "atlas_split_activity"), Description("Take one source record out of a fused activity when it is not the same activity (remembered). Returns the activity without it.")]
     public Task<ActivityDetail> Split(
         [Description("Fused activity id")] Guid id,
         [Description("Id of the source record (from members) to take out")] Guid memberId) =>
-        _atlas.SplitActivityAsync(Owner, id, memberId);
+        _atlas.SplitActivityAsync(Writer, id, memberId);
 
     [McpServerTool(Name = "atlas_fuse"), Description("Re-run fusion over all activities now (normally the fusion service does it automatically after every import). Returns what it did.")]
-    public Task<FuseResult> Fuse() => _atlas.FuseAsync(Owner);
+    public Task<FuseResult> Fuse() => _atlas.FuseAsync(Writer);
 
     [McpServerTool(Name = "atlas_fusion_settings"), Description("How sources are combined: each source's time and location tolerance (how far its times and positions can be off) and the confidence an automatic match needs.")]
     public Task<FusionSettingsDto> FusionSettings() => _atlas.GetFusionSettingsAsync(Owner);
@@ -134,12 +146,12 @@ public class AtlasMcpTools
         [Description("New name")] string? name = null,
         [Description("New type")] string? type = null,
         [Description("New notes")] string? notes = null) =>
-        _atlas.UpdateActivityAsync(Owner, id, new ActivityPatch(name, type, notes));
+        _atlas.UpdateActivityAsync(Writer, id, new ActivityPatch(name, type, notes));
 
     [McpServerTool(Name = "atlas_delete_activity"), Description("Delete an activity and its track. Ask the user before deleting.")]
     public async Task<string> DeleteActivity([Description("Activity id")] Guid id)
     {
-        await _atlas.DeleteActivityAsync(Owner, id);
+        await _atlas.DeleteActivityAsync(Writer, id);
         return $"Deleted activity {id}";
     }
 
@@ -152,7 +164,7 @@ public class AtlasMcpTools
         [Description("Notes")] string? notes = null,
         [Description("Distance in metres")] double? distanceM = null,
         [Description("Track points")] List<PointInput>? points = null) =>
-        _atlas.IngestAsync(Owner, new IngestRequest
+        _atlas.IngestAsync(Writer, new IngestRequest
         {
             Source = "manual",
             Activities = { new ActivityInput($"manual:{Guid.NewGuid()}", type, name, start, end, distanceM, null, null, notes, points) }
@@ -165,33 +177,33 @@ public class AtlasMcpTools
         [Description("Longitude")] double lon,
         [Description("Address")] string? address = null,
         [Description("Category")] string? category = null) =>
-        _atlas.CreatePlaceAsync(Owner, new PlaceInput(null, name, lat, lon, address, category));
+        _atlas.CreatePlaceAsync(Writer, new PlaceInput(null, name, lat, lon, address, category));
 
     [McpServerTool(Name = "atlas_update_place"), Description("Change a place's name, address, category, notes or position.")]
     public Task<AtlasPlace> UpdatePlace(
         [Description("Place id")] Guid id,
         string? name = null, string? address = null, string? category = null, string? notes = null, double? lat = null, double? lon = null) =>
-        _atlas.UpdatePlaceAsync(Owner, id, new PlacePatch(name, address, category, notes, lat, lon));
+        _atlas.UpdatePlaceAsync(Writer, id, new PlacePatch(name, address, category, notes, lat, lon));
 
     [McpServerTool(Name = "atlas_delete_place"), Description("Delete a place (its visits stay, without the place). Ask the user first.")]
     public async Task<string> DeletePlace([Description("Place id")] Guid id)
     {
-        await _atlas.DeletePlaceAsync(Owner, id);
+        await _atlas.DeletePlaceAsync(Writer, id);
         return $"Deleted place {id}";
     }
 
     [McpServerTool(Name = "atlas_delete_visit"), Description("Delete a visit. Ask the user first.")]
     public async Task<string> DeleteVisit([Description("Visit id")] Guid id)
     {
-        await _atlas.DeleteVisitAsync(Owner, id);
+        await _atlas.DeleteVisitAsync(Writer, id);
         return $"Deleted visit {id}";
     }
 
     [McpServerTool(Name = "atlas_add_health"), Description("Add health samples (e.g. heart_rate in bpm, weight in kg).")]
     public Task<IngestResult> AddHealth([Description("Samples")] List<HealthInput> samples) =>
-        _atlas.IngestAsync(Owner, new IngestRequest { Source = "manual", Health = samples });
+        _atlas.IngestAsync(Writer, new IngestRequest { Source = "manual", Health = samples });
 
     [McpServerTool(Name = "atlas_delete_import"), Description("Delete an import and everything it brought in. Ask the user first.")]
     public async Task<string> DeleteImport([Description("Import id (from atlas_summary)")] Guid id) =>
-        $"Removed {await _atlas.DeleteImportAsync(Owner, id)} items";
+        $"Removed {await _atlas.DeleteImportAsync(Writer, id)} items";
 }

@@ -4,6 +4,8 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Local development secrets (dotnet user-secrets), never appsettings.json (AD-50 rule 10) -->
+    <UserSecretsId>contacts-api-webapi-dev</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>

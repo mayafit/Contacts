@@ -8,7 +8,7 @@
 set -e
 
 VAULT_ADDR="${VAULT_ADDR:-http://vault:8200}"
-VAULT_TOKEN="${VAULT_TOKEN:-dev-root-token}"
+VAULT_TOKEN="${VAULT_TOKEN:?set VAULT_TOKEN (the dev Vault root token from .env)}"
 SECRET_PATH="secret/data/contacts"
 MAX_RETRIES=30
 RETRY_INTERVAL=2

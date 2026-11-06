@@ -1,10 +1,8 @@
 using ContactsApi.WebApi.Configuration;
 using ContactsApi.WebApi.Models.Responses;
 using ContactsApi.WebApi.Services;
-using Google.Apis.Auth;
-using Google.Apis.Auth.OAuth2;
-using Google.Apis.Auth.OAuth2.Flows;
-using Google.Apis.Auth.OAuth2.Responses;
+using System.Security.Claims;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using System.Security.Cryptography;
@@ -38,6 +36,12 @@ public class AuthController : ControllerBase
     private readonly GoogleOAuthOptions _oauthOptions;
     private readonly GoogleTokenService _tokens;
     private readonly ScopePreferences _prefs;
+    private readonly IGoogleSignIn _google;
+    private readonly AllowedEmails _allowed;
+    private readonly RedisTicketStore _tickets;
+
+    /// <summary>Pre-sign-in session: the ticket of the user who started this flow signed in (deleted at the new sign-in)</summary>
+    private const string PriorTicketKey = "PriorTicket";
 
     /// <summary>Session: opt-ins this sign-in asks for (JSON)</summary>
     private const string RequestedKey = "RequestedOptIns";
@@ -50,9 +54,15 @@ public class AuthController : ControllerBase
         IConfiguration configuration,
         IOptions<GoogleOAuthOptions> oauthOptions,
         GoogleTokenService tokens,
-        ScopePreferences prefs)
+        ScopePreferences prefs,
+        IGoogleSignIn google,
+        AllowedEmails allowed,
+        RedisTicketStore tickets)
     {
         _prefs = prefs;
+        _google = google;
+        _allowed = allowed;
+        _tickets = tickets;
         _logger = logger;
         _configuration = configuration;
         _oauthOptions = oauthOptions.Value;
@@ -85,12 +95,27 @@ public class AuthController : ControllerBase
             // Exactly the scopes this user opted into (not include_granted_scopes:
             // Gmail refuses content reads when gmail.metadata is also on the token)
             var baseScopes = _oauthOptions.Scopes ?? Array.Empty<string>();
-            var userId = HttpContext.Session.GetString(GoogleTokenService.UserIdKey);
+            var userId = HttpContext.OwnerId();
             var optIns = userId == null ? new OptIns() : await _prefs.GetAsync(userId);
             var desired = HttpContext.Session.GetString(DesiredScopesKey);
             if (!again && desired == null)
             {
                 HttpContext.Session.Remove(AfterLoginKey);
+            }
+
+            // The ticket of a signed-in user starting an opt-in: the callback deletes it when it
+            // signs in with a new key (the callback itself never reads the old ticket)
+            if (userId != null && !again && desired == null)
+            {
+                var current = await HttpContext.AuthenticateAsync(EchoSessionDefaults.Scheme);
+                if (current.Properties?.Items.TryGetValue(EchoSessionDefaults.TicketKeyItem, out var ticketKey) == true && ticketKey != null)
+                {
+                    HttpContext.Session.SetString(PriorTicketKey, ticketKey);
+                }
+            }
+            else if (userId == null && !again && desired == null)
+            {
+                HttpContext.Session.Remove(PriorTicketKey);
             }
 
             if (activity)
@@ -192,7 +217,12 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>
-    /// Handle OAuth callback from Google
+    /// Handle OAuth callback from Google. Order (AD-50 rules 4 and 6): the state check,
+    /// the code exchange, the ID-token check and the allowlist come first, and nothing is
+    /// stored before the allowlist admits the account. A second consent round still runs in
+    /// the pre-sign-in session. On the final step the pre-sign-in session is read, cleared
+    /// and its cookie deleted, and <c>SignInAsync</c> issues a new ticket under a new key.
+    /// This request is never authenticated with the old ticket (see <see cref="EchoSessionMiddleware"/>).
     /// </summary>
     /// <param name="code">Authorization code</param>
     /// <param name="state">State parameter for CSRF validation</param>
@@ -214,9 +244,10 @@ public class AuthController : ControllerBase
                 // existing sign-in as it was
                 var optIn = HttpContext.Session.GetString(AfterLoginKey);
                 if (optIn != null && OptInReturns.Contains(optIn)
-                    && HttpContext.Session.GetString(GoogleTokenService.UserIdKey) != null)
+                    && HttpContext.Session.GetString(PriorTicketKey) != null)
                 {
                     HttpContext.Session.Remove(AfterLoginKey);
+                    HttpContext.Session.Remove(PriorTicketKey);
                     return RedirectToFrontend($"{optIn}&declined=1");
                 }
 
@@ -225,7 +256,7 @@ public class AuthController : ControllerBase
 
             // Validate state parameter (CSRF protection)
             var expectedState = HttpContext.Session.GetString("OAuthState");
-            if (string.IsNullOrEmpty(expectedState) || expectedState != state)
+            if (string.IsNullOrEmpty(expectedState) || !string.Equals(expectedState, state, StringComparison.Ordinal))
             {
                 _logger.LogWarning("Invalid state parameter");
                 return RedirectToFrontend("/login?error=invalid_state");
@@ -240,35 +271,37 @@ public class AuthController : ControllerBase
                 return RedirectToFrontend("/login?error=no_code");
             }
 
-            _logger.LogInformation("Exchanging authorization code for tokens");
-
-            // Exchange authorization code for tokens
-            var clientId = _oauthOptions.ClientId;
-            var clientSecret = _oauthOptions.ClientSecret;
-            var redirectUri = _oauthOptions.RedirectUri;
-
-            if (string.IsNullOrEmpty(clientSecret))
+            if (string.IsNullOrEmpty(_oauthOptions.ClientSecret))
             {
                 _logger.LogError("Client secret not configured or not loaded from Vault");
                 return RedirectToFrontend("/login?error=config_error");
             }
 
-            // Create OAuth flow
-            var flow = new GoogleAuthorizationCodeFlow(new GoogleAuthorizationCodeFlow.Initializer
-            {
-                ClientSecrets = new ClientSecrets
-                {
-                    ClientId = clientId,
-                    ClientSecret = clientSecret
-                }
-            });
+            _logger.LogInformation("Exchanging authorization code for tokens");
+            var tokenResponse = await _google.ExchangeCodeAsync(code, HttpContext.RequestAborted);
 
-            // Exchange code for tokens
-            var tokenResponse = await flow.ExchangeCodeForTokenAsync(
-                "user", // user ID - will be replaced with actual user ID after getting user info
-                code,
-                redirectUri,
-                CancellationToken.None);
+            // Who signed in, from the verified ID token; then the allowlist, before anything is stored
+            var payload = await _google.ValidateIdTokenAsync(tokenResponse.IdToken);
+            if (!_allowed.IsAllowed(payload.Email, payload.EmailVerified))
+            {
+                // An empty or missing list is a configuration fault, not a refusal: the grant is
+                // kept, or a missing Echo__AllowedEmails would revoke the Owner's and the family's
+                // Google grants (the background work's refresh tokens) at their next sign-in
+                if (!_allowed.IsConfigured)
+                {
+                    _logger.LogError("Sign-in refused: the allowlist ({Key}) is empty or missing; the grant is kept", "Echo__AllowedEmails");
+                    HttpContext.Session.Clear();
+                    return NotInvited(revoked: false);
+                }
+
+                _logger.LogWarning("Sign-in refused: the account is not invited (verified: {Verified})", payload.EmailVerified);
+                // The grant just issued is revoked; a refresh token revokes the whole grant
+                await _google.RevokeAsync(
+                    string.IsNullOrEmpty(tokenResponse.RefreshToken) ? tokenResponse.AccessToken : tokenResponse.RefreshToken,
+                    HttpContext.RequestAborted);
+                HttpContext.Session.Clear();
+                return NotInvited(revoked: true);
+            }
 
             // Google's consent screen lets the user untick individual permissions.
             // Without contacts access every later call fails with 403, so stop here
@@ -282,14 +315,6 @@ public class AuthController : ControllerBase
                     tokenResponse.Scope);
                 return RedirectToFrontend("/login?error=missing_scope");
             }
-
-            // Store tokens in session (temporary - will be moved to Redis/DB)
-            // TODO: Encrypt tokens before storing
-            // TODO: Store in Redis cache + SQL Server
-            // Who signed in, from the verified ID token
-            var payload = await GoogleJsonWebSignature.ValidateAsync(
-                tokenResponse.IdToken,
-                new GoogleJsonWebSignature.ValidationSettings { Audience = new[] { clientId } });
 
             // A refresh token is only issued on the consent screen. Without one,
             // use the one remembered from an earlier sign-in; if that is missing
@@ -353,33 +378,43 @@ public class AuthController : ControllerBase
                 });
             }
 
-            HttpContext.Session.SetString(GoogleTokenService.AccessTokenKey, tokenResponse.AccessToken);
-            HttpContext.Session.SetString(GoogleTokenService.UserIdKey, payload.Subject);
-            HttpContext.Session.SetString("UserEmail", payload.Email ?? string.Empty);
-            HttpContext.Session.SetString("UserName", payload.Name ?? payload.Email ?? string.Empty);
-            HttpContext.Session.SetString("UserPicture", payload.Picture ?? string.Empty);
-
-            // The scopes of this sign-in (the user's opt-ins)
-            HttpContext.Session.SetString(ActivityScopes.SessionKey, tokenResponse.Scope ?? string.Empty);
-
-            // Store token expiry
-            var expiresAt = DateTime.UtcNow.AddSeconds(tokenResponse.ExpiresInSeconds ?? 3600);
-            HttpContext.Session.SetString("TokenExpiresAt", expiresAt.ToString("o"));
-
-            // TODO: Fetch user info from Google and store in session/database
-            // For now, just set a flag indicating authentication
-            HttpContext.Session.SetString("IsAuthenticated", "true");
-
-            // CRITICAL: Explicitly commit session to Redis before redirecting
-            // This ensures the session cookie is set and data is persisted before the redirect
+            // Final step: read what is needed from the pre-sign-in session, then clear it and
+            // delete its cookie. Nothing the browser presented before sign-in survives it.
+            var afterLogin = HttpContext.Session.GetString(AfterLoginKey);
+            var priorTicket = HttpContext.Session.GetString(PriorTicketKey);
+            HttpContext.Session.Clear();
             await HttpContext.Session.CommitAsync();
+            Response.Cookies.Delete(EchoSessionDefaults.SessionCookie, new CookieOptions
+            {
+                Path = "/", Secure = true, HttpOnly = true, SameSite = SameSiteMode.Lax
+            });
+
+            var identity = new ClaimsIdentity(new[]
+            {
+                new Claim(EchoSessionDefaults.SubClaim, payload.Subject),
+                new Claim(EchoSessionDefaults.EmailClaim, payload.Email ?? string.Empty),
+                new Claim(EchoSessionDefaults.NameClaim, payload.Name ?? payload.Email ?? string.Empty),
+                new Claim(EchoSessionDefaults.PictureClaim, payload.Picture ?? string.Empty),
+                // The scopes of this sign-in (the user's opt-ins)
+                new Claim(EchoSessionDefaults.ScopesClaim, tokenResponse.Scope ?? string.Empty)
+            }, EchoSessionDefaults.Scheme, EchoSessionDefaults.NameClaim, null);
+            var properties = new AuthenticationProperties { IsPersistent = true, AllowRefresh = true };
+            var now = (HttpContext.RequestServices.GetService<TimeProvider>() ?? TimeProvider.System).GetUtcNow();
+            properties.Items[EchoSessionDefaults.SignedInItem] = now.ToString("o");
+            _tokens.SetAccessToken(properties, tokenResponse.AccessToken,
+                DateTime.UtcNow.AddSeconds(tokenResponse.ExpiresInSeconds ?? 3600));
+            EchoSessionDefaults.BeginNewSession(HttpContext);
+            await HttpContext.SignInAsync(EchoSessionDefaults.Scheme, new ClaimsPrincipal(identity), properties);
+
+            // The ticket the browser had before this sign-in (an opt-in started signed in) ends
+            if (priorTicket != null)
+            {
+                await _tickets.RemoveAsync(priorTicket);
+            }
 
             _logger.LogInformation("OAuth flow completed successfully");
 
             // Redirect to frontend (back to the opt-in's page when there was one)
-            var afterLogin = HttpContext.Session.GetString(AfterLoginKey);
-            HttpContext.Session.Remove(AfterLoginKey);
-            await HttpContext.Session.CommitAsync();
             return RedirectToFrontend(afterLogin != null && OptInReturns.Contains(afterLogin) ? afterLogin : "/");
         }
         catch (Exception ex)
@@ -389,87 +424,76 @@ public class AuthController : ControllerBase
         }
     }
 
+    /// <summary>The static "invitation needed" page, 403 NOT_INVITED (AD-29, AD-9)</summary>
+    /// <param name="revoked">Whether the grant was withdrawn (not when the allowlist is missing)</param>
+    private ContentResult NotInvited(bool revoked)
+    {
+        var home = System.Net.WebUtility.HtmlEncode((_configuration["Frontend:BaseUrl"] ?? "http://localhost:3002").TrimEnd('/'));
+        return new ContentResult
+        {
+            StatusCode = StatusCodes.Status403Forbidden,
+            ContentType = "text/html; charset=utf-8",
+            Content = "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">"
+                      + "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Invitation needed</title></head>\n"
+                      + "<body data-error-code=\"NOT_INVITED\" style=\"font-family: system-ui, sans-serif; max-width: 36rem; margin: 4rem auto; padding: 0 1rem; line-height: 1.5\">\n"
+                      + "<h1>Invitation needed</h1>\n"
+                      + "<p>Echo is invite-only, and this Google account is not on the list. Nothing was saved"
+                      + (revoked ? ", and the access you just granted has been withdrawn" : string.Empty) + ".</p>\n"
+                      + "<p>If you were invited with another address, sign in with that account.</p>\n"
+                      + $"<p><a href=\"{home}/\">Back to the start page</a></p>\n</body></html>\n"
+        };
+    }
+
     /// <summary>
-    /// Check authentication status
+    /// Check authentication status. The session id is not logged (AD-50 rule 8).
     /// </summary>
     /// <returns>Authentication status and user info</returns>
     [HttpGet("status")]
     [ProducesResponseType(typeof(ApiResponse<AuthStatusResponse>), StatusCodes.Status200OK)]
-    public IActionResult GetAuthStatus()
+    public async Task<IActionResult> GetAuthStatus()
     {
-        try
+        var auth = HttpContext.OwnerId() == null ? null : await HttpContext.AuthenticateAsync(EchoSessionDefaults.Scheme);
+        if (auth is not { Succeeded: true, Properties: not null } || _tokens.ReadAccessToken(auth.Properties) == null)
         {
-            var isAuthenticated = HttpContext.Session.GetString("IsAuthenticated") == "true";
-            var accessToken = HttpContext.Session.GetString("AccessToken");
-
-            // DIAGNOSTIC: Log session state
-            _logger.LogInformation(
-                "Auth status check: IsAuthenticated={IsAuthenticated}, HasAccessToken={HasAccessToken}, SessionId={SessionId}, SessionAvailable={SessionAvailable}",
-                isAuthenticated,
-                !string.IsNullOrEmpty(accessToken),
-                HttpContext.Session.Id,
-                HttpContext.Session.IsAvailable);
-
-            if (!isAuthenticated || string.IsNullOrEmpty(accessToken))
+            return Ok(ApiResponse<AuthStatusResponse>.SuccessResponse(new AuthStatusResponse
             {
-                _logger.LogWarning("User not authenticated or missing access token");
-                return Ok(ApiResponse<AuthStatusResponse>.SuccessResponse(new AuthStatusResponse
-                {
-                    IsAuthenticated = false,
-                    User = null
-                }));
+                IsAuthenticated = false,
+                User = null
+            }));
+        }
+
+        var user = HttpContext.User;
+        var picture = user.FindFirst(EchoSessionDefaults.PictureClaim)?.Value;
+        return Ok(ApiResponse<AuthStatusResponse>.SuccessResponse(new AuthStatusResponse
+        {
+            IsAuthenticated = true,
+            User = new UserInfo
+            {
+                Id = HttpContext.OwnerId() ?? string.Empty,
+                Email = HttpContext.UserEmail(),
+                Name = user.FindFirst(EchoSessionDefaults.NameClaim)?.Value ?? string.Empty,
+                Picture = string.IsNullOrEmpty(picture) ? null : picture
             }
-
-            // TODO: Fetch actual user info from database or Google
-            // For now, return placeholder
-            var picture = HttpContext.Session.GetString("UserPicture");
-            var response = new AuthStatusResponse
-            {
-                IsAuthenticated = true,
-                User = new UserInfo
-                {
-                    Id = HttpContext.Session.GetString(GoogleTokenService.UserIdKey) ?? string.Empty,
-                    Email = HttpContext.Session.GetString("UserEmail") ?? string.Empty,
-                    Name = HttpContext.Session.GetString("UserName") ?? string.Empty,
-                    Picture = string.IsNullOrEmpty(picture) ? null : picture
-                }
-            };
-
-            return Ok(ApiResponse<AuthStatusResponse>.SuccessResponse(response));
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error checking auth status");
-            throw;
-        }
+        }));
     }
 
     /// <summary>
-    /// Logout and clear session
+    /// Sign out: the ticket is deleted from the store (a replayed cookie is then dead), the
+    /// cookie is deleted and the session cleared (AD-50 rule 4)
     /// </summary>
     /// <returns>Success response</returns>
     [HttpPost("logout")]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
-    public IActionResult Logout()
+    public async Task<IActionResult> Logout()
     {
-        try
+        _logger.LogInformation("Logging out user");
+        if (HttpContext.OwnerId() != null)
         {
-            _logger.LogInformation("Logging out user");
-
-            // TODO: Remove tokens from Redis and database
-
-            // Clear session
-            HttpContext.Session.Clear();
-
-            _logger.LogInformation("User logged out successfully");
-
-            return Ok(ApiResponse<object>.SuccessResponse(new { success = true }));
+            await HttpContext.SignOutAsync(EchoSessionDefaults.Scheme);
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error during logout");
-            throw;
-        }
+
+        HttpContext.Session.Clear();
+        return Ok(ApiResponse<object>.SuccessResponse(new { success = true }));
     }
 
     /// <summary>
@@ -491,10 +515,11 @@ public class AuthController : ControllerBase
                 "Your Google session expired. Please sign in again."));
         }
 
+        var auth = await HttpContext.AuthenticateAsync(EchoSessionDefaults.Scheme);
         return Ok(ApiResponse<object>.SuccessResponse(new
         {
             success = true,
-            expiresAt = HttpContext.Session.GetString(GoogleTokenService.ExpiresAtKey)
+            expiresAt = auth.Properties == null ? null : GoogleTokenService.AccessTokenExpiry(auth.Properties)?.ToString("o")
         }));
     }
 

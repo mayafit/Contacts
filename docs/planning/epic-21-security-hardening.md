@@ -74,7 +74,10 @@ through GitOps is done only when the **live object** shows it, not when its PR m
   Vault Agent template builds `Redis__ConnectionString` from `Redis__Password`, so the
   backend needs no code change. The Vault key and the Secret
   (`helm/scripts/secrets-from-vault.sh`, with the rollout order in its header) are
-  operator steps, done before the release upgrade.)*
+  operator steps, done before the release upgrade. The backend reads
+  `Redis:ConnectionString` and, when `Redis__Password` is also present, sets it on the
+  connection options (`RedisSettings`, `fix/auth-session-hardening`); harmless when both
+  carry the same value.)*
 - [ ] The Redis NetworkPolicy admits 6379 only from the backend pod; a connection from
   another pod and from another namespace is refused. *(Chart: `allowExternal: false`,
   `allowExternalEgress: false`, `extraIngress` from the backend only; rendering fails on
@@ -84,15 +87,69 @@ through GitOps is done only when the **live object** shows it, not when its PR m
 
 #### 21.5 The key ring wrapped, the exposed keys retired — Wave 1
 
-- [ ] `ProtectKeysWithCertificate` with `DataProtection__Certificate` from Vault, rendered
+- [x] `ProtectKeysWithCertificate` with `DataProtection__Certificate` from Vault, rendered
   as a file; `UnprotectKeysWithAnyCertificate` ready for a roll-over (AD-50 rule 2).
+  *Code: `Services/KeyRing/EchoDataProtection.cs`. Accepts the PEM (certificate and
+  private key) or base64 PKCS#12 inline in `DataProtection__Certificate`, or a rendered file
+  in `DataProtection__CertificatePath`; `DataProtection__PreviousCertificate[Path]` for a
+  roll-over. Without a certificate the app runs exactly as before (warning at startup). A
+  startup guard, run before every other hosted service, refuses to start when the ring
+  holds wrapped keys and the certificate is missing or wrong.*
 - [ ] A new key created and activated; a one-shot job re-protects every protected value
   (refresh tokens, opt-ins, Activity Snapshot, own addresses, Other contacts dismissals,
   `source_connections.SecretProtected`, OneDrive tokens), with a count per kind and no
-  failures.
+  failures. *Code ready (`DataProtection__Rotation`, runbook below); the run is the
+  operator's. Opt-ins are stored in clear (no Data Protection), so there is nothing to
+  re-protect for them; the job also covers the Contacts' histories and the public profiles.
+  Sports Tracker and OneDrive secrets are both `source_connections.SecretProtected`.*
 - [ ] The old keys revoked and deleted; the ring in Redis holds only wrapped keys
-  (checked by reading it).
+  (checked by reading it). *Code ready (`retire`); operator run pending.*
 - [ ] The Owner revokes and re-grants Google, and reconnects OneDrive and Sports Tracker.
+
+**Runbook: wrap the key ring and retire the exposed keys (operator).** Every step is a
+Vault write plus a backend restart; the backend logs counts only, never values. It works
+with the RLS policies on or off: it finds the Owners with connections through the definer
+function `sys_owners('source_connections')` and reads and rewrites each Owner's secrets
+under that Owner's scope (AD-49 rule 5).
+
+0. *Before:* the backend runs this branch's image with `Echo__AllowedEmails` set. Take a
+   copy of the ring for rollback, kept encrypted off the cluster and deleted after step 6:
+   `kubectl -n contacts exec contacts-redis-master-0 -- sh -c 'redis-cli --no-auth-warning -a "$REDIS_PASSWORD" LRANGE DataProtection-Keys 0 -1' | age -r <recipient> > dp-ring.age`.
+1. *Certificate:* create an RSA 3072 key and a self-signed certificate (10 years; it is
+   only a key-wrapping key) and store both PEM blocks in one Vault value:
+   `openssl req -x509 -newkey rsa:3072 -nodes -days 3650 -subj "/CN=contacts-dataprotection" -keyout dp.key -out dp.crt`,
+   then `vault kv patch secret/contacts DataProtection__Certificate="$(cat dp.crt dp.key)"`
+   and `shred -u dp.key`. Keep a copy of the PEM in the password manager: without it the
+   wrapped ring cannot be read (the backend then refuses to start, by design). If the chart
+   renders it as a file instead, set `DataProtection__CertificatePath` to that file.
+2. *Wrapping on:* restart the backend (`kubectl -n contacts rollout restart deploy/contacts-backend`).
+   Expect `Data Protection key ring wrapped with the Vault certificate: N keys, N not wrapped`.
+3. *Dry run:* `vault kv patch secret/contacts DataProtection__Rotation=dry-run`, restart.
+   Expect one `Key ring rotation (DryRun) <kind>: ...` line per kind; `re-protected` is what
+   would move, `unreadable` must be 0.
+4. *Re-protect:* `DataProtection__Rotation=reprotect`, restart. Expect `new key created` and
+   per-kind counts with `changed meanwhile 0` and `unreadable 0`. Safe to repeat: a second
+   run re-protects 0 and counts everything as `current`.
+5. *Retire:* `DataProtection__Rotation=retire`, restart. Expect `N old keys revoked and
+   deleted; every session ends`. If it logs `old keys kept: ...`, run it again (values that
+   changed during the run move on the next run); `unreadable` above 0 means a value under a
+   purpose the job does not know: stop and investigate, never delete keys by hand.
+6. *Off:* `vault kv patch secret/contacts DataProtection__Rotation=off`, restart. Check the
+   ring: every `<key ...>` entry of `LRANGE DataProtection-Keys 0 -1` contains
+   `encryptedSecret`. Delete `dp-ring.age`.
+7. *Owner:* sign in again; revoke Echo at https://myaccount.google.com/permissions and sign
+   in again (a new Google grant); reconnect OneDrive and Sports Tracker in Atlas.
+
+*Rollback.* Before step 5 nothing is lost: the old keys are still in the ring and every
+value is readable as long as the certificate stays in Vault. Never remove
+`DataProtection__Certificate` once a wrapped key exists (the guard then stops the backend
+rather than let tokens become unreadable; restore the value to recover). Up to step 3 the
+previous image still works (no wrapped key exists yet); from step 4 on it cannot unwrap the
+new key, so fix forward.
+After step 5 the old keys are gone; `RPUSH DataProtection-Keys` of the entries in
+`dp-ring.age` brings them back if a value turns out to need one. A later certificate
+roll-over: the new PEM in `DataProtection__Certificate`, the old one in
+`DataProtection__PreviousCertificate`, restart, steps 4 to 6, then remove the previous one.
 
 #### 21.6 Postgres password rotated, chart defaults removed — Wave 1
 
@@ -117,51 +174,66 @@ through GitOps is done only when the **live object** shows it, not when its PR m
 
 #### 21.7 Invite-only sign-in from Vault configuration — Wave 1
 
-- [ ] The callback requires `email_verified` and checks the email against
+- [x] The callback requires `email_verified` and checks the email against
   `Echo__AllowedEmails` (Vault) **before anything is stored**; a refused account has its
   grant revoked, nothing stored, and gets `NOT_INVITED` and the "invitation needed" page
   (AD-50 rule 6, AD-29).
-- [ ] Matching is on the normalised, verified email only; binding `sub` waits for AD-29's
-  `platform.allowlist` table.
-- [ ] Tests: an allowed account signs in; an account with `email_verified` false is
+- [x] Matching is on the normalised, verified email only; binding `sub` waits for AD-29's
+  `platform.allowlist` table. *Comma, semicolon or space separated, case-insensitive. An
+  empty or missing list admits nobody (fail closed) and existing sessions are refused too;
+  startup logs a warning.*
+- [x] Tests: an allowed account signs in; an account with `email_verified` false is
   refused; a refused one leaves no Redis or Postgres entry and its grant is revoked.
-- [ ] The allowlist (the Owner and family members) is in Vault; no address is in the
-  repository, values or a ConfigMap.
+  *(`AuthSessionTests`; the callback writes nothing to Postgres.)*
+- [x] The allowlist (the Owner and family members) is in Vault; no address is in the
+  repository, values or a ConfigMap. *(Set in Vault, 6 addresses.)*
 
 #### 21.8 Sessions re-keyed, browser hardened — Wave 1
 
-- [ ] `EchoSession` is cookie authentication with a Redis ticket store (protected
+- [x] `EchoSession` is cookie authentication with a Redis ticket store (protected
   tickets, keys under the Owner prefix); the callback clears the pre-sign-in session,
   deletes its cookie and calls `SignInAsync`; sign-out deletes the ticket (AD-50 rule 4).
-- [ ] Tests: the ticket key changes across the callback; a ticket replayed after sign-out
+- [x] Tests: the ticket key changes across the callback; a ticket replayed after sign-out
   is refused; the absolute lifetime of 30 days holds.
-- [ ] Cookies `__Host-ContactsApi.Auth` and `__Host-ContactsApi.Session`, `Secure` in
-  every environment; local sign-in still works in Development.
-- [ ] The Google access token is stored only protected (`ContactsApi.Session.GoogleAccessToken.v1`)
+- [x] Cookies `__Host-ContactsApi.Auth` and `__Host-ContactsApi.Session`, `Secure` in
+  every environment; local sign-in still works in Development. *(Attributes tested; a
+  Development sign-in through a real browser on http://localhost is not yet tried.)*
+- [x] The Google access token is stored only protected (`ContactsApi.Session.GoogleAccessToken.v1`)
   (AD-50 rule 3).
 - [ ] nginx sends HSTS; the CSP has no `unsafe-eval` and no script `unsafe-inline`;
   `img-src` and `connect-src` list only the hosts used; `X-Forwarded-Proto` is set by
-  nginx; the built bundle loads under the policy (AD-50 rule 5).
-- [ ] State-changing `/api/**` calls without `X-Echo-Request`, from another site (a
+  nginx; the built bundle loads under the policy (AD-50 rule 5). *Chart work
+  (`fix/chart-hardening`), not in the application branch.*
+- [x] State-changing `/api/**` calls without `X-Echo-Request`, from another site (a
   sibling subdomain included) or with neither `Sec-Fetch-Site` nor `Origin` get 403
   `REQUEST_REJECTED`; `/api/mcp` is exempt; no `GET` changes stored state (AD-50 rule 7).
 
 #### 21.9 Logs without codes, emails or coordinates — Wave 1
 
-- [ ] `RequestLoggingMiddleware` logs the route template, never the query string or the
-  raw path; the session id is no longer logged (AD-50 rule 8).
-- [ ] A test sends `/api/auth/callback?code=X&state=Y` and finds neither value in any log
+- [x] `RequestLoggingMiddleware` logs the route template, never the query string or the
+  raw path; the session id is no longer logged (AD-50 rule 8). *Numeric values of
+  paging and count keys are kept.*
+- [x] A test sends `/api/auth/callback?code=X&state=Y` and finds neither value in any log
   event.
-- [ ] Swagger UI only in Development; `/api/assistant/status` requires a session;
+- [x] Swagger UI only in Development; `/api/assistant/status` requires a session;
   development credentials moved to user-secrets and `.env.example` (AD-50 rule 10).
+  *The EF design-time factories keep their placeholder string (`design`/`design`, never
+  used to connect), left alone to avoid a conflict with `feat/postgres-rls`.*
 
 #### 21.10 MCP tokens expire and start read-only — Wave 1
 
-- [ ] `access_tokens` gains `ExpiresAt` (default 90 days, at most 365) and a `write`
+- [x] `access_tokens` gains `ExpiresAt` (default 90 days, at most 365) and a `write`
   scope; update and delete tools require it; expired tokens are refused (AD-50 rule 9,
-  AD-18).
-- [ ] A per-token rate limit; the token list shows the last use and the expiry.
-- [ ] Existing tokens get an expiry 90 days from the migration, with a notice.
+  AD-18). *Migration `20261106120050_AccessTokenExpiry`, ordered between
+  `AtlasSystemFunctions` and `AtlasRowLevelSecurity` so it applies while the policy gate is
+  closed (EchoMigrator stops before the policy migration and refuses anything after it); it
+  also makes `sys_resolve_access_token` refuse expired tokens (same signature and security
+  attributes; `atlas_system` gets `SELECT ("ExpiresAt")`, also in `db-roles.sql`). The write
+  scope is read from the token's row under its Owner once the definer function has named
+  the Owner. All twelve tools that change data need `write`.*
+- [x] A per-token rate limit; the token list shows the last use and the expiry.
+  *`Mcp__RateLimit__PerMinute` (60) and `__PerDay` (5000), in process memory (one replica).*
+- [x] Existing tokens get an expiry 90 days from the migration, with a notice.
 
 #### 21.11 Restricted pods and default-deny in `contacts` — Wave 1
 

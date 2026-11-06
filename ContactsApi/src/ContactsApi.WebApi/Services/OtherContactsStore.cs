@@ -25,11 +25,14 @@ public class OtherContactsStore
     private readonly IDataProtector _protector;
     private readonly ILogger<OtherContactsStore> _logger;
 
+    /// <summary>Data Protection purpose of the dismissals</summary>
+    public const string Purpose = "ContactsApi.OtherContacts.Dismissed.v1";
+
     /// <summary>Creates the store</summary>
     public OtherContactsStore(IDistributedCache cache, IDataProtectionProvider dataProtection, ILogger<OtherContactsStore> logger)
     {
         _cache = cache;
-        _protector = dataProtection.CreateProtector("ContactsApi.OtherContacts.Dismissed.v1");
+        _protector = dataProtection.CreateProtector(Purpose);
         _logger = logger;
     }
 

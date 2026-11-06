@@ -315,7 +315,7 @@ public class RoutesController : ControllerBase
 
     /// <summary>The Owner from the session only (AD-3 rule 2)</summary>
     private async Task<string?> OwnerAsync() =>
-        await _tokens.GetAccessTokenAsync(HttpContext) == null ? null : HttpContext.Session.GetString(GoogleTokenService.UserIdKey);
+        await _tokens.GetAccessTokenAsync(HttpContext) == null ? null : HttpContext.OwnerId();
 
     private static IActionResult Pass(RoutesServiceAnswer answer) =>
         new ContentResult { StatusCode = answer.Status, Content = answer.Body, ContentType = "application/json" };

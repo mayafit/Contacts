@@ -8,6 +8,7 @@ import {
   ApiRequestError,
   BackendApiClient,
   backendApiClient,
+  ECHO_REQUEST_HEADER,
   SESSION_EXPIRED_EVENT,
 } from '../BackendApiClient';
 import type { Contact } from '../../../entries/Contacts/types/Contact';
@@ -21,6 +22,43 @@ describe('BackendApiClient', () => {
   beforeEach(() => {
     client = new BackendApiClient('http://localhost:5000/api');
     jest.clearAllMocks();
+  });
+
+  describe('CSRF header (AD-50 rule 7)', () => {
+    const ok = () =>
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, data: {} }),
+      });
+
+    it('sends X-Echo-Request: 1 on state-changing calls', async () => {
+      ok();
+      await client.updateContactField('people/c1', 'names', [{ givenName: 'A' }], 'e');
+      ok();
+      await client.logout().catch(() => undefined);
+
+      const calls = (global.fetch as jest.Mock).mock.calls as [string, RequestInit][];
+      expect(calls.length).toBe(2);
+      for (const [, init] of calls) {
+        expect((init.headers as Record<string, string>)[ECHO_REQUEST_HEADER]).toBe('1');
+      }
+    });
+
+    it('keeps the header even when a caller passes its own headers', async () => {
+      ok();
+      await (
+        client as unknown as {
+          request: (e: string, o: RequestInit) => Promise<unknown>;
+        }
+      ).request('/settings/x', {
+        method: 'PUT',
+        headers: { [ECHO_REQUEST_HEADER]: '0' },
+      });
+
+      const [, init] = (global.fetch as jest.Mock).mock.calls[0] as [string, RequestInit];
+      expect((init.headers as Record<string, string>)[ECHO_REQUEST_HEADER]).toBe('1');
+    });
   });
 
   describe('updateContactField', () => {
