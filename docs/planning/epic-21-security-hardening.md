@@ -212,24 +212,36 @@ through GitOps is done only when the **live object** shows it, not when its PR m
 
 #### 21.14 Shadow mode — Wave 2
 
-- [ ] `OwnerScope` and `OwnerRlsInterceptor` on every DbContext, in log-only mode; the
+- [x] `OwnerScope` and `OwnerRlsInterceptor` on every DbContext, in log-only mode; the
   configuration guards (no multiplexing, reset on close, application name, pool size)
-  (AD-49 rule 4).
-- [ ] Every entry point sets the Owner: the `/api/**` middleware, the `EchoPat` handler,
-  `InternalRoutesController`, the route service's `/internal/v1/*`, every hosted worker
-  per item in a fresh scope.
-- [ ] The `sys_*` functions created by `AtlasSystemFunctions` and `RoutesSystemFunctions`;
+  (AD-49 rule 4). `RowLevelSecurity__Mode` = `Off` / `Shadow` (default) / `Enforce`;
+  code in `ContactsApi.Infrastructure/Tenancy/`.
+- [x] Every entry point sets the Owner: the `/api/**` middleware (`OwnerScopeMiddleware`),
+  the MCP token (the `/api/mcp` PAT middleware until AD-3 rule 3's `EchoPat` handler
+  exists; it resolves through `sys_resolve_access_token`), `InternalRoutesController`,
+  the route service's `/internal/v1/*` (an endpoint filter), every hosted worker per item
+  in a fresh scope (`CreateOwnerScope`).
+- [x] The `sys_*` functions created by `AtlasSystemFunctions` and `RoutesSystemFunctions`;
   workers refactored to them; `PlacePendingPhotosAsync` runs one transaction per Owner;
-  `DeleteGoneOwnersAsync` deletes under each gone Owner's scope (AD-49 rule 5).
-- [ ] A few days of live logs with zero "owner scope missing" warnings.
+  `DeleteGoneOwnersAsync` deletes under each gone Owner's scope (AD-49 rule 5). Also
+  converted, beyond the AD's list: best efforts and place identification (new
+  `sys_owners` kinds `places_to_identify`; efforts use `activities`), the Takeout claim
+  reset and due check, and the route service's line fill (`sys_known_owners`).
+- [ ] A few days of live logs with zero "owner scope missing" warnings. *Operator: deploy
+  the image with the chart defaults (`Shadow`, policies off), then count
+  `RLS: owner scope missing` in Seq.*
 
 #### 21.15 Database isolation tests — Wave 2
 
-- [ ] A Testcontainers fixture (`postgres:18`) that runs `db-roles.sql`, migrates as the
-  migrators and seeds Owners A and B in every table (AD-49 rule 9).
+- [x] A Testcontainers fixture (`postgres:18`) that runs `db-roles.sql`, migrates as the
+  migrators and seeds Owners A and B in every table (AD-49 rule 9). (`tests/.../Rls/`; it
+  seeds a third Owner for the destructive tests, and skips with the reason when Docker is
+  not available.)
 - [ ] The catalog, unset, cross-tenant read and write, pooling, definer-function,
   role-boundary and destructive-path tests of AD-49 rule 9 pass, and run on every PR as
-  part of the NFR-07 gate.
+  part of the NFR-07 gate. *All 22 pass locally (`dotnet test --filter
+  FullyQualifiedName~RowLevelSecurityDbTests`), plus a no-Docker model test; "on every PR"
+  waits for CI (AD-22).*
 - [ ] The two-Owner fixture of AD-3 rule 4 passes over every `/api/**`, `/internal/routes/*`
   and `/internal/v1/*` route with RLS on.
 
@@ -246,6 +258,13 @@ through GitOps is done only when the **live object** shows it, not when its PR m
 - [ ] The catalog test passes against the live database; both pods migrate through their
   init container; the `sys_*` functions are re-owned to the system roles.
 
+*Built (not run against the cluster):* `helm/contacts/files/db-roles.sql` and
+`db-roles-rollback.sql` (idempotent, no passwords in them; a split and rollback round trip
+was run twice on `postgres:18`); `--migrate-only` in both executables
+(`Database__MigrationConnectionString`, `Routes__MigrationConnectionString`); chart
+`migrations.initContainer` (off by default) with the agent configmap, init-first and the
+delete; `/health/ready` unready while migrations are pending.
+
 #### 21.17 Policies on, then throw — Wave 2
 
 - [ ] `AtlasRowLevelSecurity` deployed, then `RoutesRowLevelSecurity` (AD-49 rule 8).
@@ -254,6 +273,42 @@ through GitOps is done only when the **live object** shows it, not when its PR m
 - [ ] Live smoke test: the map, the timeline, the routes panel, an MCP tool, a Sports
   Tracker sync.
 - [ ] The interceptor switched to throwing; 24 h without `OwnerScopeMissingException`.
+
+*Built behind configuration:* the policy migrations apply only with
+`RowLevelSecurity__Policies=true` (the migrator stops before them otherwise, and readiness
+does not wait for them); throwing is `RowLevelSecurity__Mode=Enforce`.
+
+**Runbook for 21.14 to 21.17 (operator, in order; each step has its gate):**
+
+1. *Backup* (AD-55): a fresh off-node `pg_dump -Fc` of `contactsdb` as `postgres`, restored
+   into a scratch database. Rotate `contactsapi`'s password first if not done (rollout
+   step 1, AD-52).
+2. *Shadow* (21.14): deploy the new backend and route images with chart 0.7.0 defaults
+   (`rowLevelSecurity.mode: Shadow`, `policies: false`, `migrations.initContainer: false`).
+   The apps still migrate at startup and create the `sys_*` functions. Gate: a few days of
+   Seq with zero `RLS: owner scope missing`.
+3. *Roles* (21.16): `psql -v ON_ERROR_STOP=1 -U postgres -d contactsdb -f db-roles.sql`;
+   `\password atlas_migrator`, `\password routes_migrator`, `\password contacts_backup`;
+   `vault kv put secret/contacts-migrate Database__MigrationConnectionString=... Routes__MigrationConnectionString=...`
+   (`Username=atlas_migrator` / `routes_migrator`); add
+   `path "secret/data/contacts-migrate" { capabilities = ["read"] }` to the `contacts` and
+   `contacts-routes` Vault policies; check `backend.vault.address`; set
+   `backend.migrations.initContainer: true`, `routes.migrations.initContainer: true` and
+   `backend.probes.readiness.path: /health/ready`. Gate: both pods pass Init; `ls
+   /vault/secrets` in the main containers shows no `migrate`; the catalog queries of
+   `RowLevelSecurityDbTests` pass against live (read-only, as `postgres`); `sys_*` owned by
+   `atlas_system` / `routes_system`.
+4. *Policies* (21.17): `EXPLAIN (ANALYZE, BUFFERS)` of the five heavy reads; then
+   `backend.rowLevelSecurity.policies: true` (AtlasRowLevelSecurity), and once the backend
+   is Ready `routes.rowLevelSecurity.policies: true` (RoutesRowLevelSecurity). Gate: the
+   same `EXPLAIN`s, the smoke test above.
+5. *Enforce*: `rowLevelSecurity.mode: Enforce` in both. Gate: 24 h without
+   `OwnerScopeMissingException`.
+
+*Rollback:* step 5 by `Shadow`; step 4 by running the policy migrations' `Down()` as the
+migrator (`dotnet ef database update AtlasSystemFunctions` / `RoutesSystemFunctions` with
+the migrator's string, or the `DROP POLICY` / `NO FORCE` / `DISABLE` statements in psql)
+and `policies: false`; step 3 by `initContainer: false` and `db-roles-rollback.sql`.
 
 #### 21.18 Data-model follow-up — Wave 2
 
