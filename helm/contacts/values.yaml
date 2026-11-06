@@ -177,7 +177,9 @@ backend:
       timeoutSeconds: 5
       failureThreshold: 3
     readiness:
-      path: /health
+      # /health/ready adds the pending-migrations check (AD-49 rule 3); /health (liveness)
+      # leaves it out. Same answer as /health while the API migrates at startup
+      path: /health/ready
       port: 5000
       initialDelaySeconds: 10
       periodSeconds: 10
