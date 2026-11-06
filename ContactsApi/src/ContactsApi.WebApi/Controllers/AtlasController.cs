@@ -10,7 +10,8 @@ using Microsoft.AspNetCore.Mvc;
 namespace ContactsApi.WebApi.Controllers;
 
 /// <summary>Request to create an access token</summary>
-public record CreateTokenRequest(string Name);
+/// <summary>A new MCP token: its name, "allow changes" (the write scope) and its lifetime in days (default 90, at most 365)</summary>
+public record CreateTokenRequest(string Name, bool AllowWrite = false, int? ExpiresInDays = null);
 
 /// <summary>Insights for a query, in a time zone</summary>
 public record InsightsRequest(AtlasQuery? Query, string? Tz);
@@ -439,7 +440,7 @@ public class AtlasController : ControllerBase
     public Task<IActionResult> CreateToken([FromBody] CreateTokenRequest request) =>
         RunWith<AccessTokenService, object>(async (svc, owner) =>
         {
-            var (token, info) = await svc.CreateAsync(owner, request.Name);
+            var (token, info) = await svc.CreateAsync(owner, request.Name, request.AllowWrite, request.ExpiresInDays);
             return new { token, info };
         });
 

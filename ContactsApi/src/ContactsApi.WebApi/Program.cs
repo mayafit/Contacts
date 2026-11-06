@@ -117,6 +117,9 @@ builder.Services.AddSingleton<ContactsApi.Infrastructure.Atlas.IFusionSignal>(sp
 builder.Services.AddSingleton<FusionStatusBoard>();
 builder.Services.AddHostedService<AtlasFusionWorker>();
 builder.Services.AddScoped<AccessTokenService>();
+// A rate limit per MCP token (AD-50 rule 9): Mcp__RateLimit__PerMinute / __PerDay
+builder.Services.AddSingleton(builder.Configuration.GetSection("Mcp:RateLimit").Get<PatRateLimitOptions>() ?? new PatRateLimitOptions());
+builder.Services.AddSingleton<PatRateLimiter>();
 builder.Services.AddHostedService<AtlasMigrator>();
 // Connected sources (Sports Tracker): connect, background sync
 builder.Services.AddHttpClient(ContactsApi.Infrastructure.Atlas.SportsTrackerClient.HttpClientName, c => c.Timeout = TimeSpan.FromSeconds(60));
@@ -325,17 +328,13 @@ app.UseWhen(ctx => ctx.Request.Path.StartsWithSegments("/api/mcp"), mcp => mcp.U
     var readiness = ctx.RequestServices.GetRequiredService<AtlasReadiness>();
     var header = ctx.Request.Headers.Authorization.ToString();
     var token = header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) ? header[7..].Trim() : string.Empty;
-    string? owner = null;
-    if (readiness.Ready && token.Length > 0)
-    {
-        // The token's Owner is not known yet: resolved through a definer function (AD-49 rule 5)
-        using (ctx.RequestServices.GetRequiredService<ContactsApi.Infrastructure.Tenancy.OwnerScope>().AllowUnscoped())
-        {
-            owner = await ctx.RequestServices.GetRequiredService<AccessTokenService>().ValidateAsync(token);
-        }
-    }
-
-    if (owner == null)
+    // Unknown, revoked and expired tokens are all refused the same way (AD-50 rule 9). The
+    // token's Owner is not known yet: CheckAsync resolves it through the definer function
+    // (AD-49 rule 5), then sets the request's Owner and reads the token's rights under it.
+    var checkedToken = readiness.Ready && token.Length > 0
+        ? await ctx.RequestServices.GetRequiredService<AccessTokenService>().CheckAsync(token)
+        : null;
+    if (checkedToken == null)
     {
         ctx.Response.StatusCode = readiness.Ready ? StatusCodes.Status401Unauthorized : StatusCodes.Status503ServiceUnavailable;
         ctx.Response.Headers.WWWAuthenticate = "Bearer";
@@ -343,8 +342,17 @@ app.UseWhen(ctx => ctx.Request.Path.StartsWithSegments("/api/mcp"), mcp => mcp.U
         return;
     }
 
-    ctx.Items[AtlasMcpTools.OwnerItem] = owner;
-    ctx.RequestServices.GetRequiredService<ContactsApi.Infrastructure.Tenancy.OwnerScope>().Set(owner);
+    // In process memory: no database work, so no Owner scope is involved
+    if (!ctx.RequestServices.GetRequiredService<PatRateLimiter>().TryAcquire(checkedToken.Id, out var retryAfter))
+    {
+        ctx.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+        ctx.Response.Headers.RetryAfter = ((int)Math.Ceiling(retryAfter.TotalSeconds)).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        await ctx.Response.WriteAsync("This access token has made too many calls. Try again later.");
+        return;
+    }
+
+    ctx.Items[AtlasMcpTools.OwnerItem] = checkedToken.OwnerId;
+    ctx.Items[AtlasMcpTools.CanWriteItem] = checkedToken.CanWrite;
     await next();
 }));
 

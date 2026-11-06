@@ -1109,6 +1109,12 @@ export interface AccessTokenInfo {
   prefix: string;
   createdAt: string;
   lastUsedAt?: string | null;
+  /** After this the token is refused (AD-50 rule 9) */
+  expiresAt: string;
+  /** Created with "Allow changes": the update and delete tools work */
+  canWrite: boolean;
+  /** From before expiry existed: keeps write access until it expires */
+  legacy: boolean;
 }
 
 import { DEFAULT_UI, STYLED_TYPES, onUiChange } from '../settings/uiSettings';

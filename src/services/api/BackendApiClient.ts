@@ -1588,12 +1588,19 @@ export class BackendApiClient {
     return unwrap(await this.request<AccessTokenInfo[]>('/atlas/tokens'), 'Loading tokens failed');
   }
 
-  /** Creates an MCP access token (the token is returned only now) */
-  async atlasCreateToken(name: string): Promise<{ token: string; info: AccessTokenInfo }> {
+  /**
+   * Creates an MCP access token (the token is returned only now). It is read-only unless
+   * allowWrite, and expires after expiresInDays (default 90, at most 365).
+   */
+  async atlasCreateToken(
+    name: string,
+    allowWrite = false,
+    expiresInDays?: number,
+  ): Promise<{ token: string; info: AccessTokenInfo }> {
     return unwrap(
       await this.request<{ token: string; info: AccessTokenInfo }>('/atlas/tokens', {
         method: 'POST',
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, allowWrite, expiresInDays }),
       }),
       'Creating the token failed',
     );
