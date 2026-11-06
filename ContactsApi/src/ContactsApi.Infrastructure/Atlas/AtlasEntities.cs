@@ -239,6 +239,14 @@ public class AccessToken
     public string Prefix { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? LastUsedAt { get; set; }
+    /// <summary>After this the token is refused like a revoked one (AD-50 rule 9: default 90 days, at most 365)</summary>
+    public DateTime ExpiresAt { get; set; } = DateTime.UtcNow.AddDays(90);
+    /// <summary>
+    /// Space-separated scopes: the module (<c>atlas</c>) and, only when the Owner allowed
+    /// changes, <c>write</c>. <c>legacy</c> marks a token from before expiry existed (it keeps
+    /// write access until it expires, with a notice in the list).
+    /// </summary>
+    public string Scopes { get; set; } = "atlas";
 }
 
 /// <summary>

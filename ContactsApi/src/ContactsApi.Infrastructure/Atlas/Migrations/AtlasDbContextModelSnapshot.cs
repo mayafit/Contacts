@@ -32,6 +32,9 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateTime?>("LastUsedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -47,6 +50,11 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                     b.Property<string>("Prefix")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<string>("Scopes")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
 
                     b.Property<string>("TokenHash")
                         .IsRequired()

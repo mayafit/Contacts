@@ -239,6 +239,7 @@ public class AtlasDbContext : DbContext
             e.HasIndex(x => x.TokenHash).IsUnique();
             e.HasIndex(x => x.OwnerId);
             e.Property(x => x.OwnerId).HasMaxLength(64);
+            e.Property(x => x.Scopes).HasMaxLength(200);
         });
     }
 }
