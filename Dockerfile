@@ -9,7 +9,7 @@
 # The output is static JS/CSS, identical for every target platform, so there is
 # no reason to run npm under QEMU when cross-building for arm64 -- emulated
 # `npm ci` alone takes well over 20 minutes.
-FROM --platform=$BUILDPLATFORM node:18.20.4-alpine3.20 AS builder
+FROM --platform=$BUILDPLATFORM node:24.22.2-alpine3.24@sha256:8a32c8cf649a49915a66e81e7a609223c708d0adabf288ee3f4077d765542f85 AS builder
 
 # Build arguments for React environment variables
 # These are baked into the bundle at build time
@@ -47,7 +47,7 @@ RUN npm run build:prod
 ###############################
 # Stage 2: Production Runtime
 ###############################
-FROM nginx:1.27.3-alpine3.20
+FROM nginx:1.30.6-alpine3.24@sha256:0e52bd054126cdc040b1276c0af347aeb02a41b9cfe305d6094767ac30e97949
 
 # Add metadata labels (CIS 4.3)
 LABEL maintainer="contacts-team" \
