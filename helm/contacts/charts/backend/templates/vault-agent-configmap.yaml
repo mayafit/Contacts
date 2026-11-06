@@ -1,0 +1,58 @@
+{{- if and .Values.vault.enabled .Values.migrations.initContainer }}
+{{- /*
+AD-49 rule 3: the injector renders every template into one shared volume, so the
+migrator's credential must not be a template of the sidecar. config-init.hcl (the
+agent's init container, run first) renders env and migrate; config.hcl (the sidecar)
+renders env only. The migrate init container deletes migrate when it finishes.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "backend.fullname" . }}-vault-agent
+  labels:
+    {{- include "backend.labels" . | nindent 4 }}
+data:
+  config-init.hcl: |
+    exit_after_auth = true
+    pid_file = "/home/vault/.pid"
+    {{- include "backend.vaultAgentCommon" . | nindent 4 }}
+    template {
+      destination = "/vault/secrets/migrate"
+      contents = <<EOT
+    {{`{{ with secret "`}}{{ .Values.migrations.kvPath }}{{`" }}`}}export Database__MigrationConnectionString="{{`{{ .Data.data.Database__MigrationConnectionString }}`}}"{{`{{ end }}`}}
+    EOT
+    }
+  config.hcl: |
+    exit_after_auth = false
+    pid_file = "/home/vault/.pid"
+    {{- include "backend.vaultAgentCommon" . | nindent 4 }}
+{{- end }}
+{{- define "backend.vaultAgentCommon" -}}
+vault {
+  address = "{{ .Values.vault.address }}"
+}
+auto_auth {
+  method "kubernetes" {
+    mount_path = "{{ .Values.vault.authPath }}"
+    config = {
+      role = "{{ .Values.vault.role }}"
+      # The projected token of the vault-token volume (AD-51 rule 6)
+      token_path = "/var/run/secrets/vault.hashicorp.com/serviceaccount/token"
+    }
+  }
+  sink "file" {
+    config = {
+      path = "/home/vault/.vault-token"
+    }
+  }
+}
+template_config {
+  exit_on_retry_failure = true
+}
+template {
+  destination = "/vault/secrets/env"
+  contents = <<EOT
+{{ include "backend.vaultEnvTemplate" . }}
+EOT
+}
+{{- end }}

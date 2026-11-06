@@ -562,10 +562,10 @@ public class MatchRunner
     /// Fills the list and density lines and the corridor cells of rows stored before they existed, a page at a
     /// time; returns how many rows it filled (0: none are left)
     /// </summary>
-    public async Task<int> FillLinesAsync(int page, CancellationToken ct)
+    public async Task<int> FillLinesAsync(string owner, int page, CancellationToken ct)
     {
         var rows = await _db.MatchedRoutes
-            .Where(m => m.Polyline != null && (m.ListPolyline == null || m.DensityPolyline == null || m.Cells == null))
+            .Where(m => m.OwnerId == owner && m.Polyline != null && (m.ListPolyline == null || m.DensityPolyline == null || m.Cells == null))
             .OrderBy(m => m.Id).Take(Math.Max(1, page)).ToListAsync(ct);
         foreach (var row in rows)
         {

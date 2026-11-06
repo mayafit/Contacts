@@ -7,6 +7,7 @@ using System.IO.Compression;
 using System.Text.Json;
 using System.Threading.Channels;
 using ContactsApi.Infrastructure.Atlas;
+using ContactsApi.Infrastructure.Tenancy;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -460,7 +461,7 @@ public class TakeoutDriveWorker : BackgroundService
                     continue;
                 }
 
-                using var scope = _scopes.CreateScope();
+                using var scope = _scopes.CreateOwnerScope(owner);
                 await scope.ServiceProvider.GetRequiredService<TakeoutDriveService>().CheckAsync(owner, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -480,11 +481,15 @@ public class TakeoutDriveWorker : BackgroundService
     {
         try
         {
-            using var scope = _scopes.CreateScope();
+            // Per Owner, under each Owner's scope (AD-49 rule 5)
             var stuck = DateTime.UtcNow - TakeoutDriveService.ClaimTimeout;
-            await scope.ServiceProvider.GetRequiredService<AtlasDbContext>().Connections
-                .Where(c => c.Provider == TakeoutDriveService.Provider && c.Status == "syncing" && c.UpdatedAt < stuck)
-                .ExecuteUpdateAsync(s => s.SetProperty(c => c.Status, "idle").SetProperty(c => c.LastSyncAt, (DateTime?)null), ct);
+            foreach (var owner in await OwnersAsync(ct))
+            {
+                using var scope = _scopes.CreateOwnerScope(owner);
+                await scope.ServiceProvider.GetRequiredService<AtlasDbContext>().Connections
+                    .Where(c => c.OwnerId == owner && c.Provider == TakeoutDriveService.Provider && c.Status == "syncing" && c.UpdatedAt < stuck)
+                    .ExecuteUpdateAsync(s => s.SetProperty(c => c.Status, "idle").SetProperty(c => c.LastSyncAt, (DateTime?)null), ct);
+            }
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {
@@ -497,16 +502,28 @@ public class TakeoutDriveWorker : BackgroundService
     {
         try
         {
-            using var scope = _scopes.CreateScope();
             var due = DateTime.UtcNow - Daily;
-            var owners = await scope.ServiceProvider.GetRequiredService<AtlasDbContext>().Connections.AsNoTracking()
-                .Where(c => c.Provider == TakeoutDriveService.Provider && c.Status != "expired" && (c.LastSyncAt == null || c.LastSyncAt < due))
-                .Select(c => c.OwnerId).ToListAsync(ct);
-            owners.ForEach(_queue.Enqueue);
+            foreach (var owner in await OwnersAsync(ct))
+            {
+                using var scope = _scopes.CreateOwnerScope(owner);
+                if (await scope.ServiceProvider.GetRequiredService<AtlasDbContext>().Connections.AsNoTracking()
+                        .AnyAsync(c => c.OwnerId == owner && c.Provider == TakeoutDriveService.Provider && c.Status != "expired"
+                                       && (c.LastSyncAt == null || c.LastSyncAt < due), ct))
+                {
+                    _queue.Enqueue(owner);
+                }
+            }
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             _logger.LogError(ex, "Takeout on Drive: listing the connections failed");
         }
+    }
+
+    /// <summary>Owners with a Drive connection that has not expired (atlas.sys_owners_with_connection, AD-49 rule 5)</summary>
+    private async Task<List<string>> OwnersAsync(CancellationToken ct)
+    {
+        using var scope = _scopes.CreateUnscopedScope();
+        return await scope.ServiceProvider.GetRequiredService<AtlasDbContext>().SysOwnersWithConnectionAsync(TakeoutDriveService.Provider, ct);
     }
 }

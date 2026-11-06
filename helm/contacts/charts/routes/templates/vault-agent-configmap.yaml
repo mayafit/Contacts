@@ -1,0 +1,57 @@
+{{- if and .Values.enabled .Values.vault.enabled .Values.migrations.initContainer }}
+{{- /*
+AD-49 rule 3: config-init.hcl (the agent's init container, run first) renders env and
+migrate; config.hcl (the sidecar) renders env only. The migrate init container deletes
+migrate when it finishes, so the routes container never holds the DDL credential.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "routes.fullname" . }}-vault-agent
+  labels:
+    {{- include "routes.labels" . | nindent 4 }}
+data:
+  config-init.hcl: |
+    exit_after_auth = true
+    pid_file = "/home/vault/.pid"
+    {{- include "routes.vaultAgentCommon" . | nindent 4 }}
+    template {
+      destination = "/vault/secrets/migrate"
+      contents = <<EOT
+    {{`{{ with secret "`}}{{ .Values.migrations.kvPath }}{{`" }}`}}export Routes__MigrationConnectionString="{{`{{ .Data.data.Routes__MigrationConnectionString }}`}}"{{`{{ end }}`}}
+    EOT
+    }
+  config.hcl: |
+    exit_after_auth = false
+    pid_file = "/home/vault/.pid"
+    {{- include "routes.vaultAgentCommon" . | nindent 4 }}
+{{- end }}
+{{- define "routes.vaultAgentCommon" -}}
+vault {
+  address = "http://vault.{{ .Values.vault.namespace }}.svc:{{ .Values.vault.port }}"
+}
+auto_auth {
+  method "kubernetes" {
+    mount_path = "auth/kubernetes"
+    config = {
+      role = "{{ .Values.vault.role }}"
+      # The projected token of the vault-token volume (AD-51 rule 6)
+      token_path = "/var/run/secrets/vault.hashicorp.com/serviceaccount/token"
+    }
+  }
+  sink "file" {
+    config = {
+      path = "/home/vault/.vault-token"
+    }
+  }
+}
+template_config {
+  exit_on_retry_failure = true
+}
+template {
+  destination = "/vault/secrets/env"
+  contents = <<EOT
+{{ include "routes.vaultEnvTemplate" . }}
+EOT
+}
+{{- end }}

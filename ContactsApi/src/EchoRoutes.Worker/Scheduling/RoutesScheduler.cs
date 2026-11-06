@@ -7,6 +7,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using ContactsApi.Infrastructure.Routes;
+using ContactsApi.Infrastructure.Tenancy;
 using EchoRoutes.Worker.Assess;
 using EchoRoutes.Worker.Backend;
 using EchoRoutes.Worker.Matching;
@@ -111,7 +112,9 @@ public enum BatchKind
 /// job, else the change feed when due, else the orphan sweep when due, else the
 /// records waiting for a match. Running batches stop between records when interactive
 /// work arrives; the interactive jobs run, then the turn goes on. A 429 from the
-/// backend pauses the turn.
+/// backend pauses the turn. Every batch runs in a fresh DI scope of its Owner; the
+/// passes over several Owners learn who they are from the routes.sys_* definer
+/// functions (AD-49 rules 4 and 5).
 /// </summary>
 public class RoutesScheduler : BackgroundService
 {
@@ -126,6 +129,8 @@ public class RoutesScheduler : BackgroundService
     private readonly RoutesOptions _options;
     private readonly ILogger<RoutesScheduler> _logger;
     private readonly EngineBreaker? _breaker;
+    private readonly RowLevelSecurityOptions _rls;
+    private readonly RoutesMigrationState? _migrations;
     private readonly TimeSpan[] _backoff;
     private readonly Dictionary<string, OwnerState> _state = new();
     private List<string> _owners = new();
@@ -137,7 +142,8 @@ public class RoutesScheduler : BackgroundService
 
     /// <summary>Creates the scheduler</summary>
     public RoutesScheduler(IServiceScopeFactory scopes, IRoutesBackend backend, WakeSignal wake, IPause pause,
-        IOptions<RoutesOptions> options, ILogger<RoutesScheduler> logger, EngineBreaker? breaker = null)
+        IOptions<RoutesOptions> options, ILogger<RoutesScheduler> logger, EngineBreaker? breaker = null,
+        RowLevelSecurityOptions? rls = null, RoutesMigrationState? migrations = null)
     {
         _scopes = scopes;
         _backend = backend;
@@ -146,6 +152,8 @@ public class RoutesScheduler : BackgroundService
         _options = options.Value;
         _logger = logger;
         _breaker = breaker;
+        _rls = rls ?? new RowLevelSecurityOptions();
+        _migrations = migrations;
         _backoff = _options.Backoff();
     }
 
@@ -237,14 +245,11 @@ public class RoutesScheduler : BackgroundService
     {
         _wake.TakeInteractive();
         List<string> owners;
-        using (var scope = _scopes.CreateScope())
+        using (var scope = _scopes.CreateUnscopedScope())
         {
-            var now = DateTime.UtcNow;
-            owners = await scope.ServiceProvider.GetRequiredService<RoutesDbContext>().Jobs.AsNoTracking()
-                .Where(j => j.Priority == RouteJobPriorities.Interactive
-                            && (j.State == RouteJobStates.Queued || j.State == RouteJobStates.Running)
-                            && (j.NextAttemptAt == null || j.NextAttemptAt <= now))
-                .Select(j => j.OwnerId).Distinct().ToListAsync(ct);
+            // Across Owners: ids only, through a definer function (AD-49 rule 5)
+            owners = await scope.ServiceProvider.GetRequiredService<RoutesDbContext>()
+                .SysOwnersWithOpenInteractiveJobsAsync(DateTime.UtcNow, ct);
         }
 
         var did = false;
@@ -287,7 +292,7 @@ public class RoutesScheduler : BackgroundService
     {
         try
         {
-            using var scope = _scopes.CreateScope();
+            using var scope = _scopes.CreateOwnerScope(owner);
             var runner = scope.ServiceProvider.GetRequiredService<AssessRunner>();
             var result = await runner.RunFeedBatchAsync(owner, _options.AssessBatch, false, ct);
             state.FeedDue = result.More;
@@ -322,7 +327,7 @@ public class RoutesScheduler : BackgroundService
     {
         try
         {
-            using var scope = _scopes.CreateScope();
+            using var scope = _scopes.CreateOwnerScope(owner);
             var runner = scope.ServiceProvider.GetService<MatchRunner>();
             if (runner == null)
             {
@@ -352,7 +357,7 @@ public class RoutesScheduler : BackgroundService
     /// </summary>
     private async Task<bool> RunSweepBatchAsync(string owner, CancellationToken ct)
     {
-        using var scope = _scopes.CreateScope();
+        using var scope = _scopes.CreateOwnerScope(owner);
         var db = scope.ServiceProvider.GetRequiredService<RoutesDbContext>();
         var cursor = await db.Cursors.FirstOrDefaultAsync(c => c.OwnerId == owner, ct);
         var now = DateTime.UtcNow;
@@ -373,6 +378,8 @@ public class RoutesScheduler : BackgroundService
             var missing = ids.Where(id => !exist.Contains(id)).ToList();
             if (missing.Count > 0)
             {
+                // Deletes only under this Owner's own scope, whatever the interceptor's mode (AD-49 rule 4)
+                scope.ServiceProvider.GetRequiredService<OwnerScope>().Require(owner);
                 gone = await scope.ServiceProvider.GetRequiredService<MatchRunner>().DeleteDerivedAsync(owner, missing, ct);
             }
         }
@@ -403,7 +410,7 @@ public class RoutesScheduler : BackgroundService
     /// </summary>
     private async Task<BatchKind> RunJobBatchAsync(string owner, string priority, CancellationToken ct)
     {
-        using var scope = _scopes.CreateScope();
+        using var scope = _scopes.CreateOwnerScope(owner);
         var db = scope.ServiceProvider.GetRequiredService<RoutesDbContext>();
         var now = DateTime.UtcNow;
         var job = await db.Jobs
@@ -664,37 +671,50 @@ public class RoutesScheduler : BackgroundService
             _state.Remove(gone);
         }
 
-        using var scope = _scopes.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<RoutesDbContext>();
-        await DeleteGoneOwnersAsync(db, owners, ct);
-        await PruneJobsAsync(db, ct);
+        await DeleteGoneOwnersAsync(owners, ct);
+        await PruneJobsAsync(ct);
     }
 
-    /// <summary>Deletes every routes row of Owners the service keeps data for who are not in <paramref name="owners"/></summary>
-    private async Task DeleteGoneOwnersAsync(RoutesDbContext db, List<string> owners, CancellationToken ct)
+    /// <summary>
+    /// Deletes every routes row of Owners the service keeps data for who are not in
+    /// <paramref name="owners"/>. Who is known comes from routes.sys_known_owners (ids
+    /// only); each gone Owner's rows are then deleted under that Owner's own scope, one
+    /// transaction per Owner (AD-49 rule 5), so a missing scope can never widen a delete.
+    /// </summary>
+    internal async Task DeleteGoneOwnersAsync(List<string> owners, CancellationToken ct)
     {
         // Owners with a cursor or a job: every Owner the service ever worked for
-        var known = await db.Cursors.Select(c => c.OwnerId).Union(db.Jobs.Select(j => j.OwnerId)).ToListAsync(ct);
-        var gone = known.Except(owners).ToList();
-        if (gone.Count == 0)
+        List<string> known;
+        using (var scope = _scopes.CreateUnscopedScope())
         {
-            return;
+            known = await scope.ServiceProvider.GetRequiredService<RoutesDbContext>().SysKnownOwnersAsync(ct);
         }
 
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
-        await db.Quality.Where(x => gone.Contains(x.OwnerId)).ExecuteDeleteAsync(ct);
-        await db.MatchedRoutes.Where(x => gone.Contains(x.OwnerId)).ExecuteDeleteAsync(ct);
-        await db.Decisions.Where(x => gone.Contains(x.OwnerId)).ExecuteDeleteAsync(ct);
-        await db.Settings.Where(x => gone.Contains(x.OwnerId)).ExecuteDeleteAsync(ct);
-        await db.Waypoints.Where(x => gone.Contains(x.OwnerId)).ExecuteDeleteAsync(ct);
-        await db.Jobs.Where(x => gone.Contains(x.OwnerId)).ExecuteDeleteAsync(ct);
-        await db.Cursors.Where(x => gone.Contains(x.OwnerId)).ExecuteDeleteAsync(ct);
-        await tx.CommitAsync(ct);
-        _logger.LogInformation("Routes: removed all routes data of {Count} owners no longer served", gone.Count);
+        var gone = known.Except(owners).ToList();
+        foreach (var owner in gone)
+        {
+            using var scope = _scopes.CreateOwnerScope(owner);
+            scope.ServiceProvider.GetRequiredService<OwnerScope>().Require(owner);
+            var db = scope.ServiceProvider.GetRequiredService<RoutesDbContext>();
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
+            await db.Quality.Where(x => x.OwnerId == owner).ExecuteDeleteAsync(ct);
+            await db.MatchedRoutes.Where(x => x.OwnerId == owner).ExecuteDeleteAsync(ct);
+            await db.Decisions.Where(x => x.OwnerId == owner).ExecuteDeleteAsync(ct);
+            await db.Settings.Where(x => x.OwnerId == owner).ExecuteDeleteAsync(ct);
+            await db.Waypoints.Where(x => x.OwnerId == owner).ExecuteDeleteAsync(ct);
+            await db.Jobs.Where(x => x.OwnerId == owner).ExecuteDeleteAsync(ct);
+            await db.Cursors.Where(x => x.OwnerId == owner).ExecuteDeleteAsync(ct);
+            await tx.CommitAsync(ct);
+        }
+
+        if (gone.Count > 0)
+        {
+            _logger.LogInformation("Routes: removed all routes data of {Count} owners no longer served", gone.Count);
+        }
     }
 
-    /// <summary>Finished jobs older than <see cref="JobRetention"/> go, at most once an hour</summary>
-    private async Task PruneJobsAsync(RoutesDbContext db, CancellationToken ct)
+    /// <summary>Finished jobs older than <see cref="JobRetention"/> go, at most once an hour (routes.sys_prune_finished_jobs)</summary>
+    private async Task PruneJobsAsync(CancellationToken ct)
     {
         var now = DateTime.UtcNow;
         if (now - _prunedAt < TimeSpan.FromHours(1))
@@ -704,9 +724,12 @@ public class RoutesScheduler : BackgroundService
 
         _prunedAt = now;
         var before = now - JobRetention;
-        var removed = await db.Jobs
-            .Where(j => (j.State == RouteJobStates.Done || j.State == RouteJobStates.Failed) && j.FinishedAt != null && j.FinishedAt < before)
-            .ExecuteDeleteAsync(ct);
+        int removed;
+        using (var scope = _scopes.CreateUnscopedScope())
+        {
+            removed = await scope.ServiceProvider.GetRequiredService<RoutesDbContext>().SysPruneFinishedJobsAsync(before, ct);
+        }
+
         if (removed > 0)
         {
             _logger.LogInformation("Routes: removed {Count} jobs finished more than {Days} days ago", removed, JobRetention.TotalDays);
@@ -715,21 +738,43 @@ public class RoutesScheduler : BackgroundService
 
     private async Task RecordErrorAsync(string owner, string error, CancellationToken ct)
     {
-        using var scope = _scopes.CreateScope();
+        using var scope = _scopes.CreateOwnerScope(owner);
         var db = scope.ServiceProvider.GetRequiredService<RoutesDbContext>();
         var message = error.Length > 500 ? error[..500] : error;
         await db.Cursors.Where(c => c.OwnerId == owner).ExecuteUpdateAsync(s => s.SetProperty(c => c.LastError, message), ct);
     }
 
+    /// <summary>
+    /// Applies the routes migrations (until the migrate-only init container does, AD-49
+    /// rule 3), or waits until none is pending; the policy migration waits for
+    /// RowLevelSecurity__Policies either way
+    /// </summary>
     private async Task MigrateAsync(CancellationToken ct)
     {
         for (var attempt = 1; ; attempt++)
         {
             try
             {
-                using var scope = _scopes.CreateScope();
-                await scope.ServiceProvider.GetRequiredService<RoutesDbContext>().Database.MigrateAsync(ct);
-                return;
+                using var scope = _scopes.CreateUnscopedScope();
+                var db = scope.ServiceProvider.GetRequiredService<RoutesDbContext>();
+                if (_rls.MigrateOnStartup)
+                {
+                    await EchoMigrator.MigrateAsync(db, ContactsApi.Infrastructure.Routes.Migrations.RoutesRowLevelSecurity.Id, _rls.Policies, _logger, ct);
+                    return;
+                }
+
+                var pending = await EchoMigrator.BlockingPendingAsync(db, ContactsApi.Infrastructure.Routes.Migrations.RoutesRowLevelSecurity.Id, _rls.Policies, ct);
+                if (_migrations != null)
+                {
+                    _migrations.Pending = pending.Count > 0;
+                }
+
+                if (pending.Count == 0)
+                {
+                    return;
+                }
+
+                throw new InvalidOperationException($"{pending.Count} routes migrations wait for the migrate init container");
             }
             catch (Exception ex) when (!ct.IsCancellationRequested)
             {
@@ -749,18 +794,27 @@ public class RoutesScheduler : BackgroundService
         try
         {
             var total = 0;
-            while (!ct.IsCancellationRequested)
+            List<string> owners;
+            using (var scope = _scopes.CreateUnscopedScope())
             {
-                using var scope = _scopes.CreateScope();
-                var runner = scope.ServiceProvider.GetService<MatchRunner>();
-                var filled = runner == null ? 0 : await runner.FillLinesAsync(200, ct);
-                if (filled == 0)
-                {
-                    break;
-                }
+                owners = await scope.ServiceProvider.GetRequiredService<RoutesDbContext>().SysKnownOwnersAsync(ct);
+            }
 
-                total += filled;
-                await _pause.DelayAsync(Pause, ct);
+            foreach (var owner in owners)
+            {
+                while (!ct.IsCancellationRequested)
+                {
+                    using var scope = _scopes.CreateOwnerScope(owner);
+                    var runner = scope.ServiceProvider.GetService<MatchRunner>();
+                    var filled = runner == null ? 0 : await runner.FillLinesAsync(owner, 200, ct);
+                    if (filled == 0)
+                    {
+                        break;
+                    }
+
+                    total += filled;
+                    await _pause.DelayAsync(Pause, ct);
+                }
             }
 
             if (total > 0)

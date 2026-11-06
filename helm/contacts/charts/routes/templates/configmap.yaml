@@ -9,6 +9,10 @@ data:
   {{- range $k, $v := .Values.config }}
   {{ $k }}: {{ $v | quote }}
   {{- end }}
+  # Row-level security (AD-49 rule 8); the service stops migrating once the init container does
+  RowLevelSecurity__Mode: {{ .Values.rowLevelSecurity.mode | quote }}
+  RowLevelSecurity__Policies: {{ .Values.rowLevelSecurity.policies | quote }}
+  RowLevelSecurity__MigrateOnStartup: {{ not .Values.migrations.initContainer | quote }}
   Routes__ValhallaUrl: "http://127.0.0.1:{{ .Values.valhalla.port }}"
   Routes__BackendUrl: "http://{{ .Release.Name }}-backend:{{ .Values.networkPolicy.backendPort }}"
 {{- end }}

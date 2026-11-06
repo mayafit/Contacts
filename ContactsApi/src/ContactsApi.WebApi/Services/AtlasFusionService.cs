@@ -5,6 +5,7 @@
  */
 using System.Collections.Concurrent;
 using ContactsApi.Infrastructure.Atlas;
+using ContactsApi.Infrastructure.Tenancy;
 
 namespace ContactsApi.WebApi.Services;
 
@@ -124,50 +125,61 @@ public class AtlasFusionWorker : BackgroundService
 
     /// <summary>
     /// Best efforts of activities that have none yet (after a release, an import or a
-    /// fusion change), in small batches; new data to fuse goes first
+    /// fusion change), in small batches; new data to fuse goes first. Each kind of work
+    /// asks atlas.sys_owners who has any, then runs one Owner at a time, each batch in
+    /// a fresh scope of that Owner (AD-49 rule 5).
     /// </summary>
     private async Task AnalyzeAsync(CancellationToken ct)
     {
         try
         {
-            // Photos waiting for placement (database only, quick)
-            while (!ct.IsCancellationRequested && !_signal.Pending)
+            // Photos waiting for placement (database only, quick); one transaction per Owner
+            foreach (var owner in await OwnersAsync(SysOwnerKinds.UnplacedPhotos, ct))
             {
-                using var scope = _scopes.CreateScope();
-                if (await scope.ServiceProvider.GetRequiredService<AtlasService>().PlacePendingPhotosAsync(500, ct) == 0)
+                while (!ct.IsCancellationRequested && !_signal.Pending)
                 {
-                    break;
-                }
+                    using var scope = _scopes.CreateOwnerScope(owner);
+                    if (await scope.ServiceProvider.GetRequiredService<AtlasService>().PlacePendingPhotosAsync(owner, 500, ct) == 0)
+                    {
+                        break;
+                    }
 
-                await Task.Delay(TimeSpan.FromMilliseconds(400), ct);
+                    await Task.Delay(TimeSpan.FromMilliseconds(400), ct);
+                }
             }
 
-            Guid? after = null;
-            while (!ct.IsCancellationRequested && !_signal.Pending)
+            foreach (var owner in await OwnersAsync(SysOwnerKinds.Activities, ct))
             {
-                using (var scope = _scopes.CreateScope())
+                Guid? after = null;
+                while (!ct.IsCancellationRequested && !_signal.Pending)
                 {
-                    after = await scope.ServiceProvider.GetRequiredService<AtlasService>().AnalyzePendingEffortsAsync(20, after, ct);
-                }
+                    using (var scope = _scopes.CreateOwnerScope(owner))
+                    {
+                        after = await scope.ServiceProvider.GetRequiredService<AtlasService>().AnalyzePendingEffortsAsync(owner, 20, after, ct);
+                    }
 
-                if (after == null)
-                {
-                    break;
-                }
+                    if (after == null)
+                    {
+                        break;
+                    }
 
-                // Leave the Pi room for the app between batches
-                await Task.Delay(TimeSpan.FromMilliseconds(400), ct);
+                    // Leave the Pi room for the app between batches
+                    await Task.Delay(TimeSpan.FromMilliseconds(400), ct);
+                }
             }
 
             // Then places waiting for an identity (about a second of lookup each)
-            while (!ct.IsCancellationRequested && !_signal.Pending)
+            foreach (var owner in await OwnersAsync(SysOwnerKinds.PlacesToIdentify, ct))
             {
-                using var scope = _scopes.CreateScope();
-                var done = await scope.ServiceProvider.GetRequiredService<AtlasService>()
-                    .IdentifyPendingPlacesAsync(scope.ServiceProvider.GetRequiredService<GeoLookupClient>(), 10, ct);
-                if (done == 0)
+                while (!ct.IsCancellationRequested && !_signal.Pending)
                 {
-                    return;
+                    using var scope = _scopes.CreateOwnerScope(owner);
+                    var done = await scope.ServiceProvider.GetRequiredService<AtlasService>()
+                        .IdentifyPendingPlacesAsync(owner, scope.ServiceProvider.GetRequiredService<GeoLookupClient>(), 10, ct);
+                    if (done == 0)
+                    {
+                        break;
+                    }
                 }
             }
         }
@@ -177,22 +189,23 @@ public class AtlasFusionWorker : BackgroundService
         }
     }
 
+    /// <summary>The Owners with work of a kind (atlas.sys_owners; the discovery is the only unscoped step)</summary>
+    private async Task<List<string>> OwnersAsync(string kind, CancellationToken ct)
+    {
+        using var scope = _scopes.CreateUnscopedScope();
+        return await scope.ServiceProvider.GetRequiredService<AtlasDbContext>().SysOwnersAsync(kind, ct);
+    }
+
     private async Task DrainAsync(CancellationToken ct)
     {
-        List<string> owners;
-        using (var scope = _scopes.CreateScope())
-        {
-            owners = await scope.ServiceProvider.GetRequiredService<AtlasService>().OwnersWithQueuedFusionAsync(ct);
-        }
-
-        foreach (var owner in owners)
+        foreach (var owner in await OwnersAsync(SysOwnerKinds.FusionQueue, ct))
         {
             _board.Started(owner);
             FuseResult? result = null;
             string? error = null;
             try
             {
-                using var scope = _scopes.CreateScope();
+                using var scope = _scopes.CreateOwnerScope(owner);
                 result = await scope.ServiceProvider.GetRequiredService<AtlasService>().ProcessFusionQueueAsync(owner, ct);
             }
             catch (Exception ex) when (!ct.IsCancellationRequested)

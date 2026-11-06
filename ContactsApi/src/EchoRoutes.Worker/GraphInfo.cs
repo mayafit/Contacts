@@ -62,22 +62,36 @@ public class GraphInfoSource
     }
 }
 
-/// <summary>Ready once graph.json is read and Valhalla answers</summary>
+/// <summary>Whether routes migrations wait for the migrate init container (AD-49 rule 3)</summary>
+public class RoutesMigrationState
+{
+    /// <summary>Pending, and this process does not apply them</summary>
+    public volatile bool Pending;
+}
+
+/// <summary>Ready once no migration is pending, graph.json is read and Valhalla answers</summary>
 public class RoutesReadyCheck : IHealthCheck
 {
     private readonly GraphInfoSource _graph;
     private readonly IValhallaClient _valhalla;
+    private readonly RoutesMigrationState? _migrations;
 
     /// <summary>Creates the check</summary>
-    public RoutesReadyCheck(GraphInfoSource graph, IValhallaClient valhalla)
+    public RoutesReadyCheck(GraphInfoSource graph, IValhallaClient valhalla, RoutesMigrationState? migrations = null)
     {
         _graph = graph;
         _valhalla = valhalla;
+        _migrations = migrations;
     }
 
     /// <inheritdoc />
     public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken ct = default)
     {
+        if (_migrations?.Pending == true)
+        {
+            return HealthCheckResult.Unhealthy("routes migrations are pending");
+        }
+
         if (_graph.Current == null)
         {
             return HealthCheckResult.Unhealthy("graph.json not read yet");

@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using ContactsApi.Infrastructure.Routes;
+using ContactsApi.Infrastructure.Tenancy;
 using EchoRoutes.Worker;
 using EchoRoutes.Worker.Assess;
 using EchoRoutes.Worker.Backend;
@@ -178,6 +179,8 @@ public class RoutesWorkerDbTests
 
         var services = new ServiceCollection();
         services.AddLogging();
+        // The owner scope the scheduler opens per Owner; no interceptor here (AD-49 tests are in RowLevelSecurityTests)
+        services.AddOwnerScoping(new RowLevelSecurityOptions { Mode = OwnerRlsMode.Off });
         services.AddDbContext<RoutesDbContext>(o =>
         {
             o.UseNpgsql(cs, n => n.MigrationsHistoryTable(RoutesDbContext.HistoryTable, RoutesDbContext.Schema));

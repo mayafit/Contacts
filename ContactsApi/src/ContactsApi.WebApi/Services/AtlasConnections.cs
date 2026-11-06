@@ -5,6 +5,7 @@
  */
 using System.Threading.Channels;
 using ContactsApi.Infrastructure.Atlas;
+using ContactsApi.Infrastructure.Tenancy;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 
@@ -163,12 +164,11 @@ public class AtlasSyncWorker : BackgroundService
             await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
         }
 
-        using (var scope = _scopes.CreateScope())
+        // Across Owners: only through the definer function, which returns a count (AD-49 rule 5)
+        using (var scope = _scopes.CreateUnscopedScope())
         {
-            var db = scope.ServiceProvider.GetRequiredService<AtlasDbContext>();
-            await db.Connections.Where(c => c.Provider == AtlasConnectionService.SportsTracker && c.Status == "syncing")
-                .ExecuteUpdateAsync(s => s.SetProperty(c => c.Status, "error")
-                    .SetProperty(c => c.LastError, "The sync was interrupted by a restart. Sync again to continue."), stoppingToken);
+            await scope.ServiceProvider.GetRequiredService<AtlasDbContext>()
+                .SysFailInterruptedSyncsAsync(AtlasConnectionService.SportsTracker, stoppingToken);
         }
 
         await foreach (var owner in _queue.ReadAllAsync(stoppingToken))
@@ -186,7 +186,8 @@ public class AtlasSyncWorker : BackgroundService
 
     private async Task SyncSportsTrackerAsync(string owner, CancellationToken ct)
     {
-        using var scope = _scopes.CreateScope();
+        // The queue item's Owner, in a scope of its own (AD-28, AD-49 rule 4)
+        using var scope = _scopes.CreateOwnerScope(owner);
         var sp = scope.ServiceProvider;
         var db = sp.GetRequiredService<AtlasDbContext>();
         var atlas = sp.GetRequiredService<AtlasService>();

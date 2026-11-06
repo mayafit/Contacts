@@ -7,6 +7,7 @@ using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Threading.Channels;
 using ContactsApi.Infrastructure.Atlas;
+using ContactsApi.Infrastructure.Tenancy;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -499,7 +500,7 @@ public class PhotoSyncWorker : BackgroundService
                     continue;
                 }
 
-                using var scope = _scopes.CreateScope();
+                using var scope = _scopes.CreateOwnerScope(owner);
                 await scope.ServiceProvider.GetRequiredService<OneDrivePhotoService>().RunSyncAsync(owner, _logger, stoppingToken);
                 // New photos wait for placement, which the fusion service does
                 _signal.Notify();
@@ -520,11 +521,25 @@ public class PhotoSyncWorker : BackgroundService
     {
         try
         {
-            using var scope = _scopes.CreateScope();
-            var owners = await scope.ServiceProvider.GetRequiredService<AtlasDbContext>().Connections.AsNoTracking()
-                .Where(c => c.Provider == OneDrivePhotoService.Provider && c.SecretProtected != null && c.Status != "expired")
-                .Select(c => c.OwnerId).ToListAsync(ct);
-            owners.ForEach(_queue.Enqueue);
+            // Who has a library: a definer function (AD-49 rule 5); whether it still holds a
+            // key is then read under each Owner's own scope
+            List<string> owners;
+            using (var scope = _scopes.CreateUnscopedScope())
+            {
+                owners = await scope.ServiceProvider.GetRequiredService<AtlasDbContext>()
+                    .SysOwnersWithConnectionAsync(OneDrivePhotoService.Provider, ct);
+            }
+
+            foreach (var owner in owners)
+            {
+                using var scope = _scopes.CreateOwnerScope(owner);
+                if (await scope.ServiceProvider.GetRequiredService<AtlasDbContext>().Connections.AsNoTracking()
+                        .AnyAsync(c => c.OwnerId == owner && c.Provider == OneDrivePhotoService.Provider
+                                       && c.SecretProtected != null && c.Status != "expired", ct))
+                {
+                    _queue.Enqueue(owner);
+                }
+            }
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {

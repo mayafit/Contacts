@@ -79,6 +79,23 @@ resources:
     requests: { cpu: 50m, memory: 32Mi }
     limits: { cpu: 200m, memory: 64Mi }
 
+# Row-level security (AD-49 rule 8): Shadow until the logs are clean, then Enforce;
+# policies on at rollout step 4, after the backend's (RoutesRowLevelSecurity follows
+# AtlasRowLevelSecurity)
+rowLevelSecurity:
+  mode: Shadow
+  policies: false
+
+# The migrate-only init container (AD-49 rule 3). Off until db-roles.sql has run and
+# the migration path holds Routes__MigrationConnectionString (routes_migrator); the
+# contacts-routes Vault role must read that path too. On: the service stops migrating.
+migrations:
+  initContainer: false
+  kvPath: "secret/data/contacts-migrate"
+  resources:
+    requests: { cpu: 50m, memory: 96Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+
 # Non-secret settings (secrets come from Vault, see vault below)
 config:
   ASPNETCORE_ENVIRONMENT: Production
