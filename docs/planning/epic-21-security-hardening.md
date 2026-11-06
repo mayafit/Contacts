@@ -5,8 +5,8 @@
 
 Requirements: PRD NFR-22 to NFR-25, with NFR-01, NFR-05, NFR-07, NFR-08, NFR-16, NFR-17
 and FR-51's first increment (`echo/prd.md` §6, §4.1; the Owner's decisions are Q-15).
-Architecture: AD-49 to AD-55 (`echo/architecture.md` §5J), which amend AD-12, AD-24,
-AD-28 and AD-29.
+Architecture: AD-49 to AD-55 (`echo/architecture.md` §5J), which amend AD-3, AD-10,
+AD-12, AD-18, AD-21, AD-22, AD-23, AD-24, AD-26, AD-27, AD-28, AD-29 and AD-32.
 
 ## Why
 
@@ -95,6 +95,7 @@ through GitOps is done only when the **live object** shows it, not when its PR m
   superuser password moved to Vault `secret/data/contacts-pg-admin`.
 - [ ] The Postgres NetworkPolicy admits 5432 only from the backend, the route service and
   the backup job.
+- [ ] Postgres re-pinned to a current digest of major 18 (AD-54 rule 3).
 - [ ] A CI check fails when rendered values set a non-empty password, secret, token or
   key (AD-51 rule 8).
 
@@ -104,9 +105,10 @@ through GitOps is done only when the **live object** shows it, not when its PR m
   `Echo__AllowedEmails` (Vault) **before anything is stored**; a refused account has its
   grant revoked, nothing stored, and gets `NOT_INVITED` and the "invitation needed" page
   (AD-50 rule 6, AD-29).
-- [ ] The first sign-in binds `sub`; later sign-ins match on it.
-- [ ] Tests: an allowed account signs in; a refused one leaves no Redis or Postgres
-  entry and its grant is revoked.
+- [ ] Matching is on the normalised, verified email only; binding `sub` waits for AD-29's
+  `platform.allowlist` table.
+- [ ] Tests: an allowed account signs in; an account with `email_verified` false is
+  refused; a refused one leaves no Redis or Postgres entry and its grant is revoked.
 - [ ] The allowlist (the Owner and family members) is in Vault; no address is in the
   repository, values or a ConfigMap.
 
@@ -117,15 +119,16 @@ through GitOps is done only when the **live object** shows it, not when its PR m
   deletes its cookie and calls `SignInAsync`; sign-out deletes the ticket (AD-50 rule 4).
 - [ ] Tests: the ticket key changes across the callback; a ticket replayed after sign-out
   is refused; the absolute lifetime of 30 days holds.
-- [ ] Cookies `__Host-ContactsApi.Auth` and `__Host-ContactsApi.Session`.
+- [ ] Cookies `__Host-ContactsApi.Auth` and `__Host-ContactsApi.Session`, `Secure` in
+  every environment; local sign-in still works in Development.
 - [ ] The Google access token is stored only protected (`ContactsApi.Session.GoogleAccessToken.v1`)
   (AD-50 rule 3).
 - [ ] nginx sends HSTS; the CSP has no `unsafe-eval` and no script `unsafe-inline`;
   `img-src` and `connect-src` list only the hosts used; `X-Forwarded-Proto` is set by
   nginx; the built bundle loads under the policy (AD-50 rule 5).
-- [ ] State-changing `/api/**` calls without `X-Echo-Request` or from another site get
-  403 `REQUEST_REJECTED`; `/api/mcp` is exempt; no `GET` changes stored state (AD-50
-  rule 7).
+- [ ] State-changing `/api/**` calls without `X-Echo-Request`, from another site (a
+  sibling subdomain included) or with neither `Sec-Fetch-Site` nor `Origin` get 403
+  `REQUEST_REJECTED`; `/api/mcp` is exempt; no `GET` changes stored state (AD-50 rule 7).
 
 #### 21.9 Logs without codes, emails or coordinates — Wave 1
 
@@ -157,6 +160,9 @@ through GitOps is done only when the **live object** shows it, not when its PR m
   `routes.backendIngressPolicy` on; every pod's probes stay green; the backend reaches
   Google over 443 and cannot reach a home-network address.
 - [ ] The namespace enforces `restricted` and every pod is admitted.
+- [ ] The conformance check of AD-51 rule 8 runs on the rendered manifests in CI: no
+  `:latest`, no `NodePort`, the rule 5 securityContext on every container, a
+  NetworkPolicy selecting every pod, no `allowExternal: true`.
 
 #### 21.12 Frontend image and dependencies — Wave 1
 
@@ -204,7 +210,10 @@ through GitOps is done only when the **live object** shows it, not when its PR m
   and `routes` moved to the migrators; runtime roles DML only, with their timeouts
   (AD-49 rule 2).
 - [ ] `--migrate-only` init containers in the backend and route pods, with
-  `secret/data/contacts-migrate` injected into the init container only (AD-49 rule 3).
+  `secret/data/contacts-migrate` rendered only by the Vault Agent's init container
+  (`agent-configmap`, `agent-init-first: "true"`) and deleted by the migrate container
+  when it finishes; a check in the running main container finds no migrate credential
+  under `/vault/secrets` (AD-49 rule 3).
 - [ ] The catalog test passes against the live database; both pods migrate through their
   init container; the `sys_*` functions are re-owned to the system roles.
 
@@ -230,9 +239,13 @@ through GitOps is done only when the **live object** shows it, not when its PR m
 #### 21.19 Default-deny networks and Pod Security Admission everywhere — Wave 3
 
 - [ ] Default-deny with explicit allows in `vault`, `cloudflared`, `monitoring`,
-  `glutguard`, `headscale`, `logging` and `flux-system` (AD-51 rule 3); cloudflared
-  egress on 7844 and 443 only.
-- [ ] PSA labels per AD-51 rule 4; node-exporter moved to `monitoring-host`; fluent-bit's
+  `monitoring-host`, `glutguard`, `headscale`, `logging`, `flux-system`, `ollama` and
+  `headlamp` (AD-51 rules 1 and 3); cloudflared egress on 7844 and 443 only; API-server
+  clients reach the nodes on 6443; the injector webhook is admitted from the nodes, and
+  a restarted Contacts pod still has its `vault-agent` container.
+- [ ] PSA labels per AD-51 rule 4, `enforce` raised only after `warn` is clean; the
+  third-party workloads in `restricted` namespaces on the rule 5 securityContext; Ollama
+  and Headlamp moved to their own namespaces; node-exporter moved to `monitoring-host`; fluent-bit's
   `/var/log` mount read-only; the subnet router in userspace mode.
 - [ ] A probe pod in another namespace cannot reach Contacts' Postgres, Redis or the
   backend.
@@ -240,7 +253,8 @@ through GitOps is done only when the **live object** shows it, not when its PR m
 #### 21.20 Backups automated — Wave 3
 
 - [ ] The `contactsdb` CronJob as `contacts_backup`: `pg_dump -Fc`, `age`, rclone to
-  Drive with `drive.file`, 14 daily and 8 weekly (AD-55 rule 2, AD-24).
+  Drive with `drive.file`, 14 daily and 8 weekly (AD-55 rule 2, AD-24); its Vault Agent
+  is pre-populate-only, so the Job completes.
 - [ ] The same for GlutenGuardian's database, Vault and the k3s datastore (with its
   `cred` and `tls` directories); Headscale's copy moved off-node.
 - [ ] A restore of each into a scratch target succeeds and is recorded.
@@ -252,7 +266,8 @@ through GitOps is done only when the **live object** shows it, not when its PR m
 - [ ] An audit device to stdout, shipped to Seq.
 - [ ] `audience` on the Kubernetes roles; the `openclaw` role and policy deleted; the
   backend template renders only the keys it uses.
-- [ ] Upgraded to a supported release, its storage moved to Raft (AD-54 rule 3).
+- [ ] Upgraded to a supported release, its storage moved to Raft (AD-52 rule 6, AD-54
+  rule 3).
 
 #### 21.22 Secrets encrypted, fewer readers — Wave 3
 
@@ -292,6 +307,8 @@ through GitOps is done only when the **live object** shows it, not when its PR m
 - [ ] Renovate on both repositories (AD-54 rule 9).
 - [ ] Platform minors: cloudflared, Traefik, Headscale 0.29.x, Flux 2.10, vault-k8s 1.7.x
   (AD-54 rule 10).
+- [ ] Scheduled majors of AD-54 rule 3: kube-prometheus-stack to a current chart (its
+  Grafana provisioning checked first), k3s one minor at a time to a supported line.
 
 #### 21.25 Security monitoring — Wave 3
 
@@ -342,6 +359,6 @@ through GitOps is done only when the **live object** shows it, not when its PR m
 
 #### 21.30 Google OAuth app — Wave 4
 
-- [ ] The OAuth app stays in Testing with explicit test users until 21.7 is live, then
-  moves to Production, unverified (AD-26).
+- [ ] The OAuth app stays in Testing with explicit test users until 21.7 is live and the
+  FR-50 legal pages exist, then moves to Production, unverified (AD-26).
 - [ ] The family members' addresses are on the allowlist in Vault.
