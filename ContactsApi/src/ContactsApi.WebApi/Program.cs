@@ -267,13 +267,16 @@ app.UseMiddleware<ExceptionHandlingMiddleware>();
 // Request logging middleware (should be early in pipeline)
 app.UseMiddleware<RequestLoggingMiddleware>();
 
-// Enable Swagger in all environments (can restrict to dev later)
-app.UseSwagger();
-app.UseSwaggerUI(c =>
+// Swagger only in Development (AD-50 rule 10)
+if (app.Environment.IsDevelopment())
 {
-    c.SwaggerEndpoint("/swagger/v1/swagger.json", "Contacts API V1");
-    c.RoutePrefix = string.Empty; // Serve Swagger UI at root
-});
+    app.UseSwagger();
+    app.UseSwaggerUI(c =>
+    {
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Contacts API V1");
+        c.RoutePrefix = string.Empty; // Serve Swagger UI at root
+    });
+}
 
 // HTTPS redirection (disabled for development - will be handled by reverse proxy)
 // app.UseHttpsRedirection();
