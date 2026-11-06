@@ -157,7 +157,10 @@ public static class EchoDataProtection
             builder.UnprotectKeysWithAnyCertificate(certificates.All.ToArray());
         }
 
-        services.AddHostedService<KeyRingGuard>();
+        // The guard starts before every other hosted service: a worker touching Data Protection
+        // first would otherwise make the key manager create a new (unwrapped) key next to the
+        // wrapped ones it cannot read
+        services.Insert(0, ServiceDescriptor.Singleton<IHostedService, KeyRingGuard>());
         KeyRingRotation.Register(services, configuration);
         return services;
     }
