@@ -126,33 +126,21 @@ build is a values change.
   DNS (`kube-dns`, 53 UDP and TCP) and, when `vault.enabled`, Vault
   (`vault.namespace`, port 8200). The Vault agent sidecar runs in the pod, so the
   policy must let it reach Vault. Ingress is from the backend only.
-- **The backend pod** gets a policy only when `backendIngressPolicy.enabled` is
-  true (default **off**). Once on, it admits the frontend's nginx, the routes pod
-  and the peers in `backendIngressPolicy.extraBackendIngressFrom`, and **cuts every
-  other peer off**. nginx proxies only `/api/`, so `/internal/**` is never reachable
-  through the frontend either way; the routes token is accepted only on
-  `/internal/routes/*`. Before switching it on, list the live peers and add each one
-  that is not the frontend:
-
-  ```sh
-  # Who reaches the backend today? Its Service, the Ingress / IngressRoutes, the tunnel, scrapes
-  kubectl -n <ns> get svc <release>-backend -o wide
-  kubectl get ingress,ingressroute -A | grep -i <release>
-  kubectl get pods -A -l app.kubernetes.io/name=cloudflared     # an in-cluster Cloudflare tunnel
-  kubectl get servicemonitor,podmonitor -A 2>/dev/null | grep -i <release>
-  ```
-
-  Typical peers: the ingress controller (Traefik in `kube-system`) if any route
-  targets the backend directly, an in-cluster `cloudflared` if its config points at
-  the backend, and the metrics scraper (Prometheus). For example:
+- **The backend pod** admits the frontend's nginx, the routes pod and the
+  peers in `backendIngressPolicy.extraBackendIngressFrom` (default **on** since
+  AD-51 rule 2; the backend chart's own policy admits the same peers, and the
+  namespace is default-deny, so every other peer is cut off). nginx proxies only
+  `/api/`, so `/internal/**` is never reachable through the frontend either way; the
+  routes token is accepted only on `/internal/routes/*`. The live peers were checked
+  on 2026-11-06: the Cloudflare tunnel reaches only the frontend, no Traefik route
+  and no metrics scrape targets the backend. A new peer goes into
+  `extraBackendIngressFrom` (and the backend chart's `networkPolicy.extraIngressFrom`),
+  for example:
 
   ```yaml
   routes:
     backendIngressPolicy:
-      enabled: true
       extraBackendIngressFrom:
-        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
-          podSelector: { matchLabels: { app.kubernetes.io/name: traefik } }
         - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } }
   ```
 
@@ -193,7 +181,7 @@ database and engine through port-forwards and prints aggregates only.
 | --- | --- |
 | Switch on | `routes.enabled: true` (this pod) **and** `backend.routes.enabled: true` (the backend sets `Routes__ServiceUrl`; that also turns on the backend's matched-route reads, `RouteGeometryOptions.Enabled`), with `routes.vault.enabled: true` and `routes.image.tag: <short sha>` |
 | Vault | `secret/data/contacts-routes`: `Routes__ServiceToken`, `Routes__BackendToken`, `Routes__ConnectionString`, read only by role `contacts-routes`; the two tokens also in `secret/data/contacts` for the backend, equal in both; see step 2 |
-| Backend ingress policy | Off (`routes.backendIngressPolicy.enabled: false`); list the live peers first (Network policies) |
+| Backend ingress policy | On (`routes.backendIngressPolicy.enabled: true`, AD-51 rule 2); the namespace is default-deny (Network policies) |
 | DB roles | `echo_routes` owns schema `routes`; the backend role (`contactsapi`) needs `USAGE` on `routes`, `SELECT` on its tables, and `INSERT, UPDATE, DELETE` on `route_decisions` and `settings` (step 1). Without the grants the map silently draws the recorded lines and decisions answer 503 `ROUTES_UNAVAILABLE` |
 | Tiles image | `tiles.tag` = `il-20261029-r2@sha256:791011ad…` (step 3); it carries the engine's `valhalla.json` |
 | Spike results | Story 12.1 (round 2, 2026-10-29): median 0.134 s, p95 0.73 s per drive, about 1.0 h for 15,420 drives, about 366 MiB anonymous RSS with one thread; details in AD-32 and AD-36 and the epic's story 12.1; `scripts/routes/accuracy-check.py` reproduces the accuracy figures |

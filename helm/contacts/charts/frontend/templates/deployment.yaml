@@ -20,10 +20,10 @@ spec:
       imagePullSecrets:
         - name: {{ .Values.image.pullSecret }}
       {{- end }}
+      serviceAccountName: {{ include "frontend.fullname" . }}
+      automountServiceAccountToken: false
       securityContext:
-        runAsUser: 101
-        runAsGroup: 101
-        fsGroup: 101
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
         - name: frontend
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -51,8 +51,7 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           securityContext:
-            readOnlyRootFilesystem: true
-            allowPrivilegeEscalation: false
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           volumeMounts:
             - name: nginx-config
               mountPath: /etc/nginx/nginx.conf

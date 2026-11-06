@@ -14,5 +14,6 @@ data:
     {{`{{ with .Data.data.Gemini__ApiKey }}export Gemini__ApiKey="{{ . }}"{{ end }}`}}
     {{`{{ with .Data.data.Routes__ServiceToken }}export Routes__ServiceToken="{{ . }}"{{ end }}`}}
     {{`{{ with .Data.data.Routes__BackendToken }}export Routes__BackendToken="{{ . }}"{{ end }}`}}
+    {{`{{ with .Data.data.Redis__Password }}`}}export Redis__ConnectionString="{{ include "backend.redisHost" . }},password={{`{{ . }}`}}"{{`{{ end }}`}}
     {{`{{ end }}`}}
 {{- end }}
