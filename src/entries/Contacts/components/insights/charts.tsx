@@ -10,6 +10,7 @@ import React from 'react';
 import { Box, ButtonBase, Tooltip, Typography } from '@mui/material';
 import { ChevronRight } from '@mui/icons-material';
 import { tokens } from '../../theme/contactsTheme';
+import { fs } from '../../settings/uiSettings';
 
 /** A bar */
 export interface BarDatum {
@@ -110,7 +111,11 @@ export const BarList: React.FC<{
             >
               {valueText}
             </Typography>
-            {d.onClick ? <ChevronRight sx={{ fontSize: 18, color: tokens.textMuted }} /> : <span />}
+            {d.onClick ? (
+              <ChevronRight sx={{ fontSize: fs.chart(18), color: tokens.textMuted }} />
+            ) : (
+              <span />
+            )}
           </Box>
         );
         const tip = `${d.label}: ${fmt.format(d.value)}${total ? ` of ${fmt.format(total)} (${percent(d.value, total)})` : ''}${d.actionHint ? ` — ${d.actionHint}` : ''}`;

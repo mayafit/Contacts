@@ -342,26 +342,56 @@ export const formatBirthday = (contact: Contact): string => {
   return clean(b.text);
 };
 
+/** Direction, zero-width and soft-hyphen marks: invisible, but they split a word */
+const INVISIBLE = /[\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/g;
+
 /**
- * Lowercased text a search query is matched against.
+ * Text as the search compares it: lower case, without vowel points (niqqud) or
+ * accents, without invisible marks, Hebrew geresh and gershayim as ' and ".
+ * Applied to both the contacts' text and the query.
+ * @param text - Text
+ * @returns Folded text
+ */
+export const foldForSearch = (text: string): string =>
+  text
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '')
+    .replace(INVISIBLE, '')
+    .replace(/[\u05F3\u2018\u2019`]/g, "'")
+    .replace(/[\u05F4\u201C\u201D]/g, '"')
+    .toLowerCase();
+
+/**
+ * Folded text a search query is matched against: every name part of every
+ * name, nicknames, emails, organizations and phones.
  * @param contact - Contact
  * @returns Searchable text
  */
 export const searchTextOf = (contact: Contact): string => {
-  const n = getName(contact);
-  return [
-    getDisplayName(contact),
-    n?.givenName,
-    n?.familyName,
-    getPhoneticName(contact),
-    ...(contact.nicknames ?? []).map((x) => x.value),
-    ...(contact.emailAddresses ?? []).map((x) => x.value),
-    ...(contact.organizations ?? []).flatMap((x) => [x.name, x.title]),
-    ...(contact.phoneNumbers ?? []).map((x) => x.value),
-  ]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase();
+  const names = (contact.names ?? []).flatMap((n) => [
+    n.displayName,
+    n.givenName,
+    n.middleName,
+    n.familyName,
+    n.phoneticGivenName,
+    n.phoneticMiddleName,
+    n.phoneticFamilyName,
+  ]);
+  return foldForSearch(
+    [
+      getDisplayName(contact),
+      ...names,
+      getPhoneticName(contact),
+      ...(contact.nicknames ?? []).map((x) => x.value),
+      ...(contact.emailAddresses ?? []).map((x) => x.value),
+      ...(contact.organizations ?? []).flatMap((x) => [x.name, x.title]),
+      ...(contact.phoneNumbers ?? []).map((x) => x.value),
+    ]
+      .filter(Boolean)
+      // The display name is also in the name entry
+      .filter((part, i, all) => all.indexOf(part) === i)
+      .join(' '),
+  );
 };
 
 /**
@@ -377,7 +407,7 @@ export const matchesQuery = (
   query: string,
   text = searchTextOf(contact),
 ): boolean => {
-  const q = clean(query).toLowerCase();
+  const q = clean(foldForSearch(query));
   if (!q) {
     return true;
   }

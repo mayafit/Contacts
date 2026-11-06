@@ -2,7 +2,7 @@
 title: Echo
 status: draft-for-owner-review
 created: 2026-10-28
-updated: 2026-10-28
+updated: 2026-11-04
 ---
 
 # PRD: Echo
@@ -23,8 +23,8 @@ Echo is not greenfield. Two Areas already run in production at https://contacts.
 
 The rest of this document works as follows:
 - The Glossary (§3) fixes the vocabulary.
-- Features (§4) nest globally numbered requirements, FR-01 to FR-67. FR-51 to FR-54 were added after the Owner's answers of 2026-10-28, so they sit in the section they belong to, not in id order. FR-55 to FR-60 (route quality, §4.12) follow them. FR-61 (roads travelled), FR-62 (rebuild from similar drives) and FR-63 (mark the way) were added to §4.12 on 2026-10-29. FR-64 to FR-67 (place reviews, §4.13) were added on 2026-10-30.
-- Cross-cutting quality requirements are NFR-01 to NFR-21 (§6).
+- Features (§4) nest globally numbered requirements, FR-01 to FR-76. FR-51 to FR-54 were added after the Owner's answers of 2026-10-28, so they sit in the section they belong to, not in id order. FR-55 to FR-60 (route quality, §4.12) follow them. FR-61 (roads travelled), FR-62 (rebuild from similar drives) and FR-63 (mark the way) were added to §4.12 on 2026-10-29. FR-64 to FR-67 (place reviews, §4.13), FR-68 to FR-71 (settings and appearance, §4.14) and FR-72 to FR-76 (flights, §4.15) were added on 2026-10-30.
+- Cross-cutting quality requirements are NFR-01 to NFR-25 (§6). NFR-22 to NFR-25 (security hardening) were added on 2026-11-04, after the Owner's security decisions (Q-15), and NFR-01, NFR-05, NFR-07, NFR-08, NFR-16 and NFR-17 were updated with them.
 - Inferences are tagged `[ASSUMPTION]` and indexed in §13.
 - Technical "how" (mechanisms, storage, pipelines, remediation steps, and implementation details of Built behaviour such as error codes, scope names and thresholds) is in [prd-addendum.md](prd-addendum.md) for the architect.
 - The as-built inventories are the record of Built behaviour. The epics hold the original intent and detail, but in places they disagree with the code (NFR-06), so where they conflict, the as-built inventories win.
@@ -224,6 +224,7 @@ Only Google accounts on the allowlist can sign in. The admin (the first Owner) c
 - Removing a user blocks their next sign-in and ends their sessions and tokens. The admin can then run that user's erase (FR-49) without seeing the data.
 - The allowlist has a configurable maximum (default 10, A-10). Because Google counts every user an unverified app has ever had, toward a lifetime cap of 100 (§2.2), the admin page shows that count too.
 - The admin role cannot be granted from the UI. The first admin is set in the deployment configuration.
+- *First increment (decided 2026-11-04, Q-15):* the allowlist, the Owner and family members, is held in the deployment configuration in the secrets store (Vault), never in the repository, and checked at sign-in before anything is stored. Changing it is a configuration change by the operator until the admin page exists. Until the check is live, the Google app stays in Testing mode with explicit test users.
 
 #### FR-04: Hebrew interface — Planned (Epic 9 §5)
 The Owner can switch the interface to Hebrew with right-to-left layout.
@@ -278,7 +279,7 @@ With Tier T1, Echo learns from Gmail headers and the Calendar when the Owner was
 #### FR-12: Last in touch — Built
 After opting into T1, the Owner sees for every Contact:
 - the last email sent and received, and the last and next meeting;
-- most in touch, gone quiet and never in touch;
+- most in touch, gone quiet and none found (no email or meeting in the scan);
 - people the Owner emails who are not Contacts.
 
 They can mark their Own Addresses, which are excluded from counts and used to tell sent mail from received mail.
@@ -766,6 +767,222 @@ Importing a Takeout by hand every time is a chore. The Owner can instead schedul
 - **Renewal.** Google ends a Takeout schedule after a year (6 exports); the tab reminds the Owner when no new export has arrived for 70 days.
 - **Privacy.** The zip is downloaded to the backend's temporary disk only for as long as the reviews file is read, then deleted. Nothing leaves Echo; only Google's Drive API is called, with the Owner's own permission.
 
+### 4.14 Settings and Appearance (Proposed)
+
+The Owner finds some of Echo's text too small, the points on the map too small to grab, and the pointer too small to follow. Enlarging everything would only move the problem. Instead, a **Settings** page lets the Owner set each kind of thing on its own: the size of each kind of text, the size of each kind of symbol on the map and how far from it a click still takes it, the pointer, the colour of each kind of thing, and the style of each kind of route. Every change shows at once, everywhere, so the Owner sees the result before moving on, and every setting can be put back to its default.
+
+- **Per Owner, on every device.** Settings are kept with the Owner's account, so another browser or the phone shows the same Echo. The browser also remembers the last settings, so Echo opens with them without a flash of the defaults; settings made in a browser before the account had any become the account's.
+- **Defaults are today's Echo.** Nothing changes until the Owner changes it.
+- **Bounded.** Every number has a sensible range (text from 8 to 28 px by kind, map symbols up to between 2.4 and 5 times their default), so a slip cannot make Echo unusable; **Reset** puts a section, or everything, back.
+
+#### FR-68: The Settings page — Proposed
+- A **Settings** entry (a gear) at the bottom of the navigation rail opens `/settings`. It is not an Area: Echo never opens on it by itself.
+- Sections: **Text**, **Pointer**, **Map symbols**, **Colours**, **Routes**, **Charts**, and **Other settings** (where the other settings live: buttons that open Atlas's fusion settings and its imports and connected sources, and a link to the Google Account's third-party connections for Google permissions).
+- Each control shows its value and its default; a section's **Reset** puts the section back, and **Reset everything** all of them. Changes apply at once and are saved by themselves; a line says when they were saved, or that saving failed.
+- Each section has a small **preview**: sample text at each size, Echo's pointers, map symbols on a dark map background (with the grab distance as a ring), route lines of each type and piece, chart lines and the zones.
+- Changes made in a browser are never lost: if saving fails, or the page is closed before saving, the browser keeps them and saves them the next time Echo opens.
+
+#### FR-69: Text sizes — Proposed
+The Owner sets, in pixels:
+- **Body text** (default 15): most text, lists, panels, buttons; secondary body text follows it, half a pixel smaller.
+- **Small text** (default 13): captions, labels, chips, notes, table headers.
+- **Headings** (default 100%): titles and section headings, as a percentage of their default sizes (25, 21, 18, 16 px).
+- **Charts** (default 11): axes and labels of charts and the timeline.
+- **Map labels** (default 11): numbers on marked points, the area label, the map's attribution and controls.
+- **Navigation** (default 11.5): the labels of the navigation rail.
+
+Every text in Echo belongs to one of these kinds, including the texts sized outside the theme, so no text is left behind.
+
+#### FR-70: Map symbols, grabbing and the pointer — Proposed
+- **Symbol sizes**, in pixels: visits (radius 5) and the selected visit (8), photo points (4), photo pins (34), the recorded points of the selected route (2), the hover marker on the selected route (7), airports (3.5), and marked points (20).
+- **Grab distance** (default 0 px, up to 20): how far beyond a point or line a click or hover still takes it. A larger distance makes small points easy to grab without making them look larger.
+- **Pointer** (default: the system's): Echo's own pointer, drawn at 24, 32 or 48 px, for the arrow, the hand over things that can be clicked, the hand that grabs and drags the map, the crosshair of marking and drawing, and the text cursor. Browsers draw pointers of up to 128 px; where a browser or system limits them, it falls back to its own.
+
+#### FR-71: Colours and route styles — Proposed
+- **Colours** of each activity type (ride, hike, run, walk, drive, transit, flight, ski, swim, other), visits, photos, heart rate and health, the area filter, the inferred pieces of a route, gaps, marked points, and the selected route's highlight. The density map, the legend, the lists, the charts and the panels use the same colours.
+- **Route styles**, for each activity type: line width, opacity, and pattern (solid, dashed, dotted). Also: the width of the selected route, the opacity of the others while one is selected, and the width and pattern of each piece of a road-matched route: observed, inferred (dashed by default) and gap (dotted by default).
+- **Charts**: the colours of speed, elevation and cadence, and of the five heart-rate zones. Heart rate has one colour everywhere (the chart, the Insights trend, the map's hover marker): the heart rate and health colour.
+
+### 4.15 Atlas: Flights (Proposed)
+
+Echo knows when the Owner flew (the Timeline records a flight as an activity, about 100 of them since 2014 in the first Owner's data), but not which flight it was: the line on the map runs from the phone's last point before take-off to its first point after landing, and the times are the phone's guesses. The Owner wants each flight to be a real flight: its flight number, the airline, the aircraft, the airports, the scheduled and the actual times, and the route it really flew.
+
+- **Who knows the flight number.** The Owner's mail does: booking confirmations, schedule changes and boarding passes name each flight (number, airports, date, local times). The Owner can also type it. Public flight data alone cannot tell which of several flights it was: on 27 Aug 2026 two Etihad flights left Abu Dhabi for Tel Aviv within 20 minutes of the recorded take-off (checked 2026-10-30), and Bangkok to Chiang Mai had three airlines within the hour.
+- **Who knows what happened.** Public ADS-B data (aircraft transmit their position, collected by volunteers' receivers) does: when the aircraft actually took off and landed, which aircraft it was, and, for recent flights, the path it flew. Echo uses **The OpenSky Network** for flights and tracks, and **adsbdb** for airline names and aircraft. Both are free; OpenSky needs an account, which the operator holds.
+- **Per Owner**, like the rest of Atlas (§2.2, NFR-07). A flight's details are Owner data derived from their activity and their mail; they are deleted with the activity and erased with the Owner (FR-49).
+
+#### FR-72: Which flight it was — Proposed
+Each flight activity can carry a **flight number** (airline code and number, as on the ticket: "EY593", "LY 315") and its **date**. It comes from, in order of precedence:
+1. **The Owner**, who types it (FR-74) or confirms a suggestion (FR-75); it always wins, and is kept across imports and searches;
+2. **The Owner's mail** (FR-73), found automatically;
+3. nothing: Echo then **suggests** the public flights that fit the recorded flight, for the Owner to confirm, and never sets one by itself.
+
+- **Airports.** Echo finds the departure and arrival airports from the flight's first and last recorded points: the airports with scheduled flights within **50 km**, nearest first (up to 3 each). A flight with no such airport at one end says so. A "flight" that starts and ends at the same airport, less than 100 km apart, is marked **probably not a flight** (the Timeline sometimes calls a fast drive a flight); the Owner can still type a flight number.
+- **When.** Echo looks for every flight by itself, the newest first, within the hour after the flight is imported, and again when the Owner types a number, clears it, confirms a suggestion, or asks **Search again** (what the Owner asked for goes first). A search that failed for a passing reason (a service busy or unreachable) is tried again the next hour, up to 5 times. A flight that landed less than 36 hours ago is looked up again every hour until then: public flight data is published the day after.
+- **Fused flights.** A flight recorded by two sources is one flight (FR-40); its details follow the fused activity.
+
+#### FR-73: Find the flight in my mail — Proposed
+With **email content** allowed (tier T2, §5.1), Echo searches the Owner's Gmail for the mails about each flight and takes the flight number from them.
+- **Which mails.** Mails that name both airports by their codes (as bookings, changes and boarding passes do, "TLV", "AUH"), received from a year before the flight to two days after it; the newest 20.
+- **What counts.** In a mail, a flight number counts for this flight when, after it, the mail names the departure airport, then the arrival airport, and a date that is the flight's day (or the day before, in the departure airport's time); and, when a time is given beside it, that time, in the departure airport's time zone, is between 4 hours before and 2 hours after the recorded take-off. Mails that describe their flights in the schema.org format airlines use for Gmail (`FlightReservation`) are read from that first.
+- **Which one.** Of the numbers that count, the one whose scheduled time is nearest the recorded take-off; between equals, the newest mail's (a schedule change replaces the booking).
+- **What is kept.** The flight number, the scheduled departure (and arrival, when the mail gives it), and which mail it came from: its subject, sender and date, and a link that opens it in Gmail. **Mail bodies are never stored**; they are read in memory and dropped. Nothing from the mail leaves Echo.
+- **Not allowed.** Without email content allowed, the flight panel says the mail was not searched and offers **Allow reading email content**, the same permission as the signatures of Contacts (T2). Once allowed, the flights that were not searched in mail are searched.
+
+#### FR-74: Type the flight number — Proposed
+In the flight's panel, the Owner can type the flight number. Its day is the flight's recorded day (in the departure airport's time): the flight is the activity, whose day is known.
+- Accepted as written on a ticket or a board: an airline's two-character code and a number ("EY593", "EY 593", "ey0593"), or its three-letter code ("ETD593"). Echo stores it in the two-character form, without leading zeros.
+- Echo looks it up at once and shows the result within a minute; the panel waits for it.
+- **Clear** removes the Owner's number; Echo then looks for the flight again by itself (mail, then suggestions).
+
+#### FR-75: The flight's actual details — Proposed
+For a flight with a number, Echo finds the actual flight in public data and shows:
+- **Airline**: its name and codes; **Operated by**, when another airline flew it (a codeshare: the mail says "EY7629", the aircraft flew as Bangkok Airways);
+- **Airports**: departure and arrival, with code, name and city;
+- **Times**, each in its airport's local time: **scheduled** departure and arrival (from the mail; not shown when the number was typed and no mail names it), **actual take-off and landing** (from ADS-B: when receivers first and last saw the aircraft near the airports, within a few minutes of the real take-off and landing), the **delay** against the schedule, and the **time in the air**;
+- **Aircraft**: type and registration (for example "Airbus A321neo · A6-AEA"), and the call sign it flew under;
+- **Distance**: great-circle distance between the airports.
+- **How it is matched.** The aircraft that left the departure airport around the scheduled time (or the recorded take-off) under the flight's call sign; or, when airlines fly under a call sign that is not the flight number (Etihad's EY593 flew as `ETD5SM`), the only flight that left that airport for the arrival airport within the scheduled window. When public data has no such flight (coverage is thinner before 2018 and at some airports), the panel shows what the mail said and says that no public record matched.
+- **Suggestions.** A flight without a number shows the public flights that fit it (left the airport near the recorded take-off and landed at the arrival airport near the recorded landing), at most 3, best first, each with its airline, call sign and times, and **This one**. Confirming one makes it the flight (FR-72). The choice names the flight itself (its aircraft and take-off), so a list that changed meanwhile never confirms another flight.
+- **Sources.** The panel names the sources ("Flight data: The OpenSky Network · Airlines and aircraft: adsbdb · Airports: OurAirports, mwgg/Airports") and when they were read.
+
+#### FR-76: The route it flew — Proposed
+- **The flown path.** For a flight that landed within the last **30 days** when Echo looks it up, Echo keeps the path the aircraft flew (OpenSky keeps tracks for 30 days only), with its altitude, and the map draws the flight along it.
+- **Otherwise** the map draws the great-circle arc between the actual departure and arrival airports (no longer between the phone's last and first points), and the panel says the flown path is not available for older flights.
+- The Owner's own recorded points stay as they are; the path is the aircraft's, drawn in the flight's style.
+
+### 4.16 Contacts: Auto-fill in the Contact Card (Proposed)
+
+Most of the Owner's Contacts are written in Hebrew. Their phonetic names (the Latin spelling Google and the phone use to sort them and for voice) and their email addresses are often empty, although Echo can usually find both: the Owner's other Contacts already spell most Hebrew names, an English version of the same person is often on file, and the person's mail is in the Owner's mailbox. FR-14 already proposes emails for many Contacts at once, from the activity scan; these requirements bring both fills into the contact card, for the one Contact the Owner is editing, at a click.
+
+- **Only the draft.** Both fills change the card's draft, never Google. The Owner sees the value, can change it, and saves it with **Save** as any edit (FR-05). Closing the card without saving drops it.
+- **The card and the merge dialog.** The contact card's form is also the merge dialog's (FR-10), so the fills are there too.
+- **The table.** In the contacts table (FR-05, inline editing), the **Phonetic name** and **Email** cells offer the same fills: when the Owner clicks such a cell to edit it and its text box is empty, the symbol is inside the text box. The value found goes into the text box; **Enter** (or leaving the cell) saves it as typing would, **Escape** drops it. The phonetic cell holds the whole phonetic name, so it is offered only when the whole phonetic name is empty, and filled only when every Hebrew part can be spelled. The email cell, when the match is not certain, lists the addresses to pick from; when nothing is found, it says why (and offers the permission when that is why).
+
+#### FR-77: Fill the phonetic name from the Hebrew name — Proposed
+An empty phonetic field (first, middle or last) whose name part is written in Hebrew shows an **auto-fill** symbol inside it. Clicking it fills **every empty phonetic part** whose name part is in Hebrew, in Latin letters, and says where each spelling came from.
+
+- **A translation service, asked for a name.** The Owner chose a translation service over an AI model for the words their Contacts do not spell (2026-10-30): it answers in a fraction of a second and spends no model tokens. A translation service translates meaning, and many Hebrew names are words: Google Translate gives "dawn dew" for טל שחר and "cousin" for בן-דוד. Sent as a sentence that says it is a name ("שמי טל שחר", "My name is …"), it gives "Tal Shahar", "Ben-David", "Matan Shalom", "Avi Bar Lev" (checked 2026-10-30 on 10 such names, all right). So Echo sends the Contact's whole name in that sentence, and takes the spellings from the answer only when it has one word for each word of the name.
+- **Where the spelling comes from**, in order:
+  1. **The same person in English.** Another of the Owner's Contacts with the same phone number or email address whose name is written in Latin letters (a Hebrew/English twin, FR-10): its name part is the phonetic part ("from Dana Cohen, same phone"). When several such Contacts disagree on a part, none of them is used for it.
+  2. **How the Owner's Contacts spell the name.** For each Hebrew word, the Latin spelling the Owner's other Contacts most often carry for it in the same position (the phonetic first name of each Contact named "יוסי" says how the Owner spells יוסי: "Yossi"). It follows the Owner's own conventions ("Cohen", not "Kohen") and needs no service.
+  3. **Google Translate**, for the words neither of the above spells: the Contact's name (its first, middle and last name, nothing else of the Contact) is sent framed as "My name is …" (§5.2). The panel says "spelled by Google Translate; check the spelling".
+  4. **Gemini**, only for the words Google Translate did not spell (its answer did not line up with the name, or it is not configured): only those Hebrew words are sent. The panel says "suggested by Gemini; check the spelling".
+- **A part is filled whole or not at all.** When one word of a part cannot be spelled (neither service configured, the limit reached, or no answer), that part stays empty and the card says which word could not be spelled. A part is never half Hebrew.
+- **When.** Only when the Owner clicks: Echo never fills a phonetic name by itself, and nothing is sent to Google Translate or Gemini without that click.
+
+#### FR-78: Find the email in my mail — Proposed
+An email field that is empty shows a **find in mail** symbol inside it; a Contact with no email at all shows **Find in mail** beside **Add email**. Clicking it looks for the person's address in the Owner's mail, by their name.
+
+- **Which names.** The Contact's names as in the draft (so a phonetic name just filled counts): the full name, first and last name, the phonetic name, and each nickname with the last name. A name needs at least two words (a first name alone matches too many people); without one the symbol says "Needs a first and last name".
+- **Where it looks**, both at once:
+  1. **The activity scan's names** (tier T1, FR-12): the addresses whose display names in mail headers and meeting invitations match a name, as FR-14 does.
+  2. **The mailbox** (tier T2, §5.1): a Gmail search for mails **from** the person by each name, the newest 25, of which Echo reads only the sender (name and address), never the subject or the body. A sender counts when its name or address matches one of the Contact's names (Gmail's search also finds partial names).
+- **The Owner's own addresses** are never proposed.
+- **What the Owner sees.** At most 3 addresses, best first: the exact name before a partial one, then the most mail. Each says how it was found: "as “Dana Cohen” · 12 mails · last 3 weeks ago". An address already on another Contact says "already on Dana Levi" and is listed last. When the only address found is an exact match on no other Contact, it is filled at once; otherwise the Owner picks one (or none). The type is **Home** for a personal mail service (Gmail, Outlook, Walla and the like) and **Work** otherwise.
+- **Without T2** only the activity scan's names are checked, and when nothing is found the card offers **Allow reading email content** (the T2 opt-in; it leaves the page, so the card says so). Without T1 either, only the mailbox search would run, so the symbol asks for that permission.
+- **Nothing is stored**: the senders are read in memory for the click and dropped.
+
+### 4.17 Contacts: Favourites (Proposed)
+
+The Owner keeps a short list of the people who matter most, the same list their phone's contacts app and Google Contacts show as **favourites** (Google calls it **Starred**). Echo shows it, edits it and keeps it in step with Google; it adds what Google lacks: finding favourites quickly, noticing when one has gone quiet, and suggesting people who behave like favourites.
+
+- **No AI.** Favourites, segments (§4.18) and profiles (§4.19) use rules, counts and exact matches only; nothing is sent to Gemini or any other language model (the Owner's decision, 2026-10-31).
+
+#### FR-79: Mark favourites, in step with Google — Proposed
+- **One list.** A Contact is a favourite exactly when it is in Google's **Starred** group. Echo keeps no list of its own: starring in Echo stars in Google (and so on the Owner's phones), and starring in Google or on a phone shows in Echo.
+- **Where.** A star on each row of the table and of the phone list, in the contact card's header, and, for the selected rows, **Add to favourites** / **Remove from favourites**. One click (or tap) toggles it; the star changes at once and goes back, with a message, if Google refuses.
+- **From Google.** Echo checks Google's favourites a minute after it opens, every 5 minutes while it is in view, and when the Owner comes back to it after a minute or more away; a change made elsewhere shows within that time without reloading. The same check updates every other label (FR-82).
+
+#### FR-80: Find favourites — Proposed
+- A **Favourites** filter chip (with its count), and favourites as a segment rule (FR-83).
+- The Assistant's contact search can be limited to favourites.
+
+#### FR-81: Keep favourites close — Proposed
+With touchpoints (tier T1), Insights shows a **Favourites** card:
+- **Gone quiet**: favourites whose last email or meeting is overdue against their usual rhythm (FR-13's rule), or more than 6 months ago, or never; each opens the contact.
+- **Suggested favourites**: people who are not favourites but are in the Owner's **inner circle** or are **regular** contacts (FR-84's relationship tiers), most in touch first, at most 10, each with **Add**.
+- The count of favourites and how many are in touch in the last 3 months.
+
+### 4.18 Contacts: Groups and Segments (Proposed)
+
+The Owner wants to divide their Contacts into groups. Echo offers three layers, from what syncs everywhere to what Echo computes:
+
+#### FR-82: Labels, managed — Proposed
+Google's labels (contact groups) are the groups the Owner's phones and Google Contacts know. Echo already shows them and filters by one; now the Owner can also:
+- **create, rename and delete** labels (deleting a label never deletes its Contacts; the confirmation says how many it holds);
+- **add and remove** Contacts: in the contact card (the label chips become editable: add with a search box, remove with the chip's ×), and for the selected rows (**Label…**: add to a label, a new one, or remove from one);
+- see labels change when they change in Google (FR-79's check).
+
+#### FR-83: Smart segments — Proposed
+A **segment** is a saved rule: "favourites at Elta", "Hebrew names without a phonetic name", "people I have not written to in a year". Its members are computed from the Contacts each time, so they stay current.
+- **Rules** combine (all or any of) conditions on: a label (in, not in); favourite; organization (is, contains); email domain; phone country (by calling code: Israel, the USA, the UK…); name script (Hebrew, English, mixed); a field present or missing (phone, email, phonetic name, birthday, address, organization, photo, website); birthday month; last in touch (within, more than N days ago, never) and relationship tier (FR-84), these two with T1; and free text (as the search box).
+- **Use.** A **Segments** menu beside the label filter lists them with their counts; choosing one filters the table. Each can be edited, duplicated or deleted. The live count shows while editing.
+- **Into Google.** A segment can be **linked to a label**: Echo then shows when the label and the segment differ ("+3 to add, 1 to remove") and **Update label** makes them the same. Echo never changes the label by itself (P-2: the Owner sees every write).
+- **Per Owner**, stored in Echo (not in Google, which has no rules), and never shared.
+
+#### FR-84: Suggested segments — Proposed
+Insights proposes segments found in the Contacts by grouping, each with its count, **Save as segment** and **Create label**:
+- **Organization**: Contacts whose organization names are the same once case, punctuation and company suffixes ("Ltd", "Inc.", "בע"מ") are set aside; 3 or more.
+- **Email domain**: Contacts sharing a work email domain (not a personal mail service); 3 or more.
+- **Phone country**: Contacts by their numbers' country; 3 or more, other than the Owner's main country, which is everyone.
+- **Relationship tier** (T1), from the last 12 months of emails and meetings (an email counts 1, a meeting 3): **Inner circle** (24 or more, and in touch in the last 30 days), **Regular** (6 or more, in the last 90 days), **Occasional** (in touch in the last year), **Over a year ago** (the last touch is just over a year old, possible only between full scans), **None found** (no email or meeting in what the activity scanned: the last 12 months, less when a very large mailbox reaches the scan's 10,000-message limit; older mail is not read, so the app does not say "never").
+- **Name script**: Hebrew, English, mixed (for clean-up).
+
+### 4.19 Contacts: Public Profiles and the Dossier (Proposed)
+
+Tools like Nimble show, for each person, their social profiles and everything the user shares with them. Echo does it from **public, keyed sources and exact matches**, never by guessing who someone is from a name: a profile is linked to a Contact only through something that identifies the person (a link on the Contact, their email address, their own mail signature).
+
+#### FR-85: Profiles on file — Proposed
+The links already on a Contact (its websites) are recognised by site and shown as profiles: LinkedIn, Facebook, Instagram, X, GitHub, TikTok, YouTube, Telegram, Medium, and websites. A phone number that can receive WhatsApp shows as a WhatsApp link.
+
+#### FR-86: Public profiles by email — Proposed
+**Gravatar** is a public profile service people fill in themselves; looked up by an email address's hash (not the address), it returns the person's public profile: name, job title, company, location, a short bio, and the accounts they verified (X, LinkedIn, GitHub, Instagram…).
+- **Off until the Owner starts it** (P-6: it widens what leaves Echo). **Find public profiles** in Insights turns it on, after saying what is sent (a SHA-256 hash of each Contact's email address) and to whom.
+- **Automatic.** Once on, Echo looks up every Contact email address in the background, about 100 an hour (Gravatar's limit without a key; 1,000 with one), and again after 30 days; new Contacts and addresses are looked up as they appear. A progress line says how many are checked and how many profiles were found.
+- **Turn off and forget** stops it and deletes what was found.
+
+#### FR-87: Links in their signatures — Proposed
+With email content (tier T2), the dossier can read the last 3 emails a Contact sent and take the profile and website links from **their own signature** (the end of their text, not quoted mail), by pattern, not by AI. Nothing of the mail is kept.
+
+#### FR-88: Into the Contact — Proposed
+A profile found (FR-86, FR-87) and not on the Contact is offered with **Add to contact**: it becomes one of the Contact's websites in Google, typed by its site ("LinkedIn"), and so reaches the Owner's phones. Insights lists the Contacts with profiles to add; the Owner ticks the links and adds them together. Echo never adds one by itself.
+
+#### FR-89: The dossier — Proposed
+The contact card opens with a **Dossier**, everything Echo knows about the person in one place:
+- **Profiles**: on the Contact, from Gravatar, from their signatures, each with its source and, when new, **Add to contact**.
+- **About**: Gravatar's job title, company, location and bio (labelled as such), and the Contact's own organization and title.
+- **Relationship** (T1): the tier, the last email and meeting, the next meeting, the emails and meetings of the last 12 months, the usual rhythm, threads awaiting a reply.
+- **Shared context**: favourite, its labels and segments, **colleagues** (other Contacts with the same organization or work email domain, at most 8, each opening their card), and its relations.
+
+### 4.20 Contacts: Scan Period and a Contact's Whole History (Proposed)
+
+On 2026-10-31 the Owner found a Contact they wrote to in 2015–2016 labelled "Never in touch": the activity reads only the last 12 months. They asked to set the scan period in Settings, and to search one Contact's history from their card without a time limit.
+
+#### FR-90: Scan period — Proposed
+**Settings → Email and calendar** sets how far back the activity scan (FR-12) reads Gmail and Calendar: **1 year** (the default), **2**, **3** or **5 years**. A change is saved at once and starts a full scan when Gmail or Calendar is connected. A longer period takes longer: the first scan and the weekly full scan read every message of the period (about 40 messages a second, at most 10,000 per year of the period). The figures "in the last 12 months", the score and the tiers stay 12 months; the last email, the last meeting and "Over a year ago" reach back the whole period, and "None found" means nothing in it. The period is a setting: **Forget** removes the activity, not the period.
+
+#### FR-91: A Contact's whole history — Proposed
+The dossier's **Relationship** offers **Search all history**: Echo searches the Owner's whole mailbox and calendar, with no date limit, for that Contact's addresses, and shows:
+- **emails from them**: how many, the first and the last date;
+- **emails to them** (the Owner's sent mail to, cc or bcc them): how many, the first and the last date;
+- **meetings** with them: how many, the first and the last, and the next one;
+- when it was checked, with **Search again**.
+
+The mail search needs email content (T2), because Gmail searches only with that permission; without it the history shows meetings only, and says so. Only counts and dates are kept, encrypted, until the activity is forgotten. Nothing of a message is read but its date.
+
+### 4.21 Contacts: Suggestions from Other Contacts (Proposed)
+
+On 2026-10-31 the Owner pointed at Google Contacts' **Other contacts**: the people Gmail saves by itself when the Owner writes to someone who is not in their Contacts (a name, addresses, sometimes a phone). They asked to use it to complete their Contacts, and agreed that it should be suggestions they accept, not an automatic merge.
+
+#### FR-92: Suggestions from Other contacts — Proposed
+With the Owner's opt-in (read-only access to Other contacts, asked once by a new sign-in), Insights → **Other contacts** → **Review suggestions** lists, for the Owner to accept or dismiss one by one:
+- **an email for a Contact who has none**, and **another address** for a Contact who has one, when an Other contact is the same person;
+- **a phone number** that Contact lacks, from the same match;
+- **people worth saving**: Other contacts who match no Contact and whom the Owner wrote to or met within the scan period (FR-90), most in touch first; accepting creates a Contact with their name, addresses and phone.
+
+Each suggestion says why it matched: an address already on the Contact, the same phone number, the same name in any order ("Abergel Edna" is Edna Abergel), or an address that spells the name. A name shared by more than one Contact suggests nothing, and the list says how many were left out for that reason. Automated senders (no-reply, notifications, relay addresses with long numbers, booking and social-network relays) are never suggested. A dismissed suggestion does not come back unless it changes; **Show dismissed** brings them all back. Nothing is written to Other contacts, and nothing of it is kept but the dismissed suggestions.
+
 ## 5. Privacy Model
 
 Privacy is a product pillar, not a compliance appendix. The requirements in §4.10 and NFR-07, NFR-08 and NFR-11 implement it.
@@ -774,9 +991,9 @@ Privacy is a product pillar, not a compliance appendix. The requirements in §4.
 
 | Tier | What Echo reads | Default | Status |
 |---|---|---|---|
-| **T0: Base** | Google Contacts (read/write); the Owner's profile (and, from Phase 0, their email address, checked against the allowlist, FR-51) | On at sign-in | Built |
-| **T1: Touchpoints** | Gmail headers (From/To/Cc/date), Calendar events (time, attendees, title) | Off | Built |
-| **T2: Email content** | The permission (`gmail.readonly`, which replaces the T1 Gmail permission) allows reading the whole mailbox. Echo reads only the last 3 emails from each Contact the Owner chooses (up to 10), processes them in memory and never stores them. | Off | Built |
+| **T0: Base** | Google Contacts (read/write); the Owner's profile (and, from Phase 0, their email address, checked against the allowlist, FR-51); with a separate opt-in, Other contacts (read only: names, addresses, phones), read when the Owner opens the suggestions (FR-92) and not kept | On at sign-in (Other contacts: off) | Built (Other contacts: Proposed) |
+| **T1: Touchpoints** | Gmail headers (From/To/Cc/date), Calendar events (time, attendees, title), over the scan period the Owner sets (1 year by default, up to 5, FR-90); for a Contact's whole history (FR-91), their meetings at any date | Off | Built (the period and the history: Proposed) |
+| **T2: Email content** | The permission (`gmail.readonly`, which replaces the T1 Gmail permission) allows reading the whole mailbox. Echo reads only the last 3 emails from each Contact the Owner chooses (up to 10), and, for each flight in Atlas, the newest 20 mails that name both its airports (FR-73). When the Owner asks to find a Contact's email (FR-78), it reads the sender (name and address) of the newest 25 mails Gmail finds from that Contact's names, and nothing else of them. When the Owner asks a Contact's dossier for the links in their signatures (FR-87), it reads that Contact's last 3 emails and keeps only the links. When the Owner asks a Contact's whole history (FR-91), it searches all mail from and to that Contact's addresses and reads only the number of messages and the date of the first and the last; it keeps those counts and dates. It processes them in memory and never stores them; of a flight's mails it keeps only the flight number, the scheduled times and which mail (subject, sender, date). | Off | Built (flights, find email: Proposed) |
 | **T3: Life sources** | Each Atlas source connected or imported separately (Timeline, Sports Tracker, health exports, OneDrive photo metadata) | Off per source | Built |
 | **T4: Faces** | Face detections and templates computed from Photos | Off; separate biometric consent | Proposed |
 
@@ -791,7 +1008,7 @@ Privacy is a product pillar, not a compliance appendix. The requirements in §4.
 | Third party | Receives | When | Owner control |
 |---|---|---|---|
 | **Google (People, Gmail, Calendar)** | API calls for each Owner's own data, with that Owner's own grant | T0–T2 | Revoke tier; Google account permissions |
-| **Google Gemini** | Assistant messages, the records the Assistant looks up (contacts and activities; with Connect, only the matched results and citations that Echo computed, which name people with places and times, per FR-31 and Q-5), web search queries, and T2 email text for extraction | Only when the Owner uses the Assistant or enrichment; Connect results only while the Owner's switch is on (default on) | Do not use the Assistant; disclosure in the panel; switch "Let Gemini word answers about people and places" (FR-31, FR-47) |
+| **Google Gemini** | Assistant messages, the records the Assistant looks up (contacts and activities; with Connect, only the matched results and citations that Echo computed, which name people with places and times, per FR-31 and Q-5), web search queries, T2 email text for extraction, and, when the Owner clicks to fill a phonetic name (FR-77), the Hebrew words of that Contact's name that neither the Owner's own Contacts nor Google Translate spell (nothing else of the Contact) | Only when the Owner uses the Assistant, enrichment or the phonetic fill; Connect results only while the Owner's switch is on (default on) | Do not use the Assistant; disclosure in the panel; switch "Let Gemini word answers about people and places" (FR-31, FR-47) |
 | **OpenStreetMap services** (Nominatim, Photon, Overpass) | Coordinates, including automatic background lookups of frequent Places (never home or work stays) | Manual Identify; background identification | Turn off background lookup (Proposed, FR-47) |
 | **OpenStreetMap Nominatim** (address lookup, Proposed) | Free text: the location text of calendar events (FR-34) and the postal addresses of Contacts (FR-36). Each text is sent once and the answer is cached. | Only while the address lookup switch is on; event locations also need T1 | Address lookup switch (FR-47); **off by default** |
 | **Map tile servers** (OpenFreeMap, OSM, Esri) | Viewed map areas | When the map is shown | none (inherent) |
@@ -799,6 +1016,10 @@ Privacy is a product pillar, not a compliance appendix. The requirements in §4.
 | **Google Drive** (backups, Proposed; Q-8) | Nightly system-level backups of Echo's database, holding **every user's data**, encrypted before upload with a key held in Vault and never in Drive (NFR-05). They go to the operator's Drive, through a scope that reaches only the files the backup job creates. Google sees file names, sizes and times, not content. Face data is never in a backup. | Daily, once backups are set up (Phase 0) | Operator only (system level); an Owner's erase (FR-49) reaches backups when they expire |
 | **Sports Tracker** (unofficial API) | Login once; workout listing and downloads, on a schedule (FR-52) | T3 Sports Tracker | Disconnect |
 | **Cloudflare** | All traffic (tunnel, Access) | Always | none (hosting choice) |
+| **Google Cloud Translation** (Proposed, FR-77) | A Contact's name (first, middle and last name), in the sentence "שמי …" ("My name is …"), when the Owner clicks to fill its phonetic name and the Owner's own Contacts do not spell every word of it. The request carries the operator's API key, not the Owner's identity. | Only on that click, at most 30 a minute per Owner | Do not click the fill; the operator can remove the key (the fill then uses Gemini for those words) |
+| **Gravatar** (Automattic; Proposed, FR-86) | The SHA-256 hash of each Contact email address (not the address), from Echo's server, without the Owner's identity (the operator's key, if any). Gravatar learns that someone asked about that hash. | Only after the Owner turns on **Find public profiles**; then in the background, each address once per 30 days | Turn off and forget (deletes what was found) |
+| **The OpenSky Network** (Proposed, FR-75, FR-76) | Airport codes and time windows ("flights that left LLBG between 07:00 and 13:00 UTC on 27 Aug 2026") and, for a recent flight, an aircraft's address and a time. No Owner identity is sent: the requests carry the operator's OpenSky account, not the Owner's. Together they reveal that someone using Echo was interested in that flight. | Once per flight looked up | Do not open flights; the operator can remove the OpenSky credentials (FR-72 then shows mail and typed numbers only) |
+| **adsbdb** (Proposed, FR-75) | Airline codes ("EY"), call signs ("ETD5SM") and aircraft addresses, without a key and without any Owner identity | Once per flight looked up (airlines cached) | as above |
 | **Geofabrik** (OpenStreetMap extracts, Proposed, FR-56, FR-60) | **Nothing about any Owner.** CI downloads the latest public map extract (Israel and Palestine, and later any region the operator adds; Geofabrik updates them daily) once a month to build the routing graph. The request comes from GitHub Actions, not from the cluster, and carries no user data. It is listed for completeness: road matching itself runs on Echo's cluster and sends nothing out (NFR-20). | Monthly, from CI | Operator only: remove a region from the build list |
 
 **Never shared:** face data (T4), stored tokens and secrets, or an Owner's whole data set in bulk to any party, apart from the encrypted backups above. Route tracks are never sent to a hosted routing or map-matching API (NFR-20). **No Owner's data is ever shared with another Owner.**
@@ -818,14 +1039,14 @@ Privacy is a product pillar, not a compliance appendix. The requirements in §4.
 
 | ID | Requirement | Measure / done when | Status |
 |---|---|---|---|
-| **NFR-01** | **No secrets in the repository.** | No credential, token or real password is in any tracked file; the currently committed values (a Vault dev token in `appsettings.json`, a default Postgres password in `values.yaml`) are rotated; a secret scan runs on every PR and blocks on a finding. | Proposed |
+| **NFR-01** | **No secrets in the repository.** | No credential, token or real password is in any tracked file, including chart defaults; the currently committed values (a Vault dev token in `appsettings.json`, a default Postgres password in `values.yaml`, which is also the live production password) are rotated, and so is every credential found exposed elsewhere (the deployment repository's history, the operator's plaintext credentials file); a secret scan runs on every PR and blocks on a finding. | Proposed (security programme, 2026-11) |
 | **NFR-02** | **Automated build and test.** | Every PR runs backend and frontend tests; a merge to the trunk produces arm64 images tagged by commit, with no hand build; the time from merge to running in the cluster is ≤ 30 min with at most one human approval. | Planned (Epic 9 §6) |
 | **NFR-03** | **Sign-in does not decay.** | No Owner's Google grant is forced to expire on a 7-day cycle; after Phase 0 an Owner re-consents only when they change tiers or revoke access. Done by publishing the Google app to Production, unverified (Q-3), within the limits stated in §2.2: the unverified warning and at most 100 users in the app's lifetime. | Planned (Epic 9 §6) |
 | **NFR-04** | **Durable Owner state.** | Opt-ins, refresh tokens, the Activity Snapshot, own addresses, dismissals, Person Links and Encounters survive a restart or loss of the cache; losing the cache costs at most a sign-in. | Planned (Epic 9 §6) |
-| **NFR-05** | **Backup and restore.** | All Echo-held data (every user's) is backed up daily by the operator, as a system-level job, to the operator's **Google Drive** (Q-8), which shares no node or disk with the cluster. Each backup is encrypted before upload with a key held in Vault and never stored in Drive. Recovery point ≤ 24 h; a restore is tested at least once per phase; losing one node does not lose data. Face data is never backed up (FR-43). | Proposed |
+| **NFR-05** | **Backup and restore.** | All Echo-held data (every user's) is backed up daily by the operator, as a system-level job, to the operator's **Google Drive** (Q-8), which shares no node or disk with the cluster. Each backup is encrypted before upload with a key held in Vault and never stored in Drive. Recovery point ≤ 24 h; a restore is tested at least once per phase; losing one node does not lose data. Face data is never backed up (FR-43). The secrets store and the cluster state a restore needs (Vault, the cluster datastore) are backed up the same way, never beside the data they unlock. | Proposed. An interim manual off-node backup of the database was taken on 2026-11-04, before any security change; the automated job is not built (security programme, Q-15) |
 | **NFR-06** | **Docs match reality.** | Deployment, project-context and index documents describe the as-built system. Epic documents that disagree with the code are corrected or marked superseded by the as-built inventories. Examples: Epic 11's tolerances and table names; and Epic 7's claim that sign-in uses `include_granted_scopes`, which is false and stays false (the code asks for exact scopes on purpose, see addendum §A2), so that claim is marked superseded. Stale documents are fixed in Phase 0, and each later phase updates them in the same PR as the change. | Proposed |
-| **NFR-07** | **Owner isolation (hard gate).** | Every stored record, cache entry, queue item, file, MCP token and Assistant tool result is scoped to one Owner, and every query and MCP call is filtered by it. Automated per-user isolation tests, with at least two Owners, prove for every module, REST route, MCP tool, worker and cache that one Owner's session or token can neither read nor change another Owner's data, and that the admin role reads no Owner's data. **Hard gate:** the tests run on every PR and block the merge on a failure, and no user other than the first Owner is added to the allowlist until they pass. | Built for scoping; Proposed for isolation tests and the gate (Phase 0) |
-| **NFR-08** | **Encryption at rest for sensitive data.** | Tokens, source secrets, the Activity Snapshot, own addresses and (T4) face templates are encrypted at rest; the key material is not stored with the data it protects. | Partial. Encryption of tokens and the Activity Snapshot is Built. Keeping the key ring apart from the data is Proposed for Phase 0, because today the key ring sits in the same Redis. Faces and Connect data are Proposed. |
+| **NFR-07** | **Owner isolation (hard gate).** | Every stored record, cache entry, queue item, file, MCP token and Assistant tool result is scoped to one Owner, and every query and MCP call is filtered by it. Automated per-user isolation tests, with at least two Owners, prove for every module, REST route, MCP tool, worker and cache that one Owner's session or token can neither read nor change another Owner's data, and that the admin role reads no Owner's data. **Hard gate:** the tests run on every PR and block the merge on a failure, and no user other than the first Owner is added to the allowlist until they pass. From 2026-11-04 the database enforces the same isolation (NFR-22), and the tests also run against a real database with that protection on. | Built for scoping; Proposed for isolation tests and the gate (Phase 0) |
+| **NFR-08** | **Encryption at rest for sensitive data.** | Tokens, source secrets, the Activity Snapshot, own addresses and (T4) face templates are encrypted at rest; the key material is not stored with the data it protects, or is itself encrypted with a key held elsewhere; a copy of the cache alone yields no usable token or key; the cluster's own secrets are encrypted at rest. | Partial. Encryption of tokens and the Activity Snapshot is Built. Today the key ring sits unencrypted in the same Redis; wrapping it with a certificate held in Vault, and retiring the keys that sat in clear, is in the security programme (2026-11); moving it to Postgres stays in Phase 0. Faces and Connect data are Proposed. |
 | **NFR-09** | **Responsive at personal scale on the Pi.** | With the first Owner's real volume (157k Photos, years of tracks) and the expected handful of users (A-10), the map, timeline, contact card Encounters and a Unified Timeline day each load at p95 ≤ 2 s; background work (fusion, photo placement, face clustering), for any Owner, never pushes interactive p95 above that. `[ASSUMPTION A-6: 2 s is achievable and adequate on the Pi at this scale.]` | Proposed |
 | **NFR-10** | **Graceful degradation.** | Done when these tests pass and are re-run each phase: **(a) Database down** (Postgres stopped, cache up, backend restarted while it is down): the Owner can sign in, list, search and edit Contacts. While the database is down, Echo may ask the Owner to sign in again when Google's short-lived access expires (about hourly), and that sign-in works. Atlas, Touchpoints, Connect, the Timeline and the Privacy Center each show a "temporarily unavailable" message within 5 s, and the Owner is not signed out. **(b) Third party down** (each of Gemini, OpenStreetMap, Microsoft Graph and Sports Tracker blocked in turn): only the features that use that party show an error that names it, and a smoke test of every other Area passes. **(c) Power cut** (both nodes power-cycled): every Echo service is Ready within 15 min of Vault being unsealed, with no other manual step. **(d) Database down and cache emptied at the same time:** Echo is down and says so, and it recovers with no data loss once the database returns. | Built in part (Contacts does not use the database today); Proposed for the rest: (a), (c) and (d) in Phase 0, (b) in Phase 1 |
 | **NFR-11** | **Third-party etiquette and cost caps.** | OSM usage policies are respected (Nominatim ≤ 1 req/s **across all users together**, with an identifying User-Agent; answers cached); Gemini and geocoder use each stay within **per-Owner** daily caps and a global daily cap (NFR-18); the cross-domain Assistant does not raise the per-question token cost by more than 2× compared with today. | Built for OSM and Gemini caps; Proposed for per-Owner geocoder caps and the budget |
@@ -833,12 +1054,16 @@ Privacy is a product pillar, not a compliance appendix. The requirements in §4.
 | **NFR-13** | **Bilingual correctness.** | Search, sort, matching (names, Person Links, suggested emails) and Assistant answers handle Hebrew, English and mixed script; a Hebrew/English twin of one person is treated as one Person. Done when an automated suite with at least these cases passes: (1) "דנה כהן" and "Dana Cohen" with the same phone are one duplicate group, and, unmerged, one Person; (2) searching "דנה", "dana" or the phonetic name finds the same Contact; (3) a list of Hebrew and Latin names sorts Hebrew by Hebrew collation and Latin by Latin collation, with each in its own A–Z / א–ת section; (4) a mail display name in one script proposes a Contact whose name is in the other (suggested emails, attendee Person Links); (5) the same when/where/with-whom question in Hebrew and in English cites the same records. | Built for Contacts; Proposed for Connect |
 | **NFR-14** | **Observability of background work.** | The Owner can see the state of every background job (activity scan, source sync, fusion, photo placement, place identification, face clustering): queued, running, last success, last error. Logs are structured. A usage view shows scans, Assistant calls and their cost. | Built in part; usage view Planned (Epic 9 §6); Proposed for Connect and faces |
 | **NFR-15** | **Accessibility.** | Core views (contact table, card, Atlas panels, Unified Timeline, Privacy Center) are usable by keyboard and pass automated axe checks with no serious violations. | Built in part (jest-axe in Contacts); Proposed for new views |
-| **NFR-16** | **Security of external access.** | Personal Access Tokens are hashed, revocable and scoped (FR-32); remote MCP access requires Cloudflare Access (A-9); OAuth flows are protected with a state parameter; every REST route except sign-in, health and the legal pages requires authentication, enforced in one place rather than per route. | Built for Atlas; Proposed for central enforcement (Phase 0) and token scopes (Phase 1) |
-| **NFR-17** | **Supported runtimes only.** | Every runtime and framework Echo runs on (the .NET runtime, the Node.js build toolchain, the database server) is within its vendor's support window, and a move to a supported version is planned at least one month before support ends. Today the backend's runtime leaves support on 2026-11-10, so the move is part of Phase 0. | Proposed (Phase 0) |
+| **NFR-16** | **Security of external access.** | Personal Access Tokens are hashed, revocable and scoped (FR-32), expire (default 90 days, at most a year) and are read-only unless created to make changes; remote MCP access requires Cloudflare Access (A-9), and no path reaches Echo without it (the origin checks the Access token; there is no route from the home network or the tailnet); OAuth flows are protected with a state parameter; signing in issues a new session and signing out destroys it on the server; session cookies are host-only (`__Host-`), HTTPS is enforced (HSTS) and the content security policy forbids `eval`; a state-changing request from another site, sibling subdomains included, is refused; request logs hold no OAuth codes, emails or coordinates; every REST route except sign-in, health and the legal pages requires authentication, enforced in one place rather than per route. | Built for Atlas (hashing, revocation, OAuth state); Proposed: session, cookie, header, request-forgery and logging hardening, token expiry and the origin check (security programme, 2026-11), central enforcement (Phase 0), token scopes (Phase 1) |
+| **NFR-17** | **Supported runtimes only.** | Every runtime, framework and base image Echo runs on (the .NET runtime, the Node.js build toolchain, the web server image and its operating system, the database server, the secrets store) is within its vendor's support window, and a move to a supported version is planned at least one month before support ends. The backend's runtime leaves support on 2026-11-10, so it moves before that date, ahead of the rest of Phase 0; the frontend is built with Node.js 24 on a supported web server image. | Partial (2026-11-04): the backend and route service run on .NET 10 LTS (supported to 2028-11-14) and the frontend is built with Node.js 24 on nginx 1.30 stable (Alpine 3.24), in force once the new images are deployed; the secrets store (Vault 1.18) is still to move. |
 | **NFR-18** | **Per-user fairness and capacity on the Pi.** | Each Owner has their own caps on Gemini calls and on geocoder lookups (OpenStreetMap), per minute and per day, which survive a restart; one Owner reaching a cap never blocks another. Background work (scans, syncs, fusion, derivation, face clustering) is shared **round-robin** across Owners, so no Owner's backlog (for example a first photo pass) starves another's: with one Owner's large backlog queued, another Owner's new import starts within 5 min. Echo is sized for a handful of users (A-10); the allowlist maximum (FR-51) enforces it, and the admin page shows each Owner's usage. | Proposed (Phase 0 for caps and the allowlist maximum; Phase 1 for worker fairness) |
 | **NFR-19** | **Google verification before opening up.** | Before Echo admits anyone beyond an invited circle, or approaches Google's 100-user lifetime cap for unverified apps, the Google app passes OAuth verification (brand, privacy pages, demo video) and the Gmail restricted scopes pass a CASA security assessment, renewed yearly. Until then, Echo stays invite-only (FR-51). | Planned (Epic 9 §6); a gate, not in a phase |
 | **NFR-20** | **Route matching stays home.** | Assessment and road matching (FR-55 to FR-60) run only on Echo's own cluster. No track, point or Activity id is sent to a hosted routing, map-matching or roads API. The route-quality pod can reach only the backend, Postgres and cluster DNS (enforced by a network policy on the pod), and the routing engine's configuration makes no outbound calls and fetches no map tiles. Map data reaches the cluster only as a published image built in CI. A test that runs a match with egress blocked passes. | Proposed (Phase R1) |
 | **NFR-21** | **Route quality fits the Pi.** | The route-quality service and its routing engine together stay within their declared CPU and memory limits (AD-36). The backfill of the first Owner's about 25,000 Activities completes within 24 h. While it runs, interactive p95 stays within NFR-09. A single "Fix this route" completes within 60 s, even during a backfill. Route work is shared round-robin across Owners, as NFR-18 requires of all background work: with one Owner's backfill running, another Owner's new import is assessed within 5 min. | Proposed (Phase R1) |
+| **NFR-22** | **Database-enforced tenant isolation.** | Besides the application's own filter, the database itself refuses to show or change one Owner's rows in work done for another, and shows nothing when no Owner is set. Done when: every table that holds Owner data has forced row-level security on the Owner, and a catalog test fails the build for any table without it other than a listed set of system tables; the application's database accounts own no tables and cannot turn the protection off; work with no Owner set is refused by the application with an error, never answered as empty, so no clean-up job can delete data because it saw nothing; work that spans Owners (finding which Owners have queued work) goes only through narrow database functions that return ids or counts; the NFR-07 two-Owner tests also pass against a real database with the protection on, covering every raw query and every background job that deletes; the system backup still holds every Owner's data. | Proposed (security programme, wave 2; decided 2026-11-04, Q-15) |
+| **NFR-23** | **Platform hardening.** | One compromised pod, one device on the home network or the tailnet, or one stolen file does not reach every user's data. Done when: **(a) network:** every namespace denies traffic by default; the database is reachable only from the backend, the route service and the backup job, and the cache only from the backend, with a password; workloads reach the internet only on HTTPS and never the home network (a probe from another namespace fails to connect to either store); **(b) pods:** every Echo container runs as non-root with a read-only filesystem, no added privileges and a memory limit, and namespaces enforce Pod Security Admission (`restricted` for Echo's); **(c) secrets:** no credential is a chart default; every exposed credential is rotated and the operator's credentials live in a password manager; cluster secrets are encrypted at rest; the secrets store runs over TLS with an audit log, no standing root token and unseal shares held offline; **(d) exposure:** no service is published on a node port or over plain HTTP; every public hostname except the VPN coordinator requires Cloudflare Access, checked at the origin; remote cluster administration requires the Owner's personal login and tokens valid for at most 24 h, and no account outside a declared list holds cluster-admin; **(e) nodes:** no pending security update older than 7 days, SSH by key only with no root login and no X11 forwarding, desktop services off. | Proposed (security programme, waves 1, 3 and 4; node hardening in progress 2026-11-04) |
+| **NFR-24** | **Supply-chain hygiene.** | Dependencies are patched within a window and every deployed artifact is pinned and checked. Done when: a reachable Critical or High vulnerability with a fix is fixed, or its acceptance recorded with the reason, within 7 days, and others within 30 days; CI blocks a PR that adds a High or Critical vulnerability to the shipped frontend dependencies or a vulnerable NuGet package; images are deployed by an immutable tag or digest, never `latest`; every base and third-party image is pinned by digest; release images carry an SBOM and provenance, are scanned with no fixable Critical finding and are signed; automated update PRs are opened for every ecosystem (npm, NuGet, images, charts); the trunk of the public repository accepts changes only by reviewed PR; the GitOps controller applies Echo with an account limited to Echo's namespace. | Proposed (security programme, waves 1 and 3) |
+| **NFR-25** | **Security monitoring.** | The operator learns of a security-relevant event within an hour and can reconstruct who did what. Done when: the cluster API's audit log, the secrets store's audit log and the database's role and schema-change log are kept for at least 30 days in the central log store; an alert reaches the operator by email within 15 min for each of: a new cluster-admin binding, the secrets store sealed or a root token generated, a backup older than 26 h, GitOps not converging for 30 min, repeated sign-ins by accounts not on the allowlist, and a request refused for lack of an Owner (NFR-22); each alert is fired once by a test event per phase; the Cloudflare Access logs are reviewed monthly. | Proposed (security programme, wave 3) |
 
 ## 7. Non-Goals
 
@@ -857,7 +1082,8 @@ Privacy is a product pillar, not a compliance appendix. The requirements in §4.
 
 | Phase | Theme | Contents | Exit criterion |
 |---|---|---|---|
-| **0: Realign** | Hygiene before growth, and ready for invited users | NFR-01 to NFR-06 (NFR-03 by Production, unverified; NFR-05 to Google Drive), NFR-07 isolation tests as a hard gate, NFR-08 key separation, NFR-10 tests (a), (c) and (d), NFR-16 central authentication, NFR-17 supported runtime, NFR-18 per-Owner caps and allowlist maximum; FR-03 Echo branding; FR-50 legal pages; FR-51 invite-only sign-up; FR-53 Samsung Health time alignment | No secrets in the repo; CI builds and deploys; no weekly re-consent; Contacts state is durable; encrypted backups to Google Drive are tested; docs are true; the backend runs on a supported runtime; NFR-10 (a), (c), (d) pass; the isolation gate passes and a second user can be invited (UJ-7); Samsung Health median start-time difference vs matched GPS sources < 60 s |
+| **0-Sec: Security hardening** (now, ahead of the rest of Phase 0; Epic 21; decided 2026-11-04, Q-15) | Close the platform holes before anything else lands | NFR-22 to NFR-25; from Phase 0: NFR-01 (rotation and chart defaults), NFR-08 (key ring wrapped), NFR-16 (sessions, cookies, headers, token expiry, origin check), NFR-17 (.NET 10 before 2026-11-10, Node.js 24 build), FR-51's first increment (allowlist from configuration), and the backups of NFR-05. In waves: 0 prerequisites (an off-node backup, done 2026-11-04; a converging cluster), 1 application and chart, 2 database row-level security, 3 platform, 4 operator actions | NFR-22 to NFR-25 pass; no credential that was ever exposed is still valid; the backend runs on .NET 10; nightly encrypted off-node backups run and a restore is tested; only allowlisted accounts can sign in |
+| **0: Realign** | Hygiene before growth, and ready for invited users | NFR-01 to NFR-06 (NFR-03 by Production, unverified; NFR-05 to Google Drive), NFR-07 isolation tests as a hard gate, NFR-08 key separation, NFR-10 tests (a), (c) and (d), NFR-16 central authentication, NFR-17 supported runtime, NFR-18 per-Owner caps and allowlist maximum; FR-03 Echo branding; FR-50 legal pages; FR-51 invite-only sign-up; FR-53 Samsung Health time alignment. Items that 0-Sec delivers first count here as done | No secrets in the repo; CI builds and deploys; no weekly re-consent; Contacts state is durable; encrypted backups to Google Drive are tested; docs are true; the backend runs on a supported runtime; NFR-10 (a), (c), (d) pass; the isolation gate passes and a second user can be invited (UJ-7); Samsung Health median start-time difference vs matched GPS sources < 60 s |
 | **1: Connect** | Contacts ↔ Atlas | FR-31 to FR-42, FR-47, FR-48, FR-49, FR-52; NFR-09, NFR-12 to NFR-14 for Connect data; NFR-10 test (b); NFR-11 token budget; NFR-15 for the Unified Timeline, Privacy Center and Person views; NFR-16 token scopes; NFR-18 worker fairness | UJ-3 and UJ-4 work on the first Owner's real data; SM-1 to SM-3 are measured; NFR-10 (b), the NFR-11 budget and the NFR-18 fairness test pass; any Owner can export and erase their own data |
 | **2: People in Photos** | Opt-in faces | FR-43 to FR-45; NFR-14 and NFR-15 for the face views | UJ-5 works; revocation is proven to delete all face data; unnamed clusters are proven discarded after review; no face data is reachable across Owners |
 | **3+: More of me** | Breadth | FR-54 LinkedIn first (Q-7), then FR-04, FR-11, FR-16, FR-21, FR-26, FR-30 and the other §4.11 sources | Chosen per phase; LinkedIn connections link to Contacts |
@@ -868,6 +1094,7 @@ Privacy is a product pillar, not a compliance appendix. The requirements in §4.
 
 ### 8.1 In Scope for the Next Release (Phases 0 and 1)
 
+- The security hardening programme (0-Sec, Epic 21), first.
 - The Phase 0 platform items listed above, including invite-only sign-up, per-user isolation and caps, and the Samsung Health time fix.
 - Echo branding.
 - Person Links, Encounters (from the calendar and from the Owner), the address ↔ Place match, and the Person views in Contacts and Atlas.
@@ -901,7 +1128,7 @@ Privacy is a product pillar, not a compliance appendix. The requirements in §4.
 **Secondary**
 - **SM-4: Place coverage of Photos.** The share of Photos placed in time and space. Today it is 47% (74,061 of 157,021). This metric tracks it, with no target, because Photos without any location evidence cannot be placed. Validates FR-27.
 - **SM-5: Habit.** The Owner opens Echo on at least 3 days a week. Validates the product thesis.
-- **SM-6: Platform health.** After Phase 0: forced re-consents = 0 per month, hand-built deploys = 0, failed restores = 0, secret-scan findings on the trunk = 0, and known-stale documents = 0. Validates NFR-01 to NFR-06.
+- **SM-6: Platform health.** After Phase 0: forced re-consents = 0 per month, hand-built deploys = 0, failed restores = 0, secret-scan findings on the trunk = 0, known-stale documents = 0, reachable Critical or High vulnerabilities past their window = 0, and security alerts unacknowledged after a day = 0. Validates NFR-01 to NFR-06 and NFR-23 to NFR-25.
 - **SM-7: Insight usefulness.** The share of Contacts and Atlas Proposals the Owner applies or acts on, rather than dismisses. Target ≥ 50% over a month. Validates FR-13, FR-14, FR-15, FR-25.
 
 **Counter-metrics (do not optimize)**
@@ -919,13 +1146,20 @@ Privacy is a product pillar, not a compliance appendix. The requirements in §4.
 | One Owner sees another Owner's data | Loss of trust; privacy breach | Tenancy on every store, queue, cache and token; NFR-07 isolation tests as a hard gate; the admin role reads no data (FR-51) |
 | Cross-domain context sent to Gemini reveals more combined information | Privacy | Only matched results go to Gemini (FR-31, Q-5); per-user switch to keep them out; disclosure names the combined data; the budget in NFR-11 |
 | Pi capacity (face clustering over 157k Photos, Unified Timeline queries, several users) | Slow or starved interactive use; one user starving another | NFR-09 priority for interactive work; batch background jobs; round-robin across Owners and per-Owner caps (NFR-18); allowlist maximum of a handful of users (A-10) |
-| Node loss or local-path volumes | Data loss or a stranded Area | NFR-05 off-node backups |
+| Node loss or local-path volumes | Data loss or a stranded Area | NFR-05 off-node backups (not built; an interim manual backup was taken on 2026-11-04) |
+| A foothold in any pod reaches every user's data (the cache and the database accept connections from any pod; the cache has no password and holds the unencrypted key ring and live Google access) | Every user's Google account and location history exposed | NFR-23 (a) and (c): network default-deny, the stores reachable only from their clients, a cache password, the key ring wrapped and the exposed keys retired; NFR-22 |
+| A stolen operator credential (the remote cluster-admin token, the plaintext credentials file) | Full control of the cluster and everything in it, from anywhere | Remote administration behind the Owner's identity with short-lived narrow tokens; every credential rotated into a password manager; audit log and alerts (NFR-23 (c), (d); NFR-25) |
+| Unpatched nodes, runtimes and images (485 pending host updates; .NET 9 ends 2026-11-10; an end-of-life web server image) | Known exploits stay open | Node hardening with unattended security updates (NFR-23 (e)); NFR-17; the NFR-24 patch window |
+| A push to the public repository, or a mutable image tag, deploys code with cluster-wide rights | Supply-chain compromise of the whole cluster | Protected trunk, a GitOps account limited to Echo's namespace, pinned and signed images (NFR-24) |
+| Security fixes merge but never reach the cluster, because the GitOps controllers crash-loop | A false sense of safety | A change counts as done only when the live cluster shows it; cluster stability first; an alert when GitOps stops converging (NFR-25) |
+| Turning on database row security makes a clean-up job see "no rows" and delete real data | Data loss | The application refuses work with no Owner instead of reading empty; a log-only phase first; a backup before; tests of every deleting job (NFR-22) |
+| The secrets store stays sealed after a node restart (unseal shares held offline) | Echo is down until the operator unseals it | Accepted (NFR-10 (c) allows this one manual step); an alert when it is sealed (NFR-25) |
 | Unofficial Sports Tracker API changes | Sync breaks | Failures shown as connection status, scheduled retries with backoff (FR-52); file import as a fallback |
 | Google restricted-scope policy and the unverified-app cap | T1 or T2 could be blocked for an unverified app; at most 100 users ever | Invite-only with an allowlist maximum (FR-51); keep T1 and T2 optional; verification and CASA as a gate before opening up (NFR-19) |
 
 ## 11. Open Questions
 
-*Questions Q-1 to Q-10 were answered by the Owner on 2026-10-28. Q-11 to Q-14 came with the route-quality plan (§4.12); the Owner asked for them to be decided rather than asked ("make the decisions"), so they are recorded as decisions with their reasons. None is open. The answers and decisions are kept here as the record.*
+*Questions Q-1 to Q-10 were answered by the Owner on 2026-10-28. Q-11 to Q-14 came with the route-quality plan (§4.12); the Owner asked for them to be decided rather than asked ("make the decisions"), so they are recorded as decisions with their reasons. Q-15 records the Owner's security decisions of 2026-11-04. None is open. The answers and decisions are kept here as the record.*
 
 1. **Q-1. Multi-user ever? — Answered (2026-10-28): yes.**
    - Echo supports more than one user. Each user owns their data, and no user sees another's (§2.2).
@@ -951,6 +1185,13 @@ Privacy is a product pillar, not a compliance appendix. The requirements in §4.
 12. **Q-12. Rail transit. — Decided (2026-10-28): left as recorded.** Echo starts keeping the source's own type (FR-56, architecture AD-35), matches buses (and taxis) on roads, and leaves trains, trams, subways, ferries and cable cars as recorded. Transit recorded before Echo kept the source's type is not matched in R1 and is marked "type unknown" until the Timeline is re-imported, which fills the type; Echo does not guess rail from speed. *Reason:* the road graph has no rail lines, so a train placed on roads would be wrong, and a separate rail network costs a second graph and matcher for 473 transit trips, only some of them rail. Revisit if the Owner asks for it.
 13. **Q-13. Which regions abroad? — Decided (2026-10-28): none at MVP; added on demand.** R1 and R2 hold Israel only. In R3, regions are added on demand from the "outside coverage" list, ranked by activity count (FR-60). *Reason:* each region grows the monthly build and the tiles image, so it should be added where the unmatched trips actually are, not guessed in advance.
 14. **Q-14. Shown by default? — Decided (2026-10-28): yes, above a confidence of 0.7.** A Matched Route at or above 0.7 replaces the straight lines on the map by default, with the toggle in every Activity panel and no acceptance needed; below it, it is not drawn, and from R2 it is offered with "Use this route" (FR-56, FR-58). Each Owner can change the threshold and the default (FR-59). *Reason:* the Owner reported the straight lines as the defect, so the fix should be visible without a setting, and the threshold plus the always-available original and revert (FR-58) keep a wrong match from being silently trusted.
+15. **Q-15. Security hardening. — Decided by the Owner (2026-11-04).** Five security assessments of 2026-11-03 found the application code sound and the platform weak (any pod could reach every user's Google access and data; cluster administration was reachable from the internet behind static credentials; nothing was backed up). The Owner decided:
+    - **Database row-level security now**, as a second line of tenant isolation (NFR-22), reversing the earlier deferral.
+    - **Remote cluster administration stays reachable from the internet, gated by the Owner's personal login**, with short-lived, narrower tokens and an audit log; the long-lived cluster-admin token and the extra cluster-admin grants are removed (NFR-23).
+    - **Node hardening now:** both nodes patched one at a time, desktop services off, automatic security updates, SSH by key only with no root login and no X11 forwarding (NFR-23). In progress on 2026-11-04.
+    - **The sign-in allowlist is built now** (FR-51's first increment): the Owner and family members, held in configuration in Vault, never in the repository.
+    - **Every credential in the operator's credentials file is rotated** and moved to a password manager; the secrets store's root token is revoked and it is rekeyed to offline shares; real keys are purged from the deployment repository's history after rotation (NFR-01, NFR-23).
+    - **An off-node backup of the database was taken on 2026-11-04**, before any change. The automated nightly encrypted job remains required (NFR-05).
 
 ## 12. References
 

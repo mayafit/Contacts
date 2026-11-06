@@ -38,6 +38,7 @@ import {
   timeToleranceError,
 } from './fusionText';
 import { tokens } from '../theme/contactsTheme';
+import { fs } from '../settings/uiSettings';
 
 /** How often the status is polled while the service works */
 const POLL_MS = 2000;
@@ -280,9 +281,9 @@ const FusionSettingsDialog: React.FC<FusionSettingsDialogProps> = ({
         >
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             {busy ? (
-              <Sync sx={{ fontSize: 18, color: FILTER_COLOR }} />
+              <Sync sx={{ fontSize: fs(18), color: FILTER_COLOR }} />
             ) : (
-              <CheckCircleOutline sx={{ fontSize: 18, color: tokens.textSecondary }} />
+              <CheckCircleOutline sx={{ fontSize: fs(18), color: tokens.textSecondary }} />
             )}
             <Typography variant="body2" aria-live="polite">
               {status ? describeFusionStatus(status) : 'Loading the fusion service status…'}
@@ -348,7 +349,12 @@ const FusionSettingsDialog: React.FC<FusionSettingsDialogProps> = ({
                         size="small"
                         label="default"
                         variant="outlined"
-                        sx={{ height: 18, fontSize: 12, color: tokens.textMuted }}
+                        sx={{
+                          minHeight: 18,
+                          height: 'auto',
+                          fontSize: fs(12),
+                          color: tokens.textMuted,
+                        }}
                       />
                     )}
                   </Box>

@@ -23,6 +23,17 @@ spec:
       ports:
         - port: http
           protocol: TCP
+    {{- with ((.Values.global).networkPolicy).nodeAddresses }}
+    # Kubelet probes from the node (AA-18); Valhalla's probes are exec, not network
+    - from:
+        {{- range . }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        - port: http
+          protocol: TCP
+    {{- end }}
   egress:
     - to:
         - podSelector:

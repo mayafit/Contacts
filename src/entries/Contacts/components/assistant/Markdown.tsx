@@ -6,6 +6,7 @@
 import React from 'react';
 import { Box, Link, Typography } from '@mui/material';
 import { tokens } from '../../theme/contactsTheme';
+import { fs } from '../../settings/uiSettings';
 
 /** Props for Markdown */
 export interface MarkdownProps {
@@ -116,7 +117,7 @@ const Markdown: React.FC<MarkdownProps> = ({ text, onContact: contactHandler, on
           key={blocks.length}
           component="pre"
           sx={{
-            fontSize: 13,
+            fontSize: fs(13),
             p: 1,
             borderRadius: '6px',
             bgcolor: tokens.page,
@@ -144,7 +145,10 @@ const Markdown: React.FC<MarkdownProps> = ({ text, onContact: contactHandler, on
       }
       blocks.push(
         <Box key={blocks.length} sx={{ overflowX: 'auto' }}>
-          <Box component="table" sx={{ borderCollapse: 'collapse', fontSize: 14, width: '100%' }}>
+          <Box
+            component="table"
+            sx={{ borderCollapse: 'collapse', fontSize: fs(14), width: '100%' }}
+          >
             <tbody>
               {rows.map((r, ri) => (
                 <tr key={ri}>

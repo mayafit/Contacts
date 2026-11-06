@@ -5,11 +5,18 @@
  * @module Contacts/atlas/analysis
  */
 
+import { DEFAULT_UI, onUiChange } from '../settings/uiSettings';
 import type { PointOutput } from './types';
 import { ACTIVITY_TYPES, isSet } from './types';
 
 /** Colours of heart-rate zones 1..5, cool to hot */
-export const ZONE_COLORS = ['#7aa7d9', '#5bd16b', '#f2d15c', '#ff8a3d', '#ff4d6d'];
+export const ZONE_COLORS: string[] = [...DEFAULT_UI.charts.zones];
+// The Owner's zone colours (AD-41), in place
+onUiChange((ui) => {
+  ui.charts.zones.forEach((c, i) => {
+    ZONE_COLORS[i] = c;
+  });
+});
 
 /** What the activity charts are plotted against */
 export type ChartAxis = 'time' | 'distance';

@@ -3,6 +3,7 @@ using ContactsApi.Infrastructure.Vault;
 using ContactsApi.WebApi.Configuration;
 using ContactsApi.WebApi.Middleware;
 using ContactsApi.WebApi.Services;
+using ContactsApi.WebApi.Services.KeyRing;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.DataProtection;
 using Serilog;
@@ -25,6 +26,14 @@ Log.Logger = new LoggerConfiguration()
 
 builder.Host.UseSerilog();
 
+// The migrate-only init container (AD-49 rule 3): apply the Atlas migrations and exit
+if (ContactsApi.Infrastructure.Tenancy.EchoMigrator.MigrateOnlyRequested(args))
+{
+    Environment.ExitCode = await RowLevelSecurity.MigrateOnlyAsync(builder.Configuration);
+    Log.CloseAndFlush();
+    return;
+}
+
 // Add services to the container
 builder.Services.AddControllers();
 
@@ -45,13 +54,26 @@ builder.Services.Configure<GoogleOAuthOptions>(options =>
 
 // Register hosted service to load secrets from Vault at startup
 builder.Services.AddHostedService<VaultConfigurationService>();
+// Google's OAuth endpoints (code exchange, ID token, refresh, revoke)
+builder.Services.AddHttpClient(GoogleSignIn.HttpClientName, c => c.Timeout = TimeSpan.FromSeconds(10));
+builder.Services.AddSingleton<IGoogleSignIn, GoogleSignIn>();
 builder.Services.AddSingleton<GoogleTokenService>();
 builder.Services.AddSingleton<ActivityStore>();
+// Public profiles by email hash (AD-46 rule 3); Gravatar__ApiKey is optional
+builder.Services.Configure<GravatarOptions>(builder.Configuration.GetSection("Gravatar"));
+builder.Services.AddSingleton<ProfileStore>();
+builder.Services.AddSingleton<ProfileQueue>();
+builder.Services.AddHostedService<ProfileWorker>();
 builder.Services.AddSingleton<ScopePreferences>();
+// Dismissed suggestions from Other contacts (AD-48 rule 7)
+builder.Services.AddSingleton<OtherContactsStore>();
 
 // Assistant: Gemini key from Vault (Gemini__ApiKey); without it the assistant reports itself disabled
 builder.Services.Configure<ContactsApi.WebApi.Controllers.GeminiOptions>(builder.Configuration.GetSection("Gemini"));
 builder.Services.AddSingleton<GeminiService>();
+// The phonetic fill's Google Translate (AD-43 rule 4); off until GoogleTranslate__ApiKey is set
+builder.Services.Configure<GoogleTranslateOptions>(builder.Configuration.GetSection("GoogleTranslate"));
+builder.Services.AddSingleton<NameTranslator>();
 builder.Services.AddHttpClient("gemini", c =>
 {
     c.BaseAddress = new Uri("https://generativelanguage.googleapis.com/");
@@ -59,16 +81,22 @@ builder.Services.AddHttpClient("gemini", c =>
 });
 // Atlas: PostgreSQL (Database__ConnectionString from Vault); without it Atlas
 // stays off and the rest of the app works as before
-var atlasConnection = builder.Configuration["Database:ConnectionString"];
+// Row-level security (AD-49): the owner scope, its interceptor on every DbContext, and the
+// connection string guards (no multiplexing, reset on close, application name, pool size)
+builder.Services.AddEchoRowLevelSecurity(builder.Configuration);
+var atlasConnection = ContactsApi.Infrastructure.Tenancy.OwnerConnectionStrings.Prepare(
+    builder.Configuration["Database:ConnectionString"], RowLevelSecurity.ApplicationName, RowLevelSecurity.MaxPoolSize);
 builder.Services.AddSingleton(new AtlasReadiness { Configured = !string.IsNullOrWhiteSpace(atlasConnection) });
-builder.Services.AddDbContext<ContactsApi.Infrastructure.Atlas.AtlasDbContext>(o =>
-    o.UseNpgsql(string.IsNullOrWhiteSpace(atlasConnection) ? "Host=unset" : atlasConnection,
-        npgsql => npgsql.MigrationsHistoryTable("__ef_migrations", "atlas")));
+builder.Services.AddDbContext<ContactsApi.Infrastructure.Atlas.AtlasDbContext>((sp, o) =>
+    ContactsApi.Infrastructure.Tenancy.OwnerScopeServices.UseOwnerRls(
+        o.UseNpgsql(string.IsNullOrWhiteSpace(atlasConnection) ? "Host=unset" : atlasConnection,
+            npgsql => npgsql.MigrationsHistoryTable("__ef_migrations", "atlas")), sp));
 builder.Services.AddScoped<ContactsApi.Infrastructure.Atlas.AtlasService>();
 // Routes module (AD-34): reads routes (matched lines, quality) and writes decisions only,
 // with the backend's own role; the schema's migrations belong to the route-quality service
-builder.Services.AddDbContext<ContactsApi.Infrastructure.Routes.RoutesDbContext>(o =>
-    o.UseNpgsql(string.IsNullOrWhiteSpace(atlasConnection) ? "Host=unset" : atlasConnection));
+builder.Services.AddDbContext<ContactsApi.Infrastructure.Routes.RoutesDbContext>((sp, o) =>
+    ContactsApi.Infrastructure.Tenancy.OwnerScopeServices.UseOwnerRls(
+        o.UseNpgsql(string.IsNullOrWhiteSpace(atlasConnection) ? "Host=unset" : atlasConnection), sp));
 builder.Services.AddSingleton(new ContactsApi.Infrastructure.Routes.RouteGeometryOptions
 {
     Enabled = !string.IsNullOrWhiteSpace(atlasConnection) && !string.IsNullOrWhiteSpace(builder.Configuration["Routes:ServiceUrl"])
@@ -89,6 +117,9 @@ builder.Services.AddSingleton<ContactsApi.Infrastructure.Atlas.IFusionSignal>(sp
 builder.Services.AddSingleton<FusionStatusBoard>();
 builder.Services.AddHostedService<AtlasFusionWorker>();
 builder.Services.AddScoped<AccessTokenService>();
+// A rate limit per MCP token (AD-50 rule 9): Mcp__RateLimit__PerMinute / __PerDay
+builder.Services.AddSingleton(builder.Configuration.GetSection("Mcp:RateLimit").Get<PatRateLimitOptions>() ?? new PatRateLimitOptions());
+builder.Services.AddSingleton<PatRateLimiter>();
 builder.Services.AddHostedService<AtlasMigrator>();
 // Connected sources (Sports Tracker): connect, background sync
 builder.Services.AddHttpClient(ContactsApi.Infrastructure.Atlas.SportsTrackerClient.HttpClientName, c => c.Timeout = TimeSpan.FromSeconds(60));
@@ -109,10 +140,30 @@ builder.Services.AddHostedService<PhotoSyncWorker>();
 // Reviews from a scheduled Takeout on Drive (AD-40): the Owner's Google sign-in, with the Drive opt-in
 builder.Services.Configure<TakeoutOptions>(builder.Configuration.GetSection("Takeout"));
 builder.Services.AddHttpClient(ContactsApi.Infrastructure.Atlas.GoogleDriveTakeout.HttpClientName, c => c.Timeout = TimeSpan.FromMinutes(15));
+// The Owner's settings documents (AD-41)
+builder.Services.AddScoped<ContactsApi.Infrastructure.Atlas.OwnerSettingsService>();
 builder.Services.AddSingleton<TakeoutDriveQueue>();
 builder.Services.AddSingleton<ITakeoutTokens, GoogleTakeoutTokens>();
 builder.Services.AddScoped<TakeoutDriveService>();
 builder.Services.AddHostedService<TakeoutDriveWorker>();
+// Flights (AD-42): the Owner's mail (T2), The OpenSky Network and adsbdb
+builder.Services.Configure<ContactsApi.Infrastructure.Atlas.Flights.OpenSkyOptions>(builder.Configuration.GetSection("OpenSky"));
+builder.Services.AddHttpClient(ContactsApi.Infrastructure.Atlas.Flights.OpenSkyClient.HttpClientName, c => c.Timeout = TimeSpan.FromSeconds(90));
+builder.Services.AddHttpClient(ContactsApi.Infrastructure.Atlas.Flights.AdsbdbClient.HttpClientName, c =>
+{
+    c.Timeout = TimeSpan.FromSeconds(20);
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("Echo/1.0 (personal atlas)");
+});
+builder.Services.AddSingleton<ContactsApi.Infrastructure.Atlas.Flights.IOpenSky>(sp => new ContactsApi.Infrastructure.Atlas.Flights.OpenSkyClient(
+    () => sp.GetRequiredService<IHttpClientFactory>().CreateClient(ContactsApi.Infrastructure.Atlas.Flights.OpenSkyClient.HttpClientName),
+    sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<ContactsApi.Infrastructure.Atlas.Flights.OpenSkyOptions>>(),
+    sp.GetRequiredService<ILogger<ContactsApi.Infrastructure.Atlas.Flights.OpenSkyClient>>()));
+builder.Services.AddSingleton<ContactsApi.Infrastructure.Atlas.Flights.IAdsbdb>(sp => new ContactsApi.Infrastructure.Atlas.Flights.AdsbdbClient(
+    () => sp.GetRequiredService<IHttpClientFactory>().CreateClient(ContactsApi.Infrastructure.Atlas.Flights.AdsbdbClient.HttpClientName)));
+builder.Services.AddSingleton<IFlightMail, GmailFlightMail>();
+builder.Services.AddSingleton<FlightQueue>();
+builder.Services.AddScoped<FlightService>();
+builder.Services.AddHostedService<FlightWorker>();
 builder.Services.AddHttpContextAccessor();
 
 // MCP server over the Atlas service (tools in AtlasMcpTools), at /api/mcp
@@ -145,18 +196,19 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<ActivityWorker>())
 // With the flag off, Connect() returns immediately with a multiplexer that
 // reconnects in the background. A cold or briefly absent Redis then costs a
 // few seconds of degraded sessions instead of an outage.
-var redisConnectionString = builder.Configuration["Redis:ConnectionString"] ?? "localhost:6379";
-var redisOptions = ConfigurationOptions.Parse(redisConnectionString);
-redisOptions.AbortOnConnectFail = false;
-redisOptions.ConnectRetry = 5;
-redisOptions.ConnectTimeout = 5000;
+//
+// Redis requires a password (AD-50 rule 1): Redis__Password from Vault is added to the
+// connection string the ConfigMap renders without it.
+var redisOptions = RedisSettings.Options(builder.Configuration);
 
 var redis = ConnectionMultiplexer.Connect(redisOptions);
+builder.Services.AddSingleton<IConnectionMultiplexer>(redis);
 
-// Configure Data Protection to persist keys to Redis
-builder.Services.AddDataProtection()
-    .PersistKeysToStackExchangeRedis(redis, "DataProtection-Keys")
-    .SetApplicationName("ContactsApi");
+// Data Protection (AD-12, AD-50 rule 2): the ring in Redis (DataProtection-Keys, as before),
+// wrapped with the Vault certificate (DataProtection__Certificate) when it is configured;
+// without it the ring stays unwrapped and a warning is logged. DataProtection__Rotation runs
+// the one-shot re-protection (dry-run, reprotect, retire).
+builder.Services.AddEchoDataProtection(builder.Configuration, redis);
 
 // Configure session management with Redis
 builder.Services.AddStackExchangeRedisCache(options =>
@@ -171,27 +223,10 @@ builder.Services.AddStackExchangeRedisCache(options =>
     options.InstanceName = "ContactsApi_";
 });
 
-builder.Services.AddSession(options =>
-{
-    options.IdleTimeout = TimeSpan.FromDays(7); // Session expires after 7 days
-    options.Cookie.HttpOnly = true; // Prevent JavaScript access
-    // Secure outside local development: the app is served over HTTPS (TLS ends at
-    // Cloudflare/nginx, so the request scheme here is http and SameAsRequest
-    // would never set it). Browsers treat http://localhost as secure anyway.
-    options.Cookie.SecurePolicy = builder.Environment.IsDevelopment()
-        ? CookieSecurePolicy.SameAsRequest
-        : CookieSecurePolicy.Always;
-    options.Cookie.SameSite = SameSiteMode.Lax; // Allow OAuth redirects while maintaining CSRF protection
-    options.Cookie.IsEssential = true; // Required for GDPR compliance
-    options.Cookie.Name = ".ContactsApi.Session";
-    // No Cookie.Domain: a host-only cookie works on whichever host serves the
-    // app (cookies ignore ports, so localhost:3002 -> :5000 still works), while
-    // a hardcoded "localhost" made browsers drop the cookie everywhere else.
-    options.Cookie.Path = "/"; // Cookie available for all paths
-    // Persistent, so closing the browser does not sign the user out; the
-    // session itself still expires after 7 idle days.
-    options.Cookie.MaxAge = TimeSpan.FromDays(7);
-});
+// EchoSession (AD-3 rule 3, AD-50 rule 4): cookie authentication with the ticket in Redis,
+// re-keyed at sign-in, under __Host- cookies; the ASP.NET session keeps only non-identity
+// state (the pre-sign-in OAuth flow). The allowlist (AD-50 rule 6) comes from Echo__AllowedEmails.
+builder.Services.AddEchoSession(builder.Configuration);
 
 // Configure CORS
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? Array.Empty<string>();
@@ -210,12 +245,22 @@ builder.Services.AddCors(options =>
 // accepted only on its own /internal path (AD-3 rule 3, AD-33 rule 2); never the default scheme
 builder.Services.AddEchoServiceAuth(builder.Configuration["Routes:ServiceToken"]);
 
+// CSRF (AD-50 rule 7): the public origin and, in Development, the CORS origins
+builder.Services.AddSingleton(new ContactsApi.WebApi.Middleware.CsrfOptions
+{
+    PublicOrigin = builder.Configuration["Frontend:BaseUrl"],
+    DevelopmentOrigins = allowedOrigins,
+    IsDevelopment = builder.Environment.IsDevelopment()
+});
+
 // Add API documentation
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 // Add health checks
-builder.Services.AddHealthChecks();
+builder.Services.AddHealthChecks()
+    // Unready while a migration waits for the migrate init container (AD-49 rule 3)
+    .AddCheck<AtlasMigrationsCheck>("atlas-migrations", tags: new[] { AtlasMigrationsCheck.ReadyTag });
 
 var app = builder.Build();
 
@@ -227,19 +272,25 @@ app.UseMiddleware<ExceptionHandlingMiddleware>();
 // Request logging middleware (should be early in pipeline)
 app.UseMiddleware<RequestLoggingMiddleware>();
 
-// Enable Swagger in all environments (can restrict to dev later)
-app.UseSwagger();
-app.UseSwaggerUI(c =>
+// Swagger only in Development (AD-50 rule 10)
+if (app.Environment.IsDevelopment())
 {
-    c.SwaggerEndpoint("/swagger/v1/swagger.json", "Contacts API V1");
-    c.RoutePrefix = string.Empty; // Serve Swagger UI at root
-});
+    app.UseSwagger();
+    app.UseSwaggerUI(c =>
+    {
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Contacts API V1");
+        c.RoutePrefix = string.Empty; // Serve Swagger UI at root
+    });
+}
 
 // HTTPS redirection (disabled for development - will be handled by reverse proxy)
 // app.UseHttpsRedirection();
 
 // CORS must come before authentication
 app.UseCors();
+
+// State-changing /api calls need X-Echo-Request and same-origin fetch metadata (AD-50 rule 7)
+app.UseMiddleware<ContactsApi.WebApi.Middleware.CsrfProtectionMiddleware>();
 
 // Map and timeline reads in flight: the route-quality service's batch calls wait
 app.UseMiddleware<InteractiveLoadMiddleware>();
@@ -257,46 +308,13 @@ app.UseWhen(ctx => ctx.Request.Path.StartsWithSegments("/internal"), internalApi
     await next();
 }));
 
-// Session management
+// Session management: the ASP.NET session (non-identity state), loaded up front, then the
+// EchoSession ticket for /api (not /api/mcp, and not the OAuth callback, AD-50 rule 4)
 app.UseSession();
+app.UseMiddleware<EchoSessionMiddleware>();
 
-// Load the session up front. Lazily, a Redis timeout is swallowed and the session
-// looks empty, so a signed-in user got 401 and was sent to sign in (2026-10-24, a
-// merge on a busy Pi). One retry, then 503: the app keeps the user signed in.
-app.UseWhen(ctx => ctx.Request.Path.StartsWithSegments("/api") && !ctx.Request.Path.StartsWithSegments("/api/mcp"),
-    api => api.Use(async (ctx, next) =>
-    {
-        for (var attempt = 1; ; attempt++)
-        {
-            try
-            {
-                await ctx.Session.LoadAsync(ctx.RequestAborted);
-                break;
-            }
-            catch (Exception ex) when (!ctx.RequestAborted.IsCancellationRequested)
-            {
-                if (attempt < 2)
-                {
-                    // A busy Redis: give it a moment
-                    await Task.Delay(300, ctx.RequestAborted);
-                    continue;
-                }
-
-                ctx.RequestServices.GetRequiredService<ILogger<Program>>()
-                    .LogWarning(ex, "Session store unavailable; answering 503 instead of signing the user out");
-                ctx.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
-                ctx.Response.Headers.RetryAfter = "2";
-                await ctx.Response.WriteAsJsonAsync(new
-                {
-                    success = false,
-                    error = new { code = "SESSION_STORE_UNAVAILABLE", message = "The server is busy. Try again in a moment.", timestamp = DateTime.UtcNow }
-                });
-                return;
-            }
-        }
-
-        await next();
-    }));
+// The request's Owner from the session (AD-49 rule 4); /api/mcp sets it from its token below
+app.UseMiddleware<OwnerScopeMiddleware>();
 
 // Authorization: only the EchoService policy of /internal/** so far; the session and
 // PAT schemes of AD-3 rule 3 are still per controller and per path
@@ -310,10 +328,13 @@ app.UseWhen(ctx => ctx.Request.Path.StartsWithSegments("/api/mcp"), mcp => mcp.U
     var readiness = ctx.RequestServices.GetRequiredService<AtlasReadiness>();
     var header = ctx.Request.Headers.Authorization.ToString();
     var token = header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) ? header[7..].Trim() : string.Empty;
-    var owner = readiness.Ready && token.Length > 0
-        ? await ctx.RequestServices.GetRequiredService<AccessTokenService>().ValidateAsync(token)
+    // Unknown, revoked and expired tokens are all refused the same way (AD-50 rule 9). The
+    // token's Owner is not known yet: CheckAsync resolves it through the definer function
+    // (AD-49 rule 5), then sets the request's Owner and reads the token's rights under it.
+    var checkedToken = readiness.Ready && token.Length > 0
+        ? await ctx.RequestServices.GetRequiredService<AccessTokenService>().CheckAsync(token)
         : null;
-    if (owner == null)
+    if (checkedToken == null)
     {
         ctx.Response.StatusCode = readiness.Ready ? StatusCodes.Status401Unauthorized : StatusCodes.Status503ServiceUnavailable;
         ctx.Response.Headers.WWWAuthenticate = "Bearer";
@@ -321,7 +342,17 @@ app.UseWhen(ctx => ctx.Request.Path.StartsWithSegments("/api/mcp"), mcp => mcp.U
         return;
     }
 
-    ctx.Items[AtlasMcpTools.OwnerItem] = owner;
+    // In process memory: no database work, so no Owner scope is involved
+    if (!ctx.RequestServices.GetRequiredService<PatRateLimiter>().TryAcquire(checkedToken.Id, out var retryAfter))
+    {
+        ctx.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+        ctx.Response.Headers.RetryAfter = ((int)Math.Ceiling(retryAfter.TotalSeconds)).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        await ctx.Response.WriteAsync("This access token has made too many calls. Try again later.");
+        return;
+    }
+
+    ctx.Items[AtlasMcpTools.OwnerItem] = checkedToken.OwnerId;
+    ctx.Items[AtlasMcpTools.CanWriteItem] = checkedToken.CanWrite;
     await next();
 }));
 
@@ -329,10 +360,23 @@ app.MapControllers();
 app.MapMcp("/api/mcp");
 
 // Health check endpoint
-app.MapHealthChecks("/health");
+app.MapHealthChecks("/health", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+{
+    Predicate = c => !c.Tags.Contains(AtlasMigrationsCheck.ReadyTag)
+});
+app.MapHealthChecks("/health/ready");
 
 // Log application startup
 Log.Information("ContactsApi starting up");
+var allowlist = app.Services.GetRequiredService<AllowedEmails>();
+if (allowlist.IsConfigured)
+{
+    Log.Information("Sign-in allowlist: {Count} addresses", allowlist.Count);
+}
+else
+{
+    Log.Warning("Sign-in allowlist ({Key}) is empty or missing: nobody can sign in, and existing sessions are refused", "Echo__AllowedEmails");
+}
 
 try
 {

@@ -10,6 +10,7 @@ import type { ContactFilter, ContactStats } from '../../model/stats';
 import type { DomainInsight } from '../../model/organizations';
 import { BarList, ColumnChart, percent } from './charts';
 import { tokens } from '../../theme/contactsTheme';
+import { fs } from '../../settings/uiSettings';
 
 /** Props for InsightsView */
 export interface InsightsViewProps {
@@ -25,6 +26,8 @@ export interface InsightsViewProps {
   onReviewDomain: (insight: DomainInsight) => void;
   /** Keeping-in-touch section, shown under the headline tiles */
   activitySection?: React.ReactNode;
+  /** Open the suggestions from Other contacts (FR-92) */
+  onReviewOtherContacts?: () => void;
 }
 
 const fmt = new Intl.NumberFormat('en-US');
@@ -82,7 +85,7 @@ const Tile: React.FC<{
     </Typography>
     <Typography
       sx={{
-        fontSize: 32,
+        fontSize: fs(32),
         fontWeight: 600,
         lineHeight: 1.2,
         mt: 0.75,
@@ -133,6 +136,7 @@ const InsightsView: React.FC<InsightsViewProps> = ({
   orgInsights,
   onReviewDomain,
   activitySection,
+  onReviewOtherContacts,
 }) => {
   const [allDomains, setAllDomains] = useState(false);
   const toFix = orgInsights.reduce((s, d) => s + d.needsUpdate.length, 0);
@@ -145,7 +149,9 @@ const InsightsView: React.FC<InsightsViewProps> = ({
   return (
     <Box sx={{ p: { xs: 2, md: 3 }, overflowY: 'auto', flex: 1 }}>
       <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 2, mb: 3, flexWrap: 'wrap' }}>
-        <Typography sx={{ fontSize: 56, fontWeight: 600, lineHeight: 1, letterSpacing: '-0.02em' }}>
+        <Typography
+          sx={{ fontSize: fs(56), fontWeight: 600, lineHeight: 1, letterSpacing: '-0.02em' }}
+        >
           {fmt.format(stats.total)}
         </Typography>
         <Typography variant="body1" sx={{ color: tokens.textSecondary }}>
@@ -205,6 +211,27 @@ const InsightsView: React.FC<InsightsViewProps> = ({
       </Box>
 
       {activitySection}
+
+      {onReviewOtherContacts && (
+        <Card
+          title="Other contacts"
+          subtitle="People Gmail saved by itself when you wrote to someone not in your contacts"
+          sx={{ mb: 2 }}
+        >
+          <Typography variant="body2" sx={{ color: tokens.textSecondary }}>
+            Find missing emails and phones for your contacts, and people you write to who are not
+            saved yet. You review every suggestion.
+          </Typography>
+          <Button
+            size="small"
+            endIcon={<ArrowForward />}
+            onClick={onReviewOtherContacts}
+            sx={{ mt: 1, ml: -1 }}
+          >
+            Review suggestions
+          </Button>
+        </Card>
+      )}
 
       {orgInsights.length > 0 && (
         <Card

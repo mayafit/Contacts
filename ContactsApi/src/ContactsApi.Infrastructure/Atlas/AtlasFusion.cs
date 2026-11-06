@@ -860,9 +860,9 @@ public partial class AtlasService
     public Task<int> PendingFusionAsync(string owner, CancellationToken ct = default) =>
         _db.FusionQueue.CountAsync(q => q.OwnerId == owner, ct);
 
-    /// <summary>Owners with queued work</summary>
+    /// <summary>Owners with queued work (atlas.sys_owners, AD-49 rule 5; the caller marks the work unscoped)</summary>
     public Task<List<string>> OwnersWithQueuedFusionAsync(CancellationToken ct = default) =>
-        _db.FusionQueue.Select(q => q.OwnerId).Distinct().ToListAsync(ct);
+        _db.SysOwnersAsync(SysOwnerKinds.FusionQueue, ct);
 
     /// <summary>
     /// Works off the owner's queue: overlapping or nearby windows are merged, a

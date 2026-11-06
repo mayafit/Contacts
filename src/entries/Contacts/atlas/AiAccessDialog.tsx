@@ -12,7 +12,10 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControlLabel,
   IconButton,
+  MenuItem,
+  Switch,
   TextField,
   Tooltip,
   Typography,
@@ -21,6 +24,7 @@ import { ContentCopy, DeleteOutline } from '@mui/icons-material';
 import { backendApiClient } from '../../../services/api/BackendApiClient';
 import type { AccessTokenInfo } from './types';
 import { tokens } from '../theme/contactsTheme';
+import { fs } from '../settings/uiSettings';
 
 /** Props for AiAccessDialog */
 export interface AiAccessDialogProps {
@@ -36,6 +40,8 @@ export interface AiAccessDialogProps {
 const AiAccessDialog: React.FC<AiAccessDialogProps> = ({ open, onClose }) => {
   const [list, setList] = useState<AccessTokenInfo[]>([]);
   const [name, setName] = useState('Claude');
+  const [allowWrite, setAllowWrite] = useState(false);
+  const [days, setDays] = useState(90);
   const [created, setCreated] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const url = `${window.location.origin}/api/mcp`;
@@ -56,7 +62,7 @@ const AiAccessDialog: React.FC<AiAccessDialogProps> = ({ open, onClose }) => {
 
   const create = async () => {
     try {
-      const r = await backendApiClient.atlasCreateToken(name);
+      const r = await backendApiClient.atlasCreateToken(name, allowWrite, days);
       setCreated(r.token);
       void load();
     } catch (e) {
@@ -75,7 +81,8 @@ const AiAccessDialog: React.FC<AiAccessDialogProps> = ({ open, onClose }) => {
         <Typography variant="body2" sx={{ color: tokens.textSecondary, mb: 2 }}>
           AI tools that speak MCP (Claude Code, Claude Desktop, …) can search and edit your Atlas
           data with a personal access token. The server is <code>{url}</code>. The site is behind
-          Cloudflare Access, so remote clients also send a Cloudflare service token.
+          Cloudflare Access, so remote clients also send a Cloudflare service token. A token can
+          only read unless you allow changes, and it stops working when it expires.
         </Typography>
         {error && (
           <Alert severity="error" sx={{ mb: 2 }}>
@@ -89,6 +96,26 @@ const AiAccessDialog: React.FC<AiAccessDialogProps> = ({ open, onClose }) => {
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
+          <TextField
+            select
+            size="small"
+            label="Expires after"
+            value={days}
+            onChange={(e) => setDays(Number(e.target.value))}
+            sx={{ minWidth: 140 }}
+          >
+            {[30, 90, 180, 365].map((d) => (
+              <MenuItem key={d} value={d}>
+                {d} days
+              </MenuItem>
+            ))}
+          </TextField>
+          <FormControlLabel
+            control={
+              <Switch checked={allowWrite} onChange={(e) => setAllowWrite(e.target.checked)} />
+            }
+            label="Allow changes"
+          />
           <Button variant="contained" onClick={create}>
             Create token
           </Button>
@@ -99,7 +126,7 @@ const AiAccessDialog: React.FC<AiAccessDialogProps> = ({ open, onClose }) => {
               Copy it now: it is not shown again.
             </Typography>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Box component="code" sx={{ wordBreak: 'break-all', fontSize: 14 }}>
+              <Box component="code" sx={{ wordBreak: 'break-all', fontSize: fs(14) }}>
                 {created}
               </Box>
               <IconButton
@@ -114,7 +141,7 @@ const AiAccessDialog: React.FC<AiAccessDialogProps> = ({ open, onClose }) => {
               Claude Code:
             </Typography>
             <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-              <Box component="code" sx={{ wordBreak: 'break-all', fontSize: 13 }}>
+              <Box component="code" sx={{ wordBreak: 'break-all', fontSize: fs(13) }}>
                 {command}
               </Box>
               <IconButton
@@ -140,14 +167,24 @@ const AiAccessDialog: React.FC<AiAccessDialogProps> = ({ open, onClose }) => {
           >
             <Box sx={{ flex: 1 }}>
               <Typography variant="body2">
-                {t.name} · <code>{t.prefix}…</code>
+                {t.name} · <code>{t.prefix}…</code> · {t.canWrite ? 'can change data' : 'read only'}
               </Typography>
               <Typography variant="caption" sx={{ color: tokens.textMuted }}>
                 Created {new Date(t.createdAt).toLocaleDateString('en-GB')}
                 {t.lastUsedAt
                   ? ` · last used ${new Date(t.lastUsedAt).toLocaleString('en-GB')}`
                   : ' · not used yet'}
+                {new Date(t.expiresAt) <= new Date()
+                  ? ' · expired'
+                  : ` · expires ${new Date(t.expiresAt).toLocaleDateString('en-GB')}`}
               </Typography>
+              {t.legacy && (
+                <Typography variant="caption" component="div" sx={{ color: tokens.textSecondary }}>
+                  Made before tokens expired: it keeps changing data until{' '}
+                  {new Date(t.expiresAt).toLocaleDateString('en-GB')}. Create a new token to replace
+                  it.
+                </Typography>
+              )}
             </Box>
             <Tooltip title="Revoke">
               <IconButton

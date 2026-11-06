@@ -11,6 +11,7 @@ import { ApiRequestError, backendApiClient } from '../../../services/api/Backend
 import type { ActivityDetail, RouteJob } from './types';
 import { jobText, noMatchText, routeCaption } from './routeGeometry';
 import { tokens } from '../theme/contactsTheme';
+import { fs } from '../settings/uiSettings';
 
 /** How the open activity is drawn */
 export type RouteView = 'roads' | 'recorded';
@@ -190,7 +191,7 @@ const RouteLine: React.FC<RouteLineProps> = ({ detail, view, onView, onChanged }
             '& .MuiToggleButton-root': {
               py: 0,
               px: 0.6,
-              fontSize: 11,
+              fontSize: fs(11),
               height: 18,
               textTransform: 'none',
             },

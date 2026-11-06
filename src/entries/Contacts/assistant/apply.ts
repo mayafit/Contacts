@@ -6,15 +6,9 @@
 import type { AppDispatch } from '../types/store';
 import type { Contact, ContactGroup } from '../types/Contact';
 import { buildPatch } from '../components/card/cardModel';
-import {
-  contactAdded,
-  contactUpdated,
-  fetchContactGroups,
-  fetchContacts,
-  updateContact,
-} from '../redux/slices/contacts/contactsSlice';
+import { contactAdded, updateContact } from '../redux/slices/contacts/contactsSlice';
 import { trashContacts } from '../redux/thunks/cleanupThunks';
-import { GoogleContactsService } from '../services/GoogleContactsService';
+import { refreshContacts } from '../redux/thunks/labelThunks';
 import { backendApiClient } from '../../../services/api/BackendApiClient';
 import { proposalName } from './changes';
 import type { Proposal } from './tools';
@@ -27,27 +21,7 @@ export interface ApplyResult {
   failed: { name: string; message: string }[];
 }
 
-/** Above this many contacts a label change reloads everything instead of each contact */
-const REFETCH_LIMIT = 25;
-
 const messageOf = (e: unknown): string => (e as { message?: string })?.message ?? 'Failed';
-
-/** Re-reads contacts whose labels changed, so their etags stay current */
-const refresh = async (dispatch: AppDispatch, resourceNames: string[]) => {
-  dispatch(fetchContactGroups());
-  if (resourceNames.length > REFETCH_LIMIT) {
-    dispatch(fetchContacts());
-    return;
-  }
-  await Promise.all(
-    resourceNames.map(async (rn) => {
-      const fresh = await GoogleContactsService.getContact(rn);
-      if (fresh.success && fresh.data) {
-        dispatch(contactUpdated(fresh.data));
-      }
-    }),
-  );
-};
 
 /**
  * The label to send for a name: an existing label (any kind, case-insensitive) by
@@ -148,7 +122,7 @@ export const applyProposal = async (
       }
     }
     if (labelled.length) {
-      await refresh(
+      await refreshContacts(
         dispatch,
         labelled.map((l) => l.rn),
       );
@@ -170,7 +144,7 @@ export const applyProposal = async (
       }
     }
     if (proposal.labels.length) {
-      await refresh(dispatch, [created.resourceName]);
+      await refreshContacts(dispatch, [created.resourceName]);
     }
     result.done = 1;
     return result;
@@ -188,7 +162,7 @@ export const applyProposal = async (
       });
       result.done += chunk.length;
     }
-    await refresh(dispatch, names);
+    await refreshContacts(dispatch, names);
     return result;
   }
 

@@ -38,6 +38,7 @@ import type {
   SourceConnection,
   VisitPlaceResult,
 } from '../../entries/Contacts/atlas/types';
+import type { Flight } from '../../entries/Contacts/atlas/flights';
 
 /** One ingest batch */
 export type AtlasIngest = Omit<ParsedData, 'source'> & {
@@ -64,6 +65,9 @@ interface ApiResponse<T> {
   /** HTTP status of the response (added by the client, not sent by the server) */
   status?: number;
 }
+
+/** Header the backend requires on state-changing requests (CSRF, AD-50 rule 7) */
+export const ECHO_REQUEST_HEADER = 'X-Echo-Request';
 
 /** Window event raised when an API call reports the Google session has ended */
 export const SESSION_EXPIRED_EVENT = 'contacts:session-expired';
@@ -141,6 +145,56 @@ export interface ActivityStatusResponse {
   peopleCount: number;
   /** The name directory (find a person by name in mail/meetings) exists */
   hasDirectory?: boolean;
+  /** The scan period in years (AD-47 rule 1) */
+  windowYears?: number;
+}
+
+/** Emails one way with a Contact, at any date */
+export interface MailCount {
+  count: number;
+  /** Listing stopped at 20,000 */
+  capped: boolean;
+  first?: string | null;
+  last?: string | null;
+}
+
+/** One of Google's Other contacts, automated addresses removed (AD-48 rule 2) */
+export interface OtherContactEntry {
+  resourceName: string;
+  /** Null when Gmail stored an address as the name */
+  name?: string | null;
+  /** Lower-case plain addresses */
+  emails: string[];
+  phones: string[];
+}
+
+/** A read of Other contacts */
+export interface OtherContactsRead {
+  entries: OtherContactEntry[];
+  /** Entries Google returned */
+  read: number;
+  /** Entries left out because every address was automated */
+  automated: number;
+  /** The read stopped at 20,000 */
+  capped: boolean;
+}
+
+/** A Contact's whole history (AD-47 rule 6) */
+export interface ContactHistory {
+  checkedAt: string;
+  mail: 'searched' | 'not_allowed' | 'failed';
+  calendar: 'searched' | 'not_allowed' | 'failed';
+  /** Why a part failed */
+  error?: string | null;
+  received?: MailCount | null;
+  sent?: MailCount | null;
+  meetings?: {
+    count: number;
+    first?: string | null;
+    last?: string | null;
+    next?: string | null;
+    capped?: boolean;
+  } | null;
 }
 
 /** Signature reading result for one contact */
@@ -164,6 +218,58 @@ export interface DirectoryMatch {
   lastSeen?: string | null;
   /** Name match strength (suggestions): 3 same name, 2 address spells it, 1 name plus a word */
   score?: number;
+}
+
+/** An address found for one contact in the mail (AD-43 rule 7) */
+export interface FoundEmail {
+  email: string;
+  /** Display names seen for it (at most 3) */
+  names: string[];
+  /** 3 the same name, 2 the address spells it, 1 the name plus a word */
+  score: number;
+  /** Mails seen with it */
+  mails: number;
+  lastSeen?: string | null;
+  sources: ('directory' | 'mail')[];
+}
+
+/** Find-email answer: candidates, and what was searched */
+export interface FindEmailResponse {
+  candidates: FoundEmail[];
+  /** The activity scan's names exist */
+  directory: boolean;
+  /** The mailbox search */
+  mail: 'searched' | 'not_allowed' | 'sign_in' | 'failed';
+}
+
+/** A link of a public profile */
+export interface ProfileLink {
+  label: string;
+  url: string;
+}
+
+/** A person's public profile on Gravatar (AD-46 rule 3) */
+export interface GravatarProfile {
+  displayName?: string | null;
+  jobTitle?: string | null;
+  company?: string | null;
+  location?: string | null;
+  description?: string | null;
+  profileUrl?: string | null;
+  verifiedAccounts?: ProfileLink[];
+  links?: ProfileLink[];
+}
+
+/** The public-profile look-up's state */
+export interface ProfilesStatus {
+  enabled: boolean;
+  checked: number;
+  pending: number;
+  found: number;
+  hourlyLimit: number;
+  limitedUntil?: string | null;
+  /** Found profiles by email hash (from GET only) */
+  profiles?: Record<string, GravatarProfile> | null;
 }
 
 /** A recent email thread with a person: who wrote last, and when */
@@ -287,6 +393,9 @@ export class BackendApiClient {
       headers: {
         'Content-Type': 'application/json',
         ...options.headers,
+        // Required on every state-changing call (AD-50 rule 7); sent on all of them so
+        // no call can forget it. Last, so a caller cannot drop it.
+        [ECHO_REQUEST_HEADER]: '1',
       },
     };
 
@@ -631,6 +740,100 @@ export class BackendApiClient {
       body: JSON.stringify(request),
     });
     return unwrap(response, 'Failed to update the label').label;
+  }
+
+  /** Whether the public-profile look-up is on, its progress and the profiles found */
+  async profiles(): Promise<ProfilesStatus> {
+    return unwrap(await this.request<ProfilesStatus>('/profiles'), 'Failed to read profiles');
+  }
+
+  /** Turns the public-profile look-up on (AD-46 rule 3) */
+  async enableProfiles(): Promise<ProfilesStatus> {
+    return unwrap(
+      await this.request<ProfilesStatus>('/profiles/enable', { method: 'POST' }),
+      'Failed to turn on the look-up',
+    );
+  }
+
+  /** Turns it off and deletes what was found */
+  async forgetProfiles(): Promise<ProfilesStatus> {
+    return unwrap(
+      await this.request<ProfilesStatus>('/profiles', { method: 'DELETE' }),
+      'Failed to forget the profiles',
+    );
+  }
+
+  /** Sends the contacts' email hashes; the server queues the ones not checked lately */
+  async sendProfileHashes(hashes: string[], complete = false): Promise<ProfilesStatus> {
+    return unwrap(
+      await this.request<ProfilesStatus>('/profiles/hashes', {
+        method: 'POST',
+        body: JSON.stringify({ hashes, complete }),
+      }),
+      'Failed to send the addresses',
+    );
+  }
+
+  /** The links in the signatures of a contact's last 3 emails (T2) */
+  async signatureLinks(
+    emails: string[],
+  ): Promise<{ matched: number; emails: number; urls: string[] }> {
+    return unwrap(
+      await this.request<{ matched: number; emails: number; urls: string[] }>(
+        '/profiles/signatures',
+        {
+          method: 'POST',
+          body: JSON.stringify({ emails }),
+        },
+      ),
+      'Failed to read the signatures',
+    );
+  }
+
+  /** The members of the starred group and of every user label (AD-44 rule 3) */
+  async groupMembers(): Promise<Record<string, string[]>> {
+    return unwrap(
+      await this.request<{ members: Record<string, string[]> }>('/contacts/groups/members'),
+      'Failed to read the labels',
+    ).members;
+  }
+
+  /** Creates a user label (AD-45 rule 1) */
+  async createLabel(name: string): Promise<ContactGroup> {
+    return unwrap(
+      await this.request<ContactGroup>('/contacts/groups', {
+        method: 'POST',
+        body: JSON.stringify({ name }),
+      }),
+      'Failed to create the label',
+    );
+  }
+
+  /** Renames a user label */
+  async renameLabel(resourceName: string, name: string): Promise<void> {
+    unwrap(
+      await this.request<object>(
+        `/contacts/groups/${resourceName.replace(/^contactGroups\//, '')}`,
+        {
+          method: 'PUT',
+          body: JSON.stringify({ name }),
+        },
+      ),
+      'Failed to rename the label',
+    );
+  }
+
+  /** Deletes a user label, never its contacts */
+  async deleteLabel(resourceName: string): Promise<void> {
+    unwrap(
+      await this.request<object>(
+        `/contacts/groups/${resourceName.replace(/^contactGroups\//, '')}`,
+        {
+          method: 'DELETE',
+        },
+      ),
+      'Failed to delete the label',
+    );
   }
 
   // ===================================
@@ -1185,6 +1388,46 @@ export class BackendApiClient {
     );
   }
 
+  /**
+   * The Owner's settings document of a kind (AD-41): an empty object when none was saved.
+   * @param kind - ui
+   */
+  async settings(kind: 'ui' | 'segments'): Promise<{ json: unknown; updatedAt: string | null }> {
+    return unwrap(
+      await this.request<{ json: unknown; updatedAt: string | null }>(`/settings/${kind}`),
+      'Loading the settings failed',
+    );
+  }
+
+  /**
+   * Saves the Owner's settings document of a kind.
+   * @param kind - ui
+   * @param json - The document
+   * @param keepalive - Sent even if the page closes meanwhile
+   */
+  async saveSettings(kind: 'ui' | 'segments', json: unknown, keepalive = false): Promise<void> {
+    unwrap(
+      await this.request<unknown>(`/settings/${kind}`, {
+        method: 'PUT',
+        body: JSON.stringify(json),
+        keepalive,
+      }),
+      'Saving the settings failed',
+    );
+  }
+
+  /**
+   * Forgets the Owner's settings document of a kind (the defaults apply).
+   * @param kind - ui
+   * @param keepalive - Sent even if the page closes meanwhile
+   */
+  async resetSettings(kind: 'ui' | 'segments', keepalive = false): Promise<void> {
+    unwrap(
+      await this.request<unknown>(`/settings/${kind}`, { method: 'DELETE', keepalive }),
+      'Resetting the settings failed',
+    );
+  }
+
   /** The Google Drive connection for scheduled Takeout exports (AD-40) */
   async atlasTakeoutDrive(): Promise<TakeoutDriveStatus> {
     return unwrap(
@@ -1222,6 +1465,57 @@ export class BackendApiClient {
   /** Signs in to Google again, allowing Echo to read Drive (comes back to /atlas?connected=takeout) */
   connectTakeoutDrive(): void {
     window.location.href = `${this.baseUrl}/auth/login?takeout=true`;
+  }
+
+  /** A flight's identity and public details (AD-42); looked up when it never was */
+  async atlasFlight(activityId: string): Promise<Flight> {
+    return unwrap(
+      await this.request<Flight>(`/atlas/flights/${activityId}`),
+      'Loading the flight failed',
+    );
+  }
+
+  /** The Owner types the flight number (the day is the flight's recorded day) */
+  async atlasSetFlightNumber(activityId: string, flightNumber: string): Promise<Flight> {
+    return unwrap(
+      await this.request<Flight>(`/atlas/flights/${activityId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ flightNumber }),
+      }),
+      'Saving the flight number failed',
+    );
+  }
+
+  /** Clears the Owner's flight number: Echo looks for it again */
+  async atlasClearFlightNumber(activityId: string): Promise<Flight> {
+    return unwrap(
+      await this.request<Flight>(`/atlas/flights/${activityId}/number`, { method: 'DELETE' }),
+      'Clearing the flight number failed',
+    );
+  }
+
+  /** Looks the flight up again */
+  async atlasSearchFlight(activityId: string): Promise<Flight> {
+    return unwrap(
+      await this.request<Flight>(`/atlas/flights/${activityId}/search`, { method: 'POST' }),
+      'Searching again failed',
+    );
+  }
+
+  /** Confirms a suggested public flight, named by its aircraft and take-off */
+  async atlasConfirmFlight(activityId: string, icao24: string, firstSeen: string): Promise<Flight> {
+    return unwrap(
+      await this.request<Flight>(`/atlas/flights/${activityId}/confirm`, {
+        method: 'POST',
+        body: JSON.stringify({ icao24, firstSeen }),
+      }),
+      'Confirming the flight failed',
+    );
+  }
+
+  /** Allows reading email content for flights (leaves the page; back to /atlas?connected=mail) */
+  connectMailForFlights(): void {
+    window.location.href = `${this.baseUrl}/auth/login?signatures=true&back=atlas`;
   }
 
   /** The Owner's Google Maps reviews and the places to review (AD-39) */
@@ -1294,12 +1588,19 @@ export class BackendApiClient {
     return unwrap(await this.request<AccessTokenInfo[]>('/atlas/tokens'), 'Loading tokens failed');
   }
 
-  /** Creates an MCP access token (the token is returned only now) */
-  async atlasCreateToken(name: string): Promise<{ token: string; info: AccessTokenInfo }> {
+  /**
+   * Creates an MCP access token (the token is returned only now). It is read-only unless
+   * allowWrite, and expires after expiresInDays (default 90, at most 365).
+   */
+  async atlasCreateToken(
+    name: string,
+    allowWrite = false,
+    expiresInDays?: number,
+  ): Promise<{ token: string; info: AccessTokenInfo }> {
     return unwrap(
       await this.request<{ token: string; info: AccessTokenInfo }>('/atlas/tokens', {
         method: 'POST',
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, allowWrite, expiresInDays }),
       }),
       'Creating the token failed',
     );
@@ -1416,6 +1717,49 @@ export class BackendApiClient {
   }
 
   /**
+   * One contact's address from the activity scan's names and the mailbox's senders (FR-78)
+   * @param names - The contact's names (two words or more)
+   * @returns Up to 3 candidates, best first
+   */
+  async findEmail(names: string[]): Promise<FindEmailResponse> {
+    return unwrap(
+      await this.request<FindEmailResponse>('/activity/find-email', {
+        method: 'POST',
+        body: JSON.stringify({ names }),
+      }),
+      'Failed to look for the email',
+    );
+  }
+
+  /**
+   * Latin spellings of Hebrew name words, from Gemini (FR-77)
+   * @param words - Hebrew words (at most 20)
+   * @param name - The whole name's words in order, for Google Translate's context
+   * @returns Word → spelling, and word → where it came from
+   */
+  async transliterateNames(
+    words: string[],
+    name?: string[],
+  ): Promise<{
+    spellings: Record<string, string>;
+    sources?: Record<string, 'translate' | 'gemini'>;
+    /** Why some words were not spelled */
+    note?: string;
+  }> {
+    return unwrap(
+      await this.request<{
+        spellings: Record<string, string>;
+        sources?: Record<string, 'translate' | 'gemini'>;
+        note?: string;
+      }>('/assistant/transliterate', {
+        method: 'POST',
+        body: JSON.stringify({ words, name }),
+      }),
+      'Failed to spell the name',
+    );
+  }
+
+  /**
    * Start bringing the snapshot up to date
    * @param full - Rescan the whole window
    * @returns Status after queueing
@@ -1426,6 +1770,102 @@ export class BackendApiClient {
         method: 'POST',
       }),
       'Failed to start the activity scan',
+    );
+  }
+
+  /**
+   * Set the scan period; a change starts a full scan (AD-47 rule 1)
+   * @param years - 1, 2, 3 or 5
+   * @returns Status
+   */
+  async setActivityWindow(years: number): Promise<ActivityStatusResponse> {
+    return unwrap(
+      await this.request<ActivityStatusResponse>('/activity/window', {
+        method: 'PUT',
+        body: JSON.stringify({ years }),
+      }),
+      'Failed to save the scan period',
+    );
+  }
+
+  /**
+   * A Contact's whole history as last searched, or null
+   * @param contact - Resource name
+   * @returns The record
+   */
+  async getContactHistory(contact: string): Promise<ContactHistory | null> {
+    const r = await this.request<ContactHistory>(
+      `/activity/history?contact=${encodeURIComponent(contact)}`,
+    );
+    return r.status === 204 ? null : unwrap(r, 'Failed to read the history');
+  }
+
+  /**
+   * Search a Contact's whole mail and calendar, without a date limit (AD-47)
+   * @param contact - Resource name
+   * @param emails - Its addresses
+   * @returns The record
+   */
+  async searchContactHistory(contact: string, emails: string[]): Promise<ContactHistory> {
+    return unwrap(
+      await this.request<ContactHistory>('/activity/history', {
+        method: 'POST',
+        body: JSON.stringify({ contact, emails }),
+      }),
+      'Failed to search the history',
+    );
+  }
+
+  /** Signs in to Google again, allowing Other contacts to be read (back to /contacts?connected=other) */
+  connectOtherContacts(): void {
+    window.location.href = `${this.baseUrl}/auth/login?other=true`;
+  }
+
+  /**
+   * Google's Other contacts, read live (AD-48 rule 2); 403 NOT_CONNECTED without the opt-in
+   * @returns The entries
+   */
+  async getOtherContacts(): Promise<OtherContactsRead> {
+    return unwrap(
+      await this.request<OtherContactsRead>('/other-contacts'),
+      'Failed to read Other contacts',
+    );
+  }
+
+  /**
+   * The dismissed suggestion keys (AD-48 rule 7)
+   * @returns Keys
+   */
+  async getDismissedOther(): Promise<string[]> {
+    return unwrap(
+      await this.request<string[]>('/other-contacts/dismissed'),
+      'Failed to read dismissed suggestions',
+    );
+  }
+
+  /**
+   * Dismiss suggestions
+   * @param keys - Suggestion keys
+   * @returns All dismissed keys
+   */
+  async dismissOther(keys: string[]): Promise<string[]> {
+    return unwrap(
+      await this.request<string[]>('/other-contacts/dismissed', {
+        method: 'POST',
+        body: JSON.stringify({ keys }),
+      }),
+      'Failed to dismiss',
+    );
+  }
+
+  /**
+   * Bring every dismissed suggestion back
+   * @returns No keys
+   */
+  async clearDismissedOther(): Promise<string[]> {
+    return unwrap(
+      await this.request<string[]>('/other-contacts/dismissed', { method: 'DELETE' }),
+      'Failed to show dismissed suggestions',
     );
   }
 

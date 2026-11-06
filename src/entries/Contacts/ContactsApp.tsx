@@ -12,7 +12,9 @@ import { SESSION_EXPIRED_EVENT } from '../../services/api/BackendApiClient';
 import { logout, logoutUser } from './redux/slices/auth/authSlice';
 import { Box, CircularProgress, CssBaseline, ThemeProvider } from '@mui/material';
 import { createContactsTheme } from './theme/contactsTheme';
-import { useDispatch } from 'react-redux';
+import { useDispatch, useSelector } from 'react-redux';
+import SettingsProvider, { useUi } from './settings/SettingsProvider';
+import { selectIsAuthenticated } from './redux/slices/auth/selectors';
 import SiteShell from './components/SiteShell';
 import { checkAuthStatus } from './redux/slices/auth/authSlice';
 import type { AppDispatch } from './types/store';
@@ -49,10 +51,34 @@ const ToHome: React.FC = () => {
   return <Navigate to={`/${search}`} replace />;
 };
 
+/** The theme from the Owner's text sizes (AD-41 rule 5), rebuilt when they change */
+const Themed: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const t = useUi().text;
+  // Rebuilt only when a text size changes (not on every map or colour change)
+  const theme = useMemo(
+    () =>
+      createContactsTheme({
+        body: t.body,
+        small: t.small,
+        headings: t.headings,
+        charts: t.charts,
+        map: t.map,
+        navigation: t.navigation,
+      }),
+    [t.body, t.small, t.headings, t.charts, t.map, t.navigation],
+  );
+  return (
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      {children}
+    </ThemeProvider>
+  );
+};
+
 const ContactsApp: React.FC = () => {
   const dispatch = useDispatch<AppDispatch>();
   const [isCheckingAuth, setIsCheckingAuth] = React.useState(true);
-  const theme = useMemo(() => createContactsTheme(), []);
+  const isAuthenticated = useSelector(selectIsAuthenticated);
 
   /**
    * Check authentication status with backend on app mount
@@ -106,33 +132,35 @@ const ContactsApp: React.FC = () => {
   // This prevents ProtectedRoute from redirecting before auth check completes
   if (isCheckingAuth) {
     return (
-      <ThemeProvider theme={theme}>
-        <CssBaseline />
-        <Box
-          sx={{ display: 'grid', placeItems: 'center', height: '100vh' }}
-          aria-busy="true"
-          aria-label="Checking sign-in"
-        >
-          <CircularProgress />
-        </Box>
-      </ThemeProvider>
+      <SettingsProvider signedIn={false}>
+        <Themed>
+          <Box
+            sx={{ display: 'grid', placeItems: 'center', height: '100vh' }}
+            aria-busy="true"
+            aria-label="Checking sign-in"
+          >
+            <CircularProgress />
+          </Box>
+        </Themed>
+      </SettingsProvider>
     );
   }
 
   return (
-    <ThemeProvider theme={theme}>
-      <CssBaseline />
-      <BrowserRouter>
-        <SessionWatcher />
-        <Routes>
-          {/* Old links (and the backend's error redirects) land on the home page */}
-          <Route path="/login" element={<ToHome />} />
-          <Route path="/auth/callback" element={<ToHome />} />
-          {/* The site: Contacts and Atlas areas (or the welcome page when signed out) */}
-          <Route path="/*" element={<SiteShell />} />
-        </Routes>
-      </BrowserRouter>
-    </ThemeProvider>
+    <SettingsProvider signedIn={isAuthenticated}>
+      <Themed>
+        <BrowserRouter>
+          <SessionWatcher />
+          <Routes>
+            {/* Old links (and the backend's error redirects) land on the home page */}
+            <Route path="/login" element={<ToHome />} />
+            <Route path="/auth/callback" element={<ToHome />} />
+            {/* The site: Contacts and Atlas areas (or the welcome page when signed out) */}
+            <Route path="/*" element={<SiteShell />} />
+          </Routes>
+        </BrowserRouter>
+      </Themed>
+    </SettingsProvider>
   );
 };
 

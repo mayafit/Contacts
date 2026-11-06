@@ -1,0 +1,18 @@
+{{- if .Values.limitRange.enabled }}
+# A default for any container that declares no requests or limits (AD-51 rule 7, AD-8);
+# every container of this chart sets its own
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: {{ .Release.Name }}-defaults
+  labels:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/part-of: contacts
+spec:
+  limits:
+    - type: Container
+      default:
+        {{- toYaml .Values.limitRange.default | nindent 8 }}
+      defaultRequest:
+        {{- toYaml .Values.limitRange.defaultRequest | nindent 8 }}
+{{- end }}

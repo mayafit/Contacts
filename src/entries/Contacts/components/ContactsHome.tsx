@@ -44,10 +44,36 @@ import {
   Logout as LogoutIcon,
   Refresh,
   Search,
+  Star,
+  StarBorder,
   ViewColumn,
 } from '@mui/icons-material';
 import { logoutUser } from '../redux/slices/auth/authSlice';
 import TrashView from './cleanup/TrashView';
+import { isFavourite, STAR_COLOR } from './common/FavouriteStar';
+import { onNotify } from './common/notify';
+import { useLabelSync } from '../hooks/useLabelSync';
+import { changeMembership, STARRED } from '../redux/thunks/labelThunks';
+import { useSegments } from '../hooks/useSegments';
+import { useProfiles } from '../hooks/useProfiles';
+import type { DossierData } from './card/Dossier';
+import ProfilesCard from './insights/ProfilesCard';
+import {
+  labelDiff,
+  mainCountryOf,
+  matchesSegment,
+  membersOf,
+  newSegmentId,
+  type Segment,
+  type SegmentContext,
+} from '../model/segments';
+import SegmentMenu, { type SegmentFigures } from './segments/SegmentMenu';
+import SegmentEditor from './segments/SegmentEditor';
+import LabelsManager from './segments/LabelsManager';
+import UpdateLabelDialog from './segments/UpdateLabelDialog';
+import LabelMenu from './segments/LabelMenu';
+import FavouritesCard from './insights/FavouritesCard';
+import SuggestedSegments from './insights/SuggestedSegments';
 import { trashContacts } from '../redux/thunks/cleanupThunks';
 import { selectIsAuthenticated, selectUser } from '../redux/slices/auth/selectors';
 import SignedOutHome from './SignedOutHome';
@@ -82,6 +108,7 @@ import { analyzeOrganizations, type DomainInsight } from '../model/organizations
 import { useAppSelector, useAppDispatch } from '../types/hooks';
 import type { Contact, ContactGroup } from '../types/Contact';
 import {
+  clean,
   getDisplayName,
   getPhoneticName,
   hasName,
@@ -96,6 +123,7 @@ import { buildActivityIndex } from '../model/activity';
 import ActivitySection from './insights/ActivitySection';
 import ReachOutSection from './insights/ReachOutSection';
 import SuggestEmailsDialog from './insights/SuggestEmailsDialog';
+import OtherContactsDialog from './insights/OtherContactsDialog';
 import SignatureDialog from './insights/SignatureDialog';
 import AssistantPanel from './assistant/AssistantPanel';
 import MobileContactList from './table/MobileContactList';
@@ -103,6 +131,7 @@ import DeviceSyncDialog from './device/DeviceSyncDialog';
 import { platformOf, saveToDevice } from '../device/device';
 import { backendApiClient } from '../../../services/api/BackendApiClient';
 import { selectColumnConfig, setColumnConfig } from '../redux/slices/ui/uiSlice';
+import { fs } from '../settings/uiSettings';
 
 type View = 'contacts' | 'insights' | 'duplicates' | 'trash';
 
@@ -111,6 +140,7 @@ export const TRASH_LABEL_NAME = 'Contacts app – Trash';
 
 const FILTERS: { id: ContactFilter; label: string }[] = [
   { id: 'all', label: 'All' },
+  { id: 'favourites', label: 'Favourites' },
   { id: 'missingPhonetic', label: 'Missing phonetic' },
   { id: 'noPhone', label: 'No phone' },
   { id: 'noEmail', label: 'No email' },
@@ -161,6 +191,10 @@ const SignedInHome: React.FC = () => {
   const [mergeTargets, setMergeTargets] = useState<Contact[] | null>(null);
   const [deletePermanent, setDeletePermanent] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  // Messages from stars and label chips anywhere in the workspace
+  useEffect(() => onNotify(setToast), []);
+  // Favourites and labels in step with Google (AD-44 rule 3)
+  useLabelSync(allContacts);
   const [reviewDomain, setReviewDomain] = useState<DomainInsight | null>(null);
   const [isColumnConfigOpen, setIsColumnConfigOpen] = useState(false);
   const [accountAnchor, setAccountAnchor] = useState<HTMLElement | null>(null);
@@ -169,6 +203,7 @@ const SignedInHome: React.FC = () => {
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [phoneSyncOpen, setPhoneSyncOpen] = useState(false);
   const [suggestOpen, setSuggestOpen] = useState(false);
+  const [otherOpen, setOtherOpen] = useState(false);
   // Signature reader: the most-emailed contacts ('auto'), or chosen ones
   const [signatureTargets, setSignatureTargets] = useState<Contact[] | 'auto' | null>(null);
   // A message for the assistant to answer as soon as it opens (e.g. "Draft")
@@ -192,6 +227,14 @@ const SignedInHome: React.FC = () => {
     [contacts, activity.people],
   );
 
+  // Epic 17: segments (AD-45)
+  const segmentsState = useSegments();
+  const { segments } = segmentsState;
+  const [segmentId, setSegmentId] = useState<string | null>(null);
+  const [editingSegment, setEditingSegment] = useState<Segment | null>(null);
+  const [labelsOpen, setLabelsOpen] = useState(false);
+  const [updateFor, setUpdateFor] = useState<Segment | null>(null);
+
   useEffect(() => {
     backendApiClient
       .getAssistantStatus()
@@ -208,6 +251,15 @@ const SignedInHome: React.FC = () => {
         setToast('Email content was not allowed');
       } else {
         setSignatureTargets('auto');
+      }
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+    if (params.get('connected') === 'other') {
+      setView('insights');
+      if (params.get('declined')) {
+        setToast('Other contacts were not allowed');
+      } else {
+        setOtherOpen(true);
       }
       window.history.replaceState(null, '', window.location.pathname);
     }
@@ -284,10 +336,58 @@ const SignedInHome: React.FC = () => {
     () => new Map(contacts.map((c) => [c.resourceName, searchTextOf(c)])),
     [contacts],
   );
+  const mainCountry = useMemo(() => mainCountryOf(contacts), [contacts]);
+  const segmentCtx = useMemo<SegmentContext>(
+    () => ({ activity: activityIndex ?? null, mainCountry, now: new Date(), searchIndex }),
+    [activityIndex, mainCountry, searchIndex],
+  );
+  const segmentMembers = useMemo(
+    () => new Map(segments.map((s) => [s.id, membersOf(contacts, s, segmentCtx)])),
+    [segments, contacts, segmentCtx],
+  );
+  const segmentFigures = useMemo(() => {
+    const figures = new Map<string, SegmentFigures>();
+    segments.forEach((s) => {
+      const members = segmentMembers.get(s.id) ?? [];
+      // A label deleted since is no link
+      const diff = s.label && groups[s.label] ? labelDiff(members, contacts, s.label) : null;
+      figures.set(s.id, {
+        count: members.length,
+        diff: diff ? { add: diff.add.length, remove: diff.remove.length } : undefined,
+      });
+    });
+    return figures;
+  }, [segments, segmentMembers, contacts, groups]);
+  const activeSegment = segments.find((s) => s.id === segmentId) ?? null;
+  // Epic 18: public profiles and the dossier (AD-46)
+  const profiles = useProfiles(contacts);
+  const dossier = useMemo<DossierData>(
+    () => ({
+      contacts,
+      activity: activityIndex ?? null,
+      threads: activity.threads,
+      segments,
+      segmentCtx,
+      gravatar: profiles.byContact,
+      signaturesAllowed: !!activity.status?.connected.signatures,
+      calendarAllowed: !!activity.status?.connected.calendar,
+      onOpenCard: setCardFor,
+    }),
+    [
+      contacts,
+      activityIndex,
+      activity.threads,
+      activity.status,
+      segments,
+      segmentCtx,
+      profiles.byContact,
+    ],
+  );
 
   const predicates = useMemo<Record<ContactFilter, (c: Contact) => boolean>>(
     () => ({
       all: () => true,
+      favourites: isFavourite,
       missingPhonetic: (c) => !getPhoneticName(c),
       noPhone: (c) => !c.phoneNumbers?.some((p) => p.value),
       noEmail: (c) => !c.emailAddresses?.some((e) => e.value),
@@ -323,10 +423,51 @@ const SignedInHome: React.FC = () => {
           predicates[filter](c) &&
           (!selection || selection.ids.has(c.resourceName)) &&
           (!label || (c.labels ?? []).includes(label)) &&
+          (!activeSegment || matchesSegment(c, activeSegment, segmentCtx)) &&
           matchesQuery(c, deferredQuery, searchIndex.get(c.resourceName)),
       ),
-    [contacts, predicates, filter, selection, label, deferredQuery, searchIndex],
+    [
+      contacts,
+      predicates,
+      filter,
+      selection,
+      label,
+      activeSegment,
+      segmentCtx,
+      deferredQuery,
+      searchIndex,
+    ],
   );
+
+  // A search that finds nobody says where its matches are: hidden by the filters, or in the
+  // Trash (left out of every view)
+  // The Trash opened from the search ticks those matches
+  const [trashPreselect, setTrashPreselect] = useState<string[] | undefined>(undefined);
+  const trashIndex = useMemo(
+    () => new Map(trashed.map((c) => [c.resourceName, searchTextOf(c)])),
+    [trashed],
+  );
+  const elsewhere = useMemo(() => {
+    if (!clean(deferredQuery)) {
+      return { filtered: 0, trash: [] as string[] };
+    }
+    return {
+      // Shown only when the table is empty
+      filtered:
+        visible.length > 0
+          ? 0
+          : contacts.filter((c) => matchesQuery(c, deferredQuery, searchIndex.get(c.resourceName)))
+              .length,
+      // Shown with any result: a search can find others while the one sought is in the Trash
+      trash: trashed
+        .filter((c) => matchesQuery(c, deferredQuery, trashIndex.get(c.resourceName)))
+        .map((c) => c.resourceName),
+    };
+  }, [visible.length, deferredQuery, contacts, searchIndex, trashed, trashIndex]);
+  const openTrashMatches = () => {
+    setTrashPreselect(elsewhere.trash);
+    setView('trash');
+  };
 
   /** Shows a set of contacts in the table, replacing other filters */
   const showContacts = useCallback((ids: string[], title: string) => {
@@ -415,7 +556,7 @@ const SignedInHome: React.FC = () => {
         '&:focus-within': { borderColor: tokens.accent },
       }}
     >
-      <Search sx={{ fontSize: 20, color: tokens.textMuted }} />
+      <Search sx={{ fontSize: fs(20), color: tokens.textMuted }} />
       <InputBase
         inputRef={phone ? undefined : searchRef}
         value={query}
@@ -441,7 +582,7 @@ const SignedInHome: React.FC = () => {
         <Box
           component="kbd"
           sx={{
-            fontSize: 12,
+            fontSize: fs(12),
             color: tokens.textMuted,
             border: `1px solid ${tokens.borderStrong}`,
             borderRadius: '5px',
@@ -530,6 +671,20 @@ const SignedInHome: React.FC = () => {
         .map((rn) => byResourceName.get(rn))
         .filter(Boolean) as Contact[],
     [checked, byResourceName],
+  );
+
+  /** Adds the contacts to favourites or removes them (AD-44 rule 2) */
+  const setFavourites = useCallback(
+    async (list: Contact[], on: boolean) => {
+      const targets = list.filter((c) => isFavourite(c) !== on).map((c) => c.resourceName);
+      const refused = await changeMembership(dispatch, targets, STARRED, on);
+      setToast(
+        refused
+          ? `Favourites not changed: ${refused}`
+          : `${fmt.format(targets.length)} ${on ? 'added to' : 'removed from'} favourites`,
+      );
+    },
+    [dispatch],
   );
 
   // Checks apply to what is on screen: a new search or filter starts a new
@@ -636,6 +791,23 @@ const SignedInHome: React.FC = () => {
           </Button>
           <Button
             size="small"
+            startIcon={<Star sx={{ color: STAR_COLOR }} />}
+            onClick={() => void setFavourites(checkedContacts, true)}
+            disabled={checkedContacts.every(isFavourite)}
+          >
+            Add to favourites
+          </Button>
+          <Button
+            size="small"
+            startIcon={<StarBorder />}
+            onClick={() => void setFavourites(checkedContacts, false)}
+            disabled={!checkedContacts.some(isFavourite)}
+          >
+            Remove from favourites
+          </Button>
+          <LabelMenu contacts={checkedContacts} groups={groups} onDone={setToast} />
+          <Button
+            size="small"
             startIcon={<SaveAlt />}
             onClick={async () => {
               const how = await saveToDevice(checkedContacts, `${checkedContacts.length} contacts`);
@@ -697,7 +869,7 @@ const SignedInHome: React.FC = () => {
             displayEmpty
             onChange={(e) => setLabel(e.target.value)}
             aria-label="Filter by label"
-            sx={{ minWidth: 150, height: 32, fontSize: 14, borderRadius: '8px' }}
+            sx={{ minWidth: 150, height: 32, fontSize: fs(14), borderRadius: '8px' }}
             renderValue={(v) => (v ? (groups[v]?.name ?? 'Label') : 'All labels')}
           >
             <MenuItem value="">All labels</MenuItem>
@@ -711,6 +883,24 @@ const SignedInHome: React.FC = () => {
             ))}
           </Select>
         )}
+        <SegmentMenu
+          segments={segments}
+          figures={segmentFigures}
+          active={activeSegment}
+          onSelect={setSegmentId}
+          onNew={() =>
+            setEditingSegment({
+              id: newSegmentId(),
+              name: '',
+              match: 'all',
+              rules: [],
+              label: null,
+            })
+          }
+          onEdit={setEditingSegment}
+          onManageLabels={() => setLabelsOpen(true)}
+          onUpdateLabel={setUpdateFor}
+        />
         <Box sx={{ flex: 1 }} />
         <Typography
           variant="body2"
@@ -720,6 +910,11 @@ const SignedInHome: React.FC = () => {
             ? `${fmt.format(contacts.length)} contacts`
             : `${fmt.format(visible.length)} of ${fmt.format(contacts.length)}`}
         </Typography>
+        {visible.length > 0 && elsewhere.trash.length > 0 && (
+          <Button size="small" onClick={openTrashMatches}>
+            +{elsewhere.trash.length} in Trash
+          </Button>
+        )}
         <Tooltip title="Choose columns">
           <IconButton
             onClick={() => setIsColumnConfigOpen(true)}
@@ -776,6 +971,20 @@ const SignedInHome: React.FC = () => {
             {contacts.length > 0 && (
               <Button sx={{ mt: 1 }} onClick={() => showFilter('all')}>
                 Clear search and filters
+              </Button>
+            )}
+            {elsewhere.filtered > 0 && (
+              <Typography variant="body2" sx={{ color: tokens.textMuted, mt: 1 }}>
+                {elsewhere.filtered === 1
+                  ? '1 contact matches'
+                  : `${elsewhere.filtered} contacts match`}{' '}
+                outside the current filters.
+              </Typography>
+            )}
+            {elsewhere.trash.length > 0 && (
+              <Button sx={{ mt: 1, display: 'block', mx: 'auto' }} onClick={openTrashMatches}>
+                {elsewhere.trash.length === 1 ? '1 match' : `${elsewhere.trash.length} matches`} in
+                Trash
               </Button>
             )}
           </Box>
@@ -841,7 +1050,7 @@ const SignedInHome: React.FC = () => {
               placeItems: 'center',
             }}
           >
-            <ContactPhone sx={{ fontSize: 18, color: '#fff' }} />
+            <ContactPhone sx={{ fontSize: fs(18), color: '#fff' }} />
           </Box>
           <Typography variant="h3" sx={{ display: { xs: 'none', sm: 'block' } }}>
             Contacts
@@ -850,12 +1059,20 @@ const SignedInHome: React.FC = () => {
 
         <Tabs
           value={view}
-          onChange={(_, v: View) => setView(v)}
+          onChange={(_, v: View) => {
+            setTrashPreselect(undefined);
+            setView(v);
+          }}
           variant="scrollable"
           scrollButtons={false}
           sx={{
             minHeight: 60,
-            '& .MuiTab-root': { minHeight: 60, px: { xs: 1, sm: 1.5 }, minWidth: 0, fontSize: 15 },
+            '& .MuiTab-root': {
+              minHeight: 60,
+              px: { xs: 1, sm: 1.5 },
+              minWidth: 0,
+              fontSize: fs(15),
+            },
           }}
         >
           <Tab value="contacts" label="Contacts" />
@@ -871,7 +1088,7 @@ const SignedInHome: React.FC = () => {
                     component="span"
                     aria-label={`${duplicateGroups.length} groups`}
                     sx={{
-                      fontSize: 12,
+                      fontSize: fs(12),
                       fontWeight: 700,
                       lineHeight: '18px',
                       minWidth: 18,
@@ -939,7 +1156,7 @@ const SignedInHome: React.FC = () => {
         >
           <Avatar
             src={user?.profilePicture}
-            sx={{ width: 32, height: 32, fontSize: 15, bgcolor: tokens.accent, color: '#fff' }}
+            sx={{ width: 32, height: 32, fontSize: fs(15), bgcolor: tokens.accent, color: '#fff' }}
           >
             {userInitial}
           </Avatar>
@@ -1011,8 +1228,15 @@ const SignedInHome: React.FC = () => {
               onShowDuplicates={() => setView('duplicates')}
               orgInsights={orgInsights}
               onReviewDomain={setReviewDomain}
+              onReviewOtherContacts={() => setOtherOpen(true)}
               activitySection={
                 <>
+                  <FavouritesCard
+                    contacts={contacts}
+                    activity={activityIndex ?? null}
+                    onOpenCard={setCardFor}
+                    onShowFavourites={() => showFilter('favourites')}
+                  />
                   <ReachOutSection
                     contacts={contacts}
                     index={activityIndex}
@@ -1051,13 +1275,29 @@ const SignedInHome: React.FC = () => {
                     onShowContacts={showContacts}
                     onAddContact={addContactForEmail}
                   />
+                  <ProfilesCard contacts={contacts} profiles={profiles} onOpenCard={setCardFor} />
+                  <SuggestedSegments
+                    contacts={contacts}
+                    ctx={segmentCtx}
+                    segments={segments}
+                    groups={groups}
+                    onSave={segmentsState.save}
+                    onShow={(members, title) =>
+                      showContacts(
+                        members.map((m) => m.resourceName),
+                        title,
+                      )
+                    }
+                  />
                 </>
               }
             />
           )}
           {view === 'trash' && (
             <TrashView
+              key={trashPreselect?.join(',') ?? 'all'}
               trashed={trashed}
+              preselect={trashPreselect}
               onRestore={restore}
               onDeleteForever={(list) => {
                 setDeletePermanent(true);
@@ -1094,6 +1334,7 @@ const SignedInHome: React.FC = () => {
         onDelete={(c) => setDeleteTargets([c])}
         activity={activityIndex}
         onReadSignature={(c) => setSignatureTargets([c])}
+        dossier={dossier}
       />
 
       <OrgSuggestionsDialog
@@ -1127,6 +1368,33 @@ const SignedInHome: React.FC = () => {
           count > 0 && setToast(`Updated ${count} contacts from their signatures`)
         }
       />
+      <SegmentEditor
+        segment={editingSegment}
+        contacts={contacts}
+        groups={groups}
+        ctx={segmentCtx}
+        onSave={async (s) => {
+          await segmentsState.save(s);
+          setSegmentId(s.id);
+        }}
+        onDelete={async (id) => {
+          await segmentsState.remove(id);
+          if (segmentId === id) {
+            setSegmentId(null);
+          }
+        }}
+        onClose={() => setEditingSegment(null)}
+      />
+      <LabelsManager open={labelsOpen} groups={groups} onClose={() => setLabelsOpen(false)} />
+      {updateFor?.label && groups[updateFor.label] && (
+        <UpdateLabelDialog
+          open
+          label={updateFor.label}
+          labelName={groups[updateFor.label]?.name ?? 'label'}
+          {...labelDiff(segmentMembers.get(updateFor.id) ?? [], contacts, updateFor.label)}
+          onClose={() => setUpdateFor(null)}
+        />
+      )}
       <SuggestEmailsDialog
         open={suggestOpen}
         onClose={() => setSuggestOpen(false)}
@@ -1137,6 +1405,35 @@ const SignedInHome: React.FC = () => {
           if (count > 0) {
             setToast(`Added ${count} emails. Re-reading mail so their history appears…`);
             // Their past mail is attributed only by a full scan
+            void activity.refresh(true);
+          }
+        }}
+      />
+      <OtherContactsDialog
+        open={otherOpen}
+        onClose={() => setOtherOpen(false)}
+        contacts={contacts}
+        allContacts={allContacts}
+        groups={groups}
+        people={activity.people}
+        ready={
+          !loading &&
+          allContacts.length > 0 &&
+          (!!activity.error ||
+            (activity.status !== null &&
+              (activity.people !== null || !(activity.status.peopleCount > 0))))
+        }
+        onApplied={(updated, created, emailsAdded) => {
+          if (updated + created === 0) {
+            return;
+          }
+          const parts = [
+            updated ? `updated ${updated} contacts` : '',
+            created ? `saved ${created} new contacts` : '',
+          ].filter(Boolean);
+          setToast(`Other contacts: ${parts.join(', ')}.`);
+          if (emailsAdded && activity.connected) {
+            // Their past mail is attributed only by a full scan (AD-48 rule 6)
             void activity.refresh(true);
           }
         }}

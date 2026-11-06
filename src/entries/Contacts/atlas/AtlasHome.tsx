@@ -3,6 +3,7 @@
  * @module Contacts/atlas/AtlasHome
  */
 
+import { useUi } from '../settings/SettingsProvider';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
@@ -54,6 +55,7 @@ import AssistantPanel from '../components/assistant/AssistantPanel';
 import { atlasToolset } from './atlasTools';
 import { tokens } from '../theme/contactsTheme';
 import { isSet } from './types';
+import { fs } from '../settings/uiSettings';
 
 const YEAR = 365 * 86_400_000;
 
@@ -69,6 +71,8 @@ const SUGGESTIONS = [
  * @returns Page element
  */
 const AtlasHome: React.FC = () => {
+  // The Owner's appearance (AD-41): a change redraws the map, the lists and the panels
+  useUi();
   const [status, setStatus] = useState<{
     configured: boolean;
     ready: boolean;
@@ -173,6 +177,49 @@ const AtlasHome: React.FC = () => {
   const [mergeFrom, setMergeFrom] = useState<string | null>(null);
   // Bumped when new results arrive, so the map fits to them (not to the old ones)
   const [fitTick, setFitTick] = useState(0);
+
+  // Opened from the Settings page's "Other settings" (FR-68): ?open=fusion or ?open=import
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const open = params.get('open');
+    if (open !== 'fusion' && open !== 'import') {
+      return;
+    }
+    if (open === 'fusion') {
+      setFusionOpen(true);
+    } else {
+      setImportOpen(true);
+    }
+    params.delete('open');
+    const rest = params.toString();
+    window.history.replaceState(null, '', window.location.pathname + (rest ? `?${rest}` : ''));
+  }, []);
+
+  // Back from allowing email content for flights (AD-42): flights are searched within the hour
+  const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('connected') !== 'mail') {
+      return;
+    }
+    if (params.get('declined')) {
+      setError('Echo may not read email content: the permission was not given.');
+    } else {
+      setNotice(
+        'Echo may now read email content; your flights are searched in your mail within the hour.',
+      );
+    }
+    params.delete('connected');
+    params.delete('declined');
+    const rest = params.toString();
+    window.history.replaceState(null, '', window.location.pathname + (rest ? `?${rest}` : ''));
+  }, []);
+
+  // The selected flight's path from its flight block (AD-42 rule 8), with the flight it is
+  // for: a path left over from the flight selected before is never drawn on the next
+  const [flightPath, setFlightPath] = useState<{ id: string; path: [number, number][] } | null>(
+    null,
+  );
 
   // Back from the Google sign-in that was asked to allow Drive (AD-40): the Google Drive tab
   const [driveAllowed, setDriveAllowed] = useState(false);
@@ -599,7 +646,7 @@ const AtlasHome: React.FC = () => {
             '&:focus-within': { borderColor: tokens.accent },
           }}
         >
-          <Search sx={{ fontSize: 20, color: tokens.textMuted }} />
+          <Search sx={{ fontSize: fs(20), color: tokens.textMuted }} />
           <InputBase
             value={text}
             onChange={(e) => setText(e.target.value)}
@@ -610,7 +657,7 @@ const AtlasHome: React.FC = () => {
           />
           {text && (
             <IconButton size="small" onClick={() => setText('')} aria-label="Clear search">
-              <Close sx={{ fontSize: 16 }} />
+              <Close sx={{ fontSize: fs(16) }} />
             </IconButton>
           )}
         </Box>
@@ -713,6 +760,11 @@ const AtlasHome: React.FC = () => {
           {error}
         </Alert>
       )}
+      {notice && (
+        <Alert severity="success" onClose={() => setNotice(null)} sx={{ borderRadius: 0 }}>
+          {notice}
+        </Alert>
+      )}
       {mergeFrom && (
         <Alert
           severity="info"
@@ -741,6 +793,7 @@ const AtlasHome: React.FC = () => {
                 selectedTrack={detail?.points}
                 selectedRoute={selectedRoute}
                 selectedId={detail?.summary.id}
+                flightPath={flightPath?.id === detail?.summary.id ? flightPath?.path : null}
                 selectedVisitId={visit?.id}
                 area={area}
                 drawing={drawing}
@@ -845,6 +898,10 @@ const AtlasHome: React.FC = () => {
               <ActivityPanel
                 key={detail.summary.id}
                 detail={detail}
+                onFlightPath={(path) => {
+                  const id = detail.summary.id;
+                  setFlightPath((cur) => (path ? { id, path } : cur?.id === id ? null : cur));
+                }}
                 onBack={() => {
                   setDetail(null);
                   setCursor(null);

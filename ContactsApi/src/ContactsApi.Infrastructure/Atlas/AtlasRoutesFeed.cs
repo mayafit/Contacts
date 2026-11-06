@@ -39,15 +39,13 @@ public class AtlasRoutesFeed
     /// Owners with Atlas data. There is no allowlist yet (AD-29, Phase 0), so this is
     /// every owner with an activity; the allowlist's active filter joins here when it exists.
     /// </summary>
+    /// <remarks>
+    /// Spans Owners, so it asks atlas.sys_owners('activities') (AD-49 rule 5: the same loose
+    /// index scan, inside a definer function that returns ids only); the caller marks the
+    /// work unscoped.
+    /// </remarks>
     public Task<List<string>> OwnersAsync(CancellationToken ct = default) =>
-        // A loose index scan over (OwnerId, StartTime): one index probe per owner
-        _db.Database.SqlQuery<string>($@"
-            WITH RECURSIVE o AS (
-                (SELECT ""OwnerId"" AS v FROM atlas.activities ORDER BY ""OwnerId"" LIMIT 1)
-                UNION ALL
-                SELECT (SELECT ""OwnerId"" FROM atlas.activities WHERE ""OwnerId"" > o.v ORDER BY ""OwnerId"" LIMIT 1)
-                  FROM o WHERE o.v IS NOT NULL)
-            SELECT v AS ""Value"" FROM o WHERE v IS NOT NULL").ToListAsync(ct);
+        _db.SysOwnersAsync(SysOwnerKinds.Activities, ct);
 
     /// <summary>
     /// Source records whose track or fused type may have changed after the cursor,

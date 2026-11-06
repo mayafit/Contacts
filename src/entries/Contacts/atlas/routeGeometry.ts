@@ -4,6 +4,8 @@
  * @module Contacts/atlas/routeGeometry
  */
 
+import { currentUi, dashArray } from '../settings/uiSettings';
+import type { UiSettings } from '../settings/uiSettings';
 import type {
   ActivityRouteInfo,
   ActivitySummary,
@@ -117,25 +119,41 @@ export const splitPieces = (
   return runs;
 };
 
-/** Leaflet path options of a piece: observed solid, inferred amber dashes, gaps faint dotted */
+/**
+ * Leaflet path options of a piece, from the Owner's route styles (AD-41): observed solid,
+ * inferred dashed, gaps faint dotted by default
+ */
 export const pieceStyle = (
   kind: RoutePiece['kind'],
   color: string,
+  r: UiSettings['routes'] = currentUi().routes,
 ): { color: string; weight: number; opacity: number; dashArray?: string } => {
   switch (kind) {
     case 'inferred':
-      return { color: INFERRED_COLOR, weight: 4, opacity: 1, dashArray: '8 6' };
+      return {
+        color: INFERRED_COLOR,
+        weight: r.inferred.width,
+        opacity: 1,
+        dashArray: dashArray(r.inferred.pattern, r.inferred.width),
+      };
     case 'gap':
-      return { color: '#9ca3af', weight: 1.5, opacity: 0.55, dashArray: '1 5' };
+      return {
+        color: currentUi().colors.gap,
+        weight: r.gap.width,
+        opacity: 0.55,
+        dashArray: dashArray(r.gap.pattern, r.gap.width),
+      };
     default:
-      return { color, weight: 4.5, opacity: 0.95 };
+      return { color, weight: r.observedWidth, opacity: 0.95 };
   }
 };
 
-/** The solid dark casing drawn under an inferred stretch's dashes */
-export const inferredCasingStyle = (): { color: string; weight: number; opacity: number } => ({
+/** The solid dark casing drawn under an inferred stretch's dashes (2.5 px wider than them) */
+export const inferredCasingStyle = (
+  r: UiSettings['routes'] = currentUi().routes,
+): { color: string; weight: number; opacity: number } => ({
   color: INFERRED_CASING,
-  weight: 6.5,
+  weight: r.inferred.width + 2.5,
   opacity: 0.75,
 });
 

@@ -1,0 +1,24 @@
+{{- /*
+No credential defaults (AD-52 rule 1, AD-50 rule 1). Postgres and Redis read their
+passwords only from Secrets the operator creates from Vault; a release without them,
+or with a password in values, does not render. Nothing is emitted.
+*/ -}}
+{{- $pg := .Values.postgresql.auth -}}
+{{- if or $pg.password $pg.postgresPassword -}}
+{{- fail "postgresql.auth.password / postgresPassword must not be set: use postgresql.auth.existingSecret (a Secret created from Vault, AD-52)" -}}
+{{- end -}}
+{{- $_ := required "postgresql.auth.existingSecret is required: a Secret created from Vault with the keys postgres-password and password (AD-52 rule 1)" $pg.existingSecret -}}
+{{- $redis := .Values.redis.auth -}}
+{{- if not $redis.enabled -}}
+{{- fail "redis.auth.enabled must be true (AD-50 rule 1)" -}}
+{{- end -}}
+{{- if $redis.password -}}
+{{- fail "redis.auth.password must not be set: use redis.auth.existingSecret (a Secret created from Vault Redis__Password, AD-50 rule 1)" -}}
+{{- end -}}
+{{- $_ := required "redis.auth.existingSecret is required: a Secret created from Vault secret/data/contacts Redis__Password (AD-50 rule 1)" $redis.existingSecret -}}
+{{- if .Values.redis.networkPolicy.allowExternal -}}
+{{- fail "redis.networkPolicy.allowExternal must be false (AD-50 rule 1)" -}}
+{{- end -}}
+{{- if .Values.postgresql.primary.networkPolicy.allowExternal -}}
+{{- fail "postgresql.primary.networkPolicy.allowExternal must be false (AD-51 rule 2)" -}}
+{{- end -}}

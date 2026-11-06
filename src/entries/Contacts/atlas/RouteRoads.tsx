@@ -11,6 +11,7 @@ import type { RouteRoad } from './types';
 import { visibleRoads } from './filters';
 import { formatDistance } from './geo';
 import { tokens } from '../theme/contactsTheme';
+import { fs } from '../settings/uiSettings';
 
 /** Props for RouteRoads */
 export interface RouteRoadsProps {
@@ -28,7 +29,7 @@ const signSx = {
   border: `1.5px solid ${tokens.text}`,
   bgcolor: tokens.surface,
   color: tokens.text,
-  fontSize: 11,
+  fontSize: fs(11),
   fontWeight: 700,
   lineHeight: 1,
   '&:hover': { bgcolor: 'rgba(57, 135, 229, 0.16)' },

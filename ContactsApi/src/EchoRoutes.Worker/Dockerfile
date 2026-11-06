@@ -8,7 +8,7 @@
 ###############################
 # Stage 1: Build (runs on build host's native arch)
 ###############################
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:9.0-alpine AS build
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0.403-alpine3.24@sha256:cc02b814237a76c4735fb6eeee87181597b5e56f2ce458a435e527674d91f4d7 AS build
 
 # Resolve dotnet RID from Docker TARGETARCH (amd64→x64, arm64→arm64)
 ARG TARGETARCH
@@ -48,7 +48,7 @@ RUN dotnet publish -c Release -o /app/publish \
 ###############################
 # Stage 2: Runtime (runs on target arch)
 ###############################
-FROM mcr.microsoft.com/dotnet/aspnet:9.0-alpine
+FROM mcr.microsoft.com/dotnet/aspnet:10.0.14-alpine3.24@sha256:254fe017495996d3abcc487ffacdcce2b73affb380d3af87af12c8dff41fe0b0
 
 # Add metadata labels (CIS 4.3)
 LABEL maintainer="contacts-team" \

@@ -40,7 +40,7 @@ export const systemPrompt = (ctx: AssistantContext): string => {
     `The address book has ${ctx.contacts.length} contacts (${ctx.trashed.length} more in the app's Trash).`,
     `Labels: ${labels.length ? labels.join(', ') : 'none'}.`,
     ctx.activityReady
-      ? 'Email and meeting activity (Gmail senders/recipients and Calendar meetings of the last year) is available through the tools.'
+      ? 'Email and meeting activity (Gmail senders/recipients and Calendar meetings over the scan period the Owner set, 1 year by default) is available through the tools.'
       : 'Email and meeting activity is NOT connected; if asked, say it can be connected on the Insights tab.',
     '',
     'Rules:',

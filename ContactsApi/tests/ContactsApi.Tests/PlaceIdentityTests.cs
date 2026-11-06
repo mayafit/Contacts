@@ -138,7 +138,7 @@ public class PlaceIdentityDbTests
         // Ambiguous where the shop is next to the station
         handler.WithShop = true;
         GeoLookupClient.ClearCaches();
-        while (await svc.IdentifyPendingPlacesAsync(geo, 10) > 0)
+        while (await svc.IdentifyPendingPlacesAsync(owner, geo, 10) > 0)
         {
         }
 

@@ -11,7 +11,9 @@ import {
   getPhoneticName,
   indexLetterOf,
   initialsOf,
+  foldForSearch,
   matchesQuery,
+  searchTextOf,
   phoneKey,
   scriptOf,
   splitFullName,
@@ -160,6 +162,30 @@ describe('matchesQuery', () => {
     const local = { resourceName: 'p3', phoneNumbers: [{ value: '+972 50-123-4567' }] };
     expect(matchesQuery(other, '050')).toBe(false);
     expect(matchesQuery(local, '050')).toBe(true);
+  });
+
+  it('finds a Hebrew name stored with direction marks, vowel points or in another name part', () => {
+    // An RLM inside the word, as phones and vCards import it
+    const marked = contact({
+      names: [{ displayName: 'רחל שר\u200Fמן', familyName: 'שר\u200Fמן' }],
+    });
+    // Niqqud
+    const pointed = contact({ names: [{ givenName: 'רָחֵל', familyName: 'שֶׁרְמָן' }] });
+    // The family name only in the middle name, or in a second name entry
+    const middle = contact({ names: [{ givenName: 'רחל', middleName: 'שרמן' }] });
+    const second = contact({ names: [{ givenName: 'רחל' }, { familyName: 'שרמן' }] });
+    [marked, pointed, middle, second].forEach((x) => expect(matchesQuery(x, 'שרמן')).toBe(true));
+    expect(matchesQuery(pointed, 'רחל שרמן')).toBe(true);
+    // The query is folded too
+    expect(matchesQuery(middle, 'שֶׁרְמָן\u200F')).toBe(true);
+    expect(matchesQuery(middle, 'כהן')).toBe(false);
+  });
+
+  it('treats geresh and apostrophes, and accents, alike', () => {
+    const george = contact({ names: [{ displayName: 'ג׳ורג׳ José' }] });
+    expect(matchesQuery(george, "ג'ורג'")).toBe(true);
+    expect(matchesQuery(george, 'jose')).toBe(true);
+    expect(searchTextOf(george)).toBe(foldForSearch('ג׳ורג׳ José'));
   });
 });
 

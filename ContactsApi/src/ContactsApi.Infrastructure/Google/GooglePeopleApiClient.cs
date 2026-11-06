@@ -389,6 +389,101 @@ public class GooglePeopleApiClient
     }
 
     /// <summary>
+    /// The members of labels (AD-44 rule 3): one <c>contactGroups:batchGet</c> per 200 labels
+    /// </summary>
+    /// <param name="groupResourceNames">Labels</param>
+    /// <returns>Label → its members' resource names</returns>
+    public async Task<Dictionary<string, List<string>>> GroupMembersAsync(IReadOnlyList<string> groupResourceNames)
+    {
+        var result = new Dictionary<string, List<string>>();
+        try
+        {
+            foreach (var chunk in groupResourceNames.Distinct().Chunk(200))
+            {
+                var request = _peopleService.ContactGroups.BatchGet();
+                request.ResourceNames = chunk;
+                request.MaxMembers = 20000;
+                request.GroupFields = "name,groupType,memberCount";
+                var response = await request.ExecuteAsync();
+                foreach (var r in response.Responses ?? new List<ContactGroupResponse>())
+                {
+                    if (r.ContactGroup?.ResourceName is { } name)
+                    {
+                        result[name] = r.ContactGroup.MemberResourceNames?.ToList() ?? new List<string>();
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            throw Translate(ex, GoogleApiErrorCodes.ModifyGroupFailed, "Failed to read label members", null);
+        }
+
+        return result;
+    }
+
+    /// <summary>Creates a user label (AD-45 rule 1)</summary>
+    /// <param name="name">Its name</param>
+    /// <returns>The label</returns>
+    public async Task<ContactGroup> CreateGroupAsync(string name)
+    {
+        try
+        {
+            var created = await _peopleService.ContactGroups.Create(new CreateContactGroupRequest
+            {
+                ContactGroup = new global::Google.Apis.PeopleService.v1.Data.ContactGroup { Name = name }
+            }).ExecuteAsync();
+            return new ContactGroup
+            {
+                ResourceName = created.ResourceName ?? string.Empty,
+                Name = created.FormattedName ?? created.Name ?? name,
+                GroupType = created.GroupType ?? "USER_CONTACT_GROUP",
+                MemberCount = created.MemberCount ?? 0
+            };
+        }
+        catch (Exception ex)
+        {
+            throw Translate(ex, GoogleApiErrorCodes.ModifyGroupFailed, $"Failed to create label {name}", null);
+        }
+    }
+
+    /// <summary>Renames a user label, with its current etag (AD-45 rule 1)</summary>
+    /// <param name="resourceName">The label</param>
+    /// <param name="name">Its new name</param>
+    public async Task RenameGroupAsync(string resourceName, string name)
+    {
+        try
+        {
+            var current = await _peopleService.ContactGroups.Get(resourceName).ExecuteAsync();
+            await _peopleService.ContactGroups.Update(new UpdateContactGroupRequest
+            {
+                ContactGroup = new global::Google.Apis.PeopleService.v1.Data.ContactGroup { Name = name, ETag = current.ETag },
+                UpdateGroupFields = "name"
+            }, resourceName).ExecuteAsync();
+        }
+        catch (Exception ex)
+        {
+            throw Translate(ex, GoogleApiErrorCodes.ModifyGroupFailed, $"Failed to rename label {resourceName}", null);
+        }
+    }
+
+    /// <summary>Deletes a user label, never its contacts (AD-45 rule 1)</summary>
+    /// <param name="resourceName">The label</param>
+    public async Task DeleteGroupAsync(string resourceName)
+    {
+        try
+        {
+            var delete = _peopleService.ContactGroups.Delete(resourceName);
+            delete.DeleteContacts = false;
+            await delete.ExecuteAsync();
+        }
+        catch (Exception ex)
+        {
+            throw Translate(ex, GoogleApiErrorCodes.ModifyGroupFailed, $"Failed to delete label {resourceName}", null);
+        }
+    }
+
+    /// <summary>
     /// Adds and removes members of a label, in Google's batches of at most 1000
     /// </summary>
     /// <param name="groupResourceName">Label</param>

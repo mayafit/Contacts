@@ -8,7 +8,9 @@ data:
   ASPNETCORE_ENVIRONMENT: {{ .Values.config.ASPNETCORE_ENVIRONMENT | quote }}
   ASPNETCORE_URLS: {{ .Values.config.ASPNETCORE_URLS | quote }}
   DOTNET_RUNNING_IN_CONTAINER: {{ .Values.config.DOTNET_RUNNING_IN_CONTAINER | quote }}
-  Redis__ConnectionString: {{ printf "%s-redis-master:%v" .Release.Name (.Values.global.redis.port | int) | quote }}
+  # Host only. With Redis auth on, the Vault Agent template renders the full string
+  # (with the password) and it overrides this one
+  Redis__ConnectionString: {{ include "backend.redisHost" . | quote }}
   {{- $publicUrl := required "global.publicUrl is required (e.g. https://contacts.example.com)" .Values.global.publicUrl | trimSuffix "/" }}
   # All three derive from the URL the browser uses. RedirectUri must also be
   # registered on the Google OAuth client, character for character.
@@ -19,6 +21,11 @@ data:
   Cors__AllowedOrigins__0: {{ $publicUrl | quote }}
   OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.config.OTEL_EXPORTER_OTLP_ENDPOINT | quote }}
   JAEGER_ENDPOINT: {{ .Values.config.JAEGER_ENDPOINT | quote }}
+  # Row-level security (AD-49 rule 8): the interceptor's mode, the policy migrations'
+  # gate, and whether the API still migrates at startup (not once the init container does)
+  RowLevelSecurity__Mode: {{ .Values.rowLevelSecurity.mode | quote }}
+  RowLevelSecurity__Policies: {{ .Values.rowLevelSecurity.policies | quote }}
+  RowLevelSecurity__MigrateOnStartup: {{ not .Values.migrations.initContainer | quote }}
   {{- if .Values.routes.enabled }}
   # The route-quality service (/internal/v1, cluster-only); its token comes from Vault
   Routes__ServiceUrl: {{ printf "http://%s-routes:%v" .Release.Name (.Values.routes.port | int) | quote }}

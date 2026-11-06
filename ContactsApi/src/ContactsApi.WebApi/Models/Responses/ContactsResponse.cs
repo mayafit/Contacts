@@ -22,6 +22,15 @@ public class BatchDeleteRequest
 }
 
 /// <summary>
+/// Request to create or rename a label
+/// </summary>
+public class LabelNameRequest
+{
+    /// <summary>The label's name</summary>
+    public string Name { get; set; } = string.Empty;
+}
+
+/// <summary>
 /// Request to add contacts to, and remove them from, one label
 /// </summary>
 public class LabelMembersRequest

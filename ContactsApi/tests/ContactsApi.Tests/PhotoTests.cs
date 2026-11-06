@@ -194,7 +194,7 @@ public class PhotoDbTests
         // Not placed yet: the ride finds its photos by time
         Assert.Equal(new[] { "gps.jpg", "nogps.jpg" }, (await svc.ActivityPhotosAsync(owner, rideId)).Select(p => p.Name));
 
-        while (await svc.PlacePendingPhotosAsync(500) > 0)
+        while (await svc.PlacePendingPhotosAsync(owner, 500) > 0)
         {
         }
 

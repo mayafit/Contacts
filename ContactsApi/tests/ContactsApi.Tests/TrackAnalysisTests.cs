@@ -189,7 +189,7 @@ public class ActivityAnalysisDbTests
         Guid? after = null;
         do
         {
-            after = await svc.AnalyzePendingEffortsAsync(3, after);
+            after = await svc.AnalyzePendingEffortsAsync(owner, 3, after);
         }
         while (after != null);
 

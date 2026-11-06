@@ -20,9 +20,23 @@ public class OptIns
     /// <summary>Reading Takeout exports from Google Drive (AD-40)</summary>
     public bool Takeout { get; set; }
 
+    /// <summary>Reading Google's Other contacts, for suggestions (AD-48)</summary>
+    public bool OtherContacts { get; set; }
+
     /// <summary>Both sets of opt-ins combined</summary>
     public OptIns With(OptIns other) =>
-        new() { Activity = Activity || other.Activity, Signatures = Signatures || other.Signatures, Takeout = Takeout || other.Takeout };
+        new()
+        {
+            Activity = Activity || other.Activity, Signatures = Signatures || other.Signatures, Takeout = Takeout || other.Takeout,
+            OtherContacts = OtherContacts || other.OtherContacts
+        };
+}
+
+/// <summary>The scope of the Other contacts opt-in (AD-48 rule 1)</summary>
+public static class OtherContactsScopes
+{
+    /// <summary>Other contacts, read only</summary>
+    public const string Read = "https://www.googleapis.com/auth/contacts.other.readonly";
 }
 
 /// <summary>The Drive scope of the Takeout opt-in (AD-40 rule 2)</summary>
@@ -70,7 +84,8 @@ public class ScopePreferences
     {
         Signatures = scopes.Contains(ActivityScopes.GmailRead),
         Activity = scopes.Contains(ActivityScopes.Gmail) || scopes.Contains(ActivityScopes.Calendar),
-        Takeout = scopes.Contains(TakeoutScopes.Drive)
+        Takeout = scopes.Contains(TakeoutScopes.Drive),
+        OtherContacts = scopes.Contains(OtherContactsScopes.Read)
     };
 
     /// <summary>Saves the user's opt-ins</summary>
@@ -107,6 +122,11 @@ public class ScopePreferences
         if (optIns.Takeout)
         {
             scopes.Add(TakeoutScopes.Drive);
+        }
+
+        if (optIns.OtherContacts)
+        {
+            scopes.Add(OtherContactsScopes.Read);
         }
 
         return scopes.Distinct().ToList();

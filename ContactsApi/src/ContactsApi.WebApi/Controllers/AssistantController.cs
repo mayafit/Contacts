@@ -35,6 +35,16 @@ public class AssistantSearchRequest
     public string Query { get; set; } = string.Empty;
 }
 
+/// <summary>Hebrew name words to spell (FR-77)</summary>
+public class TransliterateRequest
+{
+    /// <summary>At most 20 words</summary>
+    public List<string> Words { get; set; } = new();
+
+    /// <summary>The whole name's words in order, for Google Translate's context (optional)</summary>
+    public List<string>? Name { get; set; }
+}
+
 /// <summary>
 /// Forwards the assistant's conversation to Gemini so the API key stays on the
 /// server. The agent loop and its tools run in the browser; this only adds the
@@ -53,24 +63,29 @@ public class AssistantController : ControllerBase
 
     private readonly GeminiService _gemini;
     private readonly GoogleTokenService _tokens;
+    private readonly NameTranslator _translator;
     private readonly ILogger<AssistantController> _logger;
 
     /// <summary>Creates the controller</summary>
     public AssistantController(
         GeminiService gemini,
         GoogleTokenService tokens,
+        NameTranslator translator,
         ILogger<AssistantController> logger)
     {
         _gemini = gemini;
         _tokens = tokens;
+        _translator = translator;
         _logger = logger;
     }
 
     /// <summary>Whether the assistant is available</summary>
-    /// <returns>Enabled flag and model</returns>
+    /// <returns>Enabled flag and model; 401 without a session (it reveals the model, AD-50 rule 10)</returns>
     [HttpGet("status")]
     public IActionResult Status() =>
-        Ok(ApiResponse<object>.SuccessResponse(new { enabled = _gemini.Enabled, model = _gemini.Model }));
+        HttpContext.OwnerId() == null
+            ? Unauthorized(ApiResponse<object>.ErrorResponse("SESSION_EXPIRED", "Your Google session expired. Please sign in again."))
+            : Ok(ApiResponse<object>.SuccessResponse(new { enabled = _gemini.Enabled, model = _gemini.Model }));
 
     /// <summary>
     /// One generateContent call. Body: systemInstruction, contents, tools, toolConfig
@@ -173,6 +188,100 @@ public class AssistantController : ControllerBase
         });
     }
 
+    /// <summary>
+    /// Latin spellings of Hebrew name words for the phonetic fill (AD-43 rule 4): Google
+    /// Translate first, with the whole name for context; Gemini for the words it did not
+    /// spell. Only spellings of Latin letters come back.
+    /// </summary>
+    /// <param name="body">The words, and the name they are in</param>
+    /// <returns>Word → spelling, and word → its source (translate, gemini)</returns>
+    [HttpPost("transliterate")]
+    public async Task<IActionResult> Transliterate([FromBody] TransliterateRequest body)
+    {
+        var words = Transliteration.Check(body?.Words);
+        // The name is only context: its odd words are dropped, not refused
+        var name = Transliteration.CheckName(body?.Name);
+        if (words == null)
+        {
+            return BadRequest(ApiResponse<object>.ErrorResponse("INVALID_INPUT",
+                $"Up to {Transliteration.MaxWords} Hebrew name words, each up to 40 letters"));
+        }
+
+        if (await _tokens.GetAccessTokenAsync(HttpContext) == null)
+        {
+            return Unauthorized(ApiResponse<object>.ErrorResponse("SESSION_EXPIRED", "Your Google session expired. Please sign in again."));
+        }
+
+        var user = HttpContext.OwnerId() ?? string.Empty;
+        var spellings = new JsonObject();
+        var sources = new JsonObject();
+        // Why Google Translate gave nothing, said when nothing else spells the words
+        string? translateWhy = null;
+        // The same allowance as the Assistant's, in its own per-minute bucket; refused, the
+        // words go to Gemini
+        if (_translator.Enabled && (translateWhy = _gemini.TryConsume(user, "translate", 30, DailyLimit)) == null)
+        {
+            try
+            {
+                // Without a name, the words are their own context
+                var spelled = await _translator.SpellAsync(name ?? words, HttpContext.RequestAborted);
+                foreach (var w in words.Where(spelled.ContainsKey))
+                {
+                    spellings[w] = spelled[w];
+                    sources[w] = "translate";
+                }
+            }
+            catch (Exception ex) when (!HttpContext.RequestAborted.IsCancellationRequested)
+            {
+                // Refused, unreachable, too slow or an odd answer: Gemini is asked instead
+                _logger.LogWarning(ex, "Google Translate did not spell a name");
+                translateWhy = "Google Translate did not answer";
+            }
+        }
+
+        var left = words.Where(w => !spellings.ContainsKey(w)).ToList();
+        if (left.Count > 0 && _gemini.Enabled)
+        {
+            var refusal = _gemini.TryConsume(user, "phonetic", 30, DailyLimit);
+            if (refusal == null)
+            {
+                var result = await _gemini.GenerateAsync(Transliteration.Request(left), HttpContext.RequestAborted);
+                if (result.Ok)
+                {
+                    foreach (var (word, spelling) in Transliteration.Parse(result.Body, left))
+                    {
+                        spellings[word] = spelling;
+                        sources[word] = "gemini";
+                    }
+                }
+                else if (spellings.Count == 0)
+                {
+                    return StatusCode(result.Status, ApiResponse<object>.ErrorResponse(result.Code!, result.Error!));
+                }
+            }
+            else if (spellings.Count == 0)
+            {
+                return StatusCode(StatusCodes.Status429TooManyRequests, ApiResponse<object>.ErrorResponse("RATE_LIMITED", refusal));
+            }
+        }
+        else if (left.Count > 0 && spellings.Count == 0)
+        {
+            return !_translator.Enabled
+                ? StatusCode(StatusCodes.Status503ServiceUnavailable,
+                    ApiResponse<object>.ErrorResponse("ASSISTANT_DISABLED", "Neither Google Translate nor the assistant is configured."))
+                : translateWhy != null
+                    ? StatusCode(StatusCodes.Status502BadGateway, ApiResponse<object>.ErrorResponse("TRANSLATE_FAILED", translateWhy))
+                    : Ok(ApiResponse<JsonNode>.SuccessResponse(new JsonObject
+                    {
+                        ["spellings"] = spellings,
+                        ["sources"] = sources,
+                        ["note"] = "Google Translate's answer did not match the name word for word"
+                    }));
+        }
+
+        return Ok(ApiResponse<JsonNode>.SuccessResponse(new JsonObject { ["spellings"] = spellings, ["sources"] = sources }));
+    }
+
     /// <summary>Signed in, configured and within the limits; otherwise the refusal</summary>
     private async Task<IActionResult?> CheckAsync(string kind, int perMinute)
     {
@@ -187,7 +296,7 @@ public class AssistantController : ControllerBase
                 ApiResponse<object>.ErrorResponse("ASSISTANT_DISABLED", "The assistant is not configured (no Gemini key)."));
         }
 
-        var user = HttpContext.Session.GetString(GoogleTokenService.UserIdKey) ?? string.Empty;
+        var user = HttpContext.OwnerId() ?? string.Empty;
         var refusal = _gemini.TryConsume(user, kind, perMinute, DailyLimit);
         return refusal == null
             ? null

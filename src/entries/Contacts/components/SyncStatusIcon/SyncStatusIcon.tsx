@@ -280,7 +280,7 @@ const SyncStatusIcon: React.FC<SyncStatusIconProps> = ({
           color="error"
           data-testid="sync-status-failed"
           onClick={handleRetryClick}
-          sx={{ cursor: 'pointer' }}
+          sx={{ cursor: 'var(--echo-hand, pointer)' }}
           role="button"
           aria-label={`Retry sync for ${fieldLabel}`}
         />

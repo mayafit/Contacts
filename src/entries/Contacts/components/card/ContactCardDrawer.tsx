@@ -9,7 +9,6 @@ import {
   Alert,
   Box,
   Button,
-  Chip,
   CircularProgress,
   Dialog,
   DialogActions,
@@ -36,12 +35,14 @@ import { contactUpdated, updateContact } from '../../redux/slices/contacts/conta
 import { GoogleContactsService } from '../../services/GoogleContactsService';
 import { selectContactEntities } from '../../redux/slices/contacts/selectors';
 import ContactAvatar from '../common/ContactAvatar';
+import FavouriteStar from '../common/FavouriteStar';
+import LabelEditor from './LabelEditor';
+import Dossier, { type DossierData } from './Dossier';
 import ContactForm from './ContactForm';
 import { buildPatch, changedGroups, createDraft, validateDraft } from './cardModel';
 import {
   getDisplayName,
   getJobTitle,
-  getLabelNames,
   getOrganization,
   getPhoneticName,
 } from '../../model/contactView';
@@ -54,6 +55,7 @@ import {
 } from '../../model/activity';
 import { logger } from '../../../../shared/logger';
 import type { AppError } from '../../types';
+import { fs } from '../../settings/uiSettings';
 
 /** Props for ContactCardDrawer */
 export interface ContactCardDrawerProps {
@@ -69,6 +71,8 @@ export interface ContactCardDrawerProps {
   activity?: ActivityIndex;
   /** Read this contact's email signature for details */
   onReadSignature?: (contact: Contact) => void;
+  /** What the dossier shows beyond the contact (AD-46 rule 6) */
+  dossier?: DossierData;
 }
 
 /**
@@ -151,6 +155,7 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({
   onDelete,
   activity,
   onReadSignature,
+  dossier,
 }) => {
   const dispatch = useAppDispatch();
   const entities = useAppSelector(selectContactEntities);
@@ -159,6 +164,8 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({
   const [draft, setDraft] = useState<Contact | null>(null);
   const [saveState, setSaveState] = useState<SaveState>({ kind: 'idle' });
   const [confirmClose, setConfirmClose] = useState(false);
+  // A colleague opened from the dossier while the draft has edits: asked first
+  const [switchTo, setSwitchTo] = useState<string | null>(null);
 
   // Load a fresh draft whenever a different contact is opened
   useEffect(() => {
@@ -171,6 +178,21 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({
       setDraft(null);
     }
   }, [resourceName]);
+
+  // A star or label changed (here or by the check against Google) moves the contact's etag
+  // without changing its fields: the card takes the new etag and labels, so Save is not
+  // refused as a conflict (AD-44 rule 2)
+  useEffect(() => {
+    if (
+      contact &&
+      original &&
+      contact.resourceName === original.resourceName &&
+      contact.etag !== original.etag &&
+      changedGroups(original, createDraft(contact)).length === 0
+    ) {
+      setOriginal({ ...original, etag: contact.etag, labels: contact.labels });
+    }
+  }, [contact]);
 
   const dirtyGroups = useMemo(
     () => (original && draft ? changedGroups(original, draft) : []),
@@ -243,7 +265,6 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({
   const requestClose = () => (dirty ? setConfirmClose(true) : onClose());
 
   const open = !!resourceName && !!draft && !!original;
-  const labels = original ? getLabelNames(original, groups) : [];
   const phonetic = original ? getPhoneticName(original) : '';
   const orgLine = original
     ? [getJobTitle(original), getOrganization(original)].filter(Boolean).join(' · ')
@@ -265,13 +286,16 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({
             <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-start', p: 3, pb: 2 }}>
               <ContactAvatar contact={original} size={60} />
               <Box sx={{ flex: 1, minWidth: 0 }}>
-                <Typography
-                  variant="h2"
-                  dir="auto"
-                  sx={{ wordBreak: 'break-word', textAlign: 'left' }}
-                >
-                  {getDisplayName(original)}
-                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.5 }}>
+                  <Typography
+                    variant="h2"
+                    dir="auto"
+                    sx={{ wordBreak: 'break-word', textAlign: 'left' }}
+                  >
+                    {getDisplayName(original)}
+                  </Typography>
+                  <FavouriteStar contact={contact ?? original} size="medium" />
+                </Box>
                 <Typography
                   variant="body2"
                   dir="auto"
@@ -330,17 +354,20 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({
                 <Box
                   sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap', mt: 1, alignItems: 'center' }}
                 >
-                  {labels.map((l) => (
-                    <Chip key={l} label={l} size="small" sx={{ bgcolor: tokens.surface }} />
-                  ))}
+                  <LabelEditor contact={contact ?? original} groups={groups} />
                   <Link
                     href={googleContactsUrl(original.resourceName)}
                     target="_blank"
                     rel="noopener noreferrer"
                     underline="hover"
-                    sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, fontSize: 14 }}
+                    sx={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 0.5,
+                      fontSize: fs(14),
+                    }}
                   >
-                    Open in Google Contacts <OpenInNew sx={{ fontSize: 15 }} />
+                    Open in Google Contacts <OpenInNew sx={{ fontSize: fs(15) }} />
                   </Link>
                 </Box>
                 <Box
@@ -356,7 +383,7 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({
                       target="_blank"
                       rel="noopener noreferrer"
                       underline="hover"
-                      sx={{ fontSize: 14 }}
+                      sx={{ fontSize: fs(14) }}
                     >
                       {l.label}
                     </Link>
@@ -402,7 +429,26 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({
                   {invalid}
                 </Alert>
               )}
-              <ContactForm draft={draft} onChange={setDraft} disabled={saving} />
+              {dossier && (
+                <Dossier
+                  key={`dossier:${draft.resourceName}`}
+                  contact={contact ?? original}
+                  draft={draft}
+                  onDraftChange={setDraft}
+                  groups={groups}
+                  data={{
+                    ...dossier,
+                    onOpenCard: (rn) => (dirty ? setSwitchTo(rn) : dossier.onOpenCard(rn)),
+                  }}
+                  disabled={saving}
+                />
+              )}
+              <ContactForm
+                key={`form:${draft.resourceName}`}
+                draft={draft}
+                onChange={setDraft}
+                disabled={saving}
+              />
             </Box>
 
             {/* Footer */}
@@ -464,7 +510,13 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({
         )}
       </Drawer>
 
-      <Dialog open={confirmClose} onClose={() => setConfirmClose(false)}>
+      <Dialog
+        open={confirmClose || !!switchTo}
+        onClose={() => {
+          setConfirmClose(false);
+          setSwitchTo(null);
+        }}
+      >
         <DialogTitle>Discard unsaved changes?</DialogTitle>
         <DialogContent>
           <Typography variant="body2" sx={{ color: tokens.textSecondary }}>
@@ -473,7 +525,13 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({
           </Typography>
         </DialogContent>
         <DialogActions>
-          <Button color="inherit" onClick={() => setConfirmClose(false)}>
+          <Button
+            color="inherit"
+            onClick={() => {
+              setConfirmClose(false);
+              setSwitchTo(null);
+            }}
+          >
             Keep editing
           </Button>
           <Button
@@ -481,7 +539,13 @@ const ContactCardDrawer: React.FC<ContactCardDrawerProps> = ({
             variant="contained"
             onClick={() => {
               setConfirmClose(false);
-              onClose();
+              const next = switchTo;
+              setSwitchTo(null);
+              if (next && dossier) {
+                dossier.onOpenCard(next);
+              } else {
+                onClose();
+              }
             }}
           >
             Discard

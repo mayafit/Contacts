@@ -126,6 +126,8 @@ const FIELD_ENUM = [
   'label',
   'notes',
   'photo',
+  // Google's Starred: "has favourite" lists the favourites (AD-44 rule 5)
+  'favourite',
 ];
 
 const S = (description: string) => ({ type: 'string', description });
@@ -204,7 +206,7 @@ export const TOOL_DECLARATIONS = [
         neverInTouch: {
           type: 'boolean',
           description:
-            'Only contacts with an email address but no email or meeting in the last year',
+            'Only contacts with an email address but no email or meeting in the scan period (1 year unless the Owner set more)',
         },
         updatedAfter: S('YYYY-MM-DD: contact changed after this date'),
         sortBy: {
@@ -428,6 +430,8 @@ const hasField = (c: Contact, field: string, groups: Record<string, ContactGroup
       return !!c.emailAddresses?.some((e) => clean(e.value));
     case 'phonetic':
       return !!getPhoneticName(c);
+    case 'favourite':
+      return (c.labels ?? []).includes('contactGroups/starred');
     case 'organization':
       return !!getOrganization(c);
     case 'jobTitle':
@@ -739,7 +743,7 @@ const fullContact = (c: Contact, ctx: AssistantContext) => {
           nextMeetingTitle: a.nextMeetingTitle,
         }
       : ctx.activityReady
-        ? 'no email or meeting in the last year'
+        ? 'no email or meeting in the scan period'
         : 'activity not connected',
   };
 };

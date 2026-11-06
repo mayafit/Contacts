@@ -18,7 +18,7 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
 #pragma warning disable 612, 618
             modelBuilder
                 .HasDefaultSchema("atlas")
-                .HasAnnotation("ProductVersion", "9.0.10")
+                .HasAnnotation("ProductVersion", "10.0.14")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -30,6 +30,9 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("ExpiresAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<DateTime?>("LastUsedAt")
@@ -47,6 +50,11 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                     b.Property<string>("Prefix")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<string>("Scopes")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
 
                     b.Property<string>("TokenHash")
                         .IsRequired()
@@ -500,6 +508,73 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                     b.ToTable("places", "atlas");
                 });
 
+            modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.Flights.AtlasFlight", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ActivityId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("CheckedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("ClaimedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Details")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<DateOnly?>("FlightDate")
+                        .HasColumnType("date");
+
+                    b.Property<string>("FlightNumber")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("MailState")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("OwnerId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Source")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .IsConcurrencyToken()
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ActivityId");
+
+                    b.HasIndex("OwnerId", "ActivityId")
+                        .IsUnique();
+
+                    b.HasIndex("OwnerId", "Status");
+
+                    b.ToTable("flights", "atlas");
+                });
+
             modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.FusionDecision", b =>
                 {
                     b.Property<long>("Id")
@@ -683,6 +758,28 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                     b.HasIndex("OwnerId", "CreatedAt");
 
                     b.ToTable("imports", "atlas");
+                });
+
+            modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.OwnerSetting", b =>
+                {
+                    b.Property<string>("OwnerId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Kind")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("Json")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("OwnerId", "Kind");
+
+                    b.ToTable("owner_settings", "atlas");
                 });
 
             modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.PlaceReview", b =>
@@ -995,6 +1092,15 @@ namespace ContactsApi.Infrastructure.Atlas.Migrations
                     b.HasOne("ContactsApi.Infrastructure.Atlas.AtlasActivity", null)
                         .WithOne("Fusion")
                         .HasForeignKey("ContactsApi.Infrastructure.Atlas.ActivityFusion", "ActivityId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("ContactsApi.Infrastructure.Atlas.Flights.AtlasFlight", b =>
+                {
+                    b.HasOne("ContactsApi.Infrastructure.Atlas.AtlasActivity", null)
+                        .WithMany()
+                        .HasForeignKey("ActivityId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

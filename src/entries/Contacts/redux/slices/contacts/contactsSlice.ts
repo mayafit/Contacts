@@ -143,6 +143,46 @@ const contactsSlice = createSlice({
     },
 
     /**
+     * Adds contacts to a label or removes them (AD-44 rule 2): their labels and the
+     * label's count change at once, before Google answers
+     */
+    membershipChanged(
+      state,
+      action: PayloadAction<{ resourceNames: string[]; label: string; on: boolean }>,
+    ) {
+      const { resourceNames, label, on } = action.payload;
+      let delta = 0;
+      resourceNames.forEach((rn) => {
+        const c = state.entities[rn];
+        if (!c) {
+          return;
+        }
+        const has = (c.labels ?? []).includes(label);
+        if (on && !has) {
+          c.labels = [...(c.labels ?? []), label];
+          delta += 1;
+        } else if (!on && has) {
+          c.labels = (c.labels ?? []).filter((l) => l !== label);
+          delta -= 1;
+        }
+      });
+      const group = state.groups[label];
+      if (group) {
+        group.memberCount = Math.max(0, (group.memberCount ?? 0) + delta);
+      }
+    },
+
+    /** A label deleted: it leaves the list and every contact */
+    labelRemoved(state, action: PayloadAction<string>) {
+      delete state.groups[action.payload];
+      Object.values(state.entities).forEach((c) => {
+        if (c?.labels?.includes(action.payload)) {
+          c.labels = c.labels.filter((l) => l !== action.payload);
+        }
+      });
+    },
+
+    /**
      * Clear contacts error state
      */
     clearContactsError(state) {
@@ -198,8 +238,15 @@ const contactsSlice = createSlice({
   },
 });
 
-export const { contactAdded, contactUpdated, contactsRemoved, clearContactsError, resetContacts } =
-  contactsSlice.actions;
+export const {
+  contactAdded,
+  contactUpdated,
+  contactsRemoved,
+  clearContactsError,
+  resetContacts,
+  membershipChanged,
+  labelRemoved,
+} = contactsSlice.actions;
 
 export default contactsSlice.reducer;
 

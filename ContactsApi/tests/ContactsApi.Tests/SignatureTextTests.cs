@@ -71,4 +71,44 @@ public class SignatureTextTests
             SignatureText.CleanUrl("https://shop.example.com/item?utm_source=a&id=7#top"));
         Assert.Equal("https://example.com/", SignatureText.CleanUrl("https://example.com/"));
     }
+
+    [Fact]
+    public void A_meeting_invitation_is_recognized_by_its_calendar_part_at_any_depth()
+    {
+        // Outlook: mixed > alternative (plain, html, calendar) > the agenda attachment
+        var invite = new MessagePart
+        {
+            MimeType = "multipart/mixed",
+            Parts = new List<MessagePart>
+            {
+                new()
+                {
+                    MimeType = "multipart/alternative",
+                    Parts = new List<MessagePart>
+                    {
+                        new() { MimeType = "text/plain" },
+                        new() { MimeType = "text/html" },
+                        new() { MimeType = "text/calendar" },
+                    }
+                },
+                new() { MimeType = "application/vnd.openxmlformats-officedocument.presentationml.presentation" },
+            }
+        };
+        var mail = new MessagePart
+        {
+            MimeType = "multipart/alternative",
+            Parts = new List<MessagePart> { new() { MimeType = "text/plain" }, new() { MimeType = "text/html" } }
+        };
+        Assert.True(SignatureReader.IsInvitation(invite));
+        Assert.False(SignatureReader.IsInvitation(mail));
+        Assert.False(SignatureReader.IsInvitation(null));
+    }
+
+    [Fact]
+    public void An_outlook_invitation_has_no_text_of_the_senders_own()
+    {
+        // Why invitations are skipped: the text opens with a rule of underscores
+        var body = new string('_', 80) + "\nMicrosoft Teams meeting\nJoin: https://teams.microsoft.com/meet/1\n" + new string('_', 32);
+        Assert.Equal(string.Empty, SignatureText.AuthorTail(body));
+    }
 }

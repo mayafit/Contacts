@@ -15,6 +15,7 @@ import {
 } from '../../model/contactView';
 import { formatRelativeShort, type ActivityIndex } from '../../model/activity';
 import ContactAvatar from '../common/ContactAvatar';
+import FavouriteStar from '../common/FavouriteStar';
 import ContactActions from '../device/ContactActions';
 import { tokens } from '../../theme/contactsTheme';
 
@@ -103,7 +104,8 @@ const MobileContactList: React.FC<MobileContactListProps> = ({
                   </Typography>
                 </Box>
               </ButtonBase>
-              <Box sx={{ display: 'flex', pr: 0.5 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', pr: 0.5 }}>
+                <FavouriteStar contact={c} size="medium" />
                 <ContactActions contact={c} channels={['call', 'whatsapp']} size="medium" />
               </Box>
             </Box>

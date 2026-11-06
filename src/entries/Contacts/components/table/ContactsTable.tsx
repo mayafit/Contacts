@@ -13,13 +13,16 @@ import { Box, ButtonBase, Checkbox, Chip } from '@mui/material';
 import { ArrowDownward, ArrowUpward } from '@mui/icons-material';
 import type { Contact, ContactGroup } from '../../types/Contact';
 import { selectColumnConfig } from '../../redux/slices/ui/uiSlice';
+import { selectAllContacts } from '../../redux/slices/contacts/selectors';
 import { executeFieldUpdate } from '../../redux/thunks/syncThunks';
 import { useAppDispatch } from '../../types/hooks';
 import type { ActivityIndex } from '../../model/activity';
 import { AVAILABLE_COLUMNS } from '../../features/columnConfig/columnDefinitions';
 import type { ColumnDefinition } from '../../features/columnConfig/types';
 import { EditableCell } from '../EditableCell';
+import { cellAssistFor } from './cellAssist';
 import ContactAvatar from '../common/ContactAvatar';
+import FavouriteStar from '../common/FavouriteStar';
 import AlphabetRail, { type RailEntry } from '../common/AlphabetRail';
 import {
   compareByName,
@@ -29,6 +32,7 @@ import {
   nameCollator,
 } from '../../model/contactView';
 import { tokens } from '../../theme/contactsTheme';
+import { fs } from '../../settings/uiSettings';
 
 /** Row height in px */
 export const ROW_HEIGHT = 52;
@@ -95,6 +99,8 @@ const ContactsTable: React.FC<ContactsTableProps> = ({
   const dispatch = useAppDispatch();
   const lastChecked = useRef<string | null>(null);
   const columnConfig = useSelector(selectColumnConfig);
+  // All contacts, not the filtered rows: twins and spellings come from the whole list
+  const allContacts = useSelector(selectAllContacts);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [sort, setSort] = useState<SortState>({ columnId: 'displayName', desc: false });
   const [focusedCell, setFocusedCell] = useState<{ rowIndex: number; colIndex: number } | null>(
@@ -171,6 +177,16 @@ const ContactsTable: React.FC<ContactsTableProps> = ({
     scrollRef.current?.scrollTo?.({ top: 0 });
     setFirstVisible(0);
   }, [scrollResetKey]);
+
+  // The open card's row is brought into view, e.g. a colleague opened from the dossier
+  useEffect(() => {
+    const index = selectedResourceName
+      ? sorted.findIndex((c) => c.resourceName === selectedResourceName)
+      : -1;
+    if (index >= 0) {
+      virtualizer.scrollToIndex(index, { align: 'auto' });
+    }
+  }, [selectedResourceName]);
 
   const activeLetter = useMemo(() => {
     if (railEntries.length === 0 || sorted.length === 0) {
@@ -309,11 +325,11 @@ const ContactsTable: React.FC<ContactsTableProps> = ({
               key={l}
               label={l}
               size="small"
-              sx={{ height: 22, fontSize: 13, bgcolor: tokens.raised }}
+              sx={{ minHeight: 22, height: 'auto', fontSize: fs(13), bgcolor: tokens.raised }}
             />
           ))}
           {labels.length > 2 && (
-            <Box component="span" sx={{ color: tokens.textMuted, fontSize: 13 }}>
+            <Box component="span" sx={{ color: tokens.textMuted, fontSize: fs(13) }}>
               +{labels.length - 2}
             </Box>
           )}
@@ -349,12 +365,20 @@ const ContactsTable: React.FC<ContactsTableProps> = ({
         contactName={name}
         placeholder={PLACEHOLDERS[column.id] ?? ''}
         strong={column.id === 'displayName'}
-        leading={column.id === 'displayName' ? <ContactAvatar contact={contact} /> : undefined}
+        leading={
+          column.id === 'displayName' ? (
+            <>
+              <FavouriteStar contact={contact} quiet />
+              <ContactAvatar contact={contact} />
+            </>
+          ) : undefined
+        }
         onCommit={(text) => commit(contact, column, text)}
         onOpenCard={() => onOpenCard(contact.resourceName)}
         onNavigate={(dir) => navigate(rowIndex, colIndex, dir)}
         autoEdit={focusedCell?.rowIndex === rowIndex && focusedCell?.colIndex === colIndex}
         onAutoEditConsumed={consumeAutoEdit}
+        assist={cellAssistFor(column.id, contact, allContacts)}
       />
     );
   };
@@ -407,7 +431,7 @@ const ContactsTable: React.FC<ContactsTableProps> = ({
                     justifyContent: 'flex-start',
                     gap: 0.5,
                     px: 1.5,
-                    fontSize: 13,
+                    fontSize: fs(13),
                     fontWeight: 600,
                     letterSpacing: '0.03em',
                     textTransform: 'uppercase',
@@ -418,9 +442,9 @@ const ContactsTable: React.FC<ContactsTableProps> = ({
                   {column.label}
                   {active &&
                     (sort.desc ? (
-                      <ArrowDownward sx={{ fontSize: 15 }} />
+                      <ArrowDownward sx={{ fontSize: fs(15) }} />
                     ) : (
-                      <ArrowUpward sx={{ fontSize: 15 }} />
+                      <ArrowUpward sx={{ fontSize: fs(15) }} />
                     ))}
                 </ButtonBase>
               );
@@ -459,6 +483,8 @@ const ContactsTable: React.FC<ContactsTableProps> = ({
                         : 'transparent',
                     boxShadow: selected ? `inset 3px 0 0 ${tokens.accent}` : 'none',
                     '&:hover': { bgcolor: selected ? 'rgba(57,135,229,0.16)' : tokens.hover },
+                    // The star's outline shows on the row under the pointer (AD-44 rule 4)
+                    '&:hover .favourite-off': { opacity: 1 },
                   }}
                 >
                   {selectable && (

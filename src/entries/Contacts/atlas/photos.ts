@@ -3,10 +3,15 @@
  * @module Contacts/atlas/photos
  */
 
+import { DEFAULT_UI, onUiChange } from '../settings/uiSettings';
 import type { PhotoSummary } from './types';
 
 /** Photos on the map (a warm pink, apart from the activity colours) */
-export const PHOTO_COLOR = '#f472b6';
+// The Owner's colour (AD-41): a live binding the settings update
+export let PHOTO_COLOR = DEFAULT_UI.colors.photo;
+onUiChange((ui) => {
+  PHOTO_COLOR = ui.colors.photo;
+});
 
 /** The panels load at most this many photos (the server's limit) */
 export const PANEL_PHOTOS_MAX = 500;

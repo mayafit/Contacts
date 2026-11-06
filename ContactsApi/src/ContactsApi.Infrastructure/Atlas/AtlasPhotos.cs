@@ -195,22 +195,27 @@ public partial class AtlasService
     }
 
     /// <summary>
-    /// Places photos waiting for it (any owner): the activity and visit each was
+    /// Places the owner's photos waiting for it: the activity and visit each was
     /// taken during, and where to show it — its own position, else the activity's
     /// track at that moment, else the visit's place. A photo changed meanwhile by a
-    /// sync is left for the next run.
+    /// sync is left for the next run. One owner per transaction (AD-28, AD-49 rule 5:
+    /// the fusion service asks atlas.sys_owners('unplaced_photos') who has any).
     /// </summary>
     /// <returns>How many were looked at (0: none waiting)</returns>
-    public async Task<int> PlacePendingPhotosAsync(int limit, CancellationToken ct = default)
+    public async Task<int> PlacePendingPhotosAsync(string owner, int limit, CancellationToken ct = default)
     {
-        var batch = await _db.Photos.AsNoTracking().Where(p => !p.Placed)
-            .OrderBy(p => p.OwnerId).ThenBy(p => p.TakenAt).Take(limit)
+        var batch = await _db.Photos.AsNoTracking().Where(p => p.OwnerId == owner && !p.Placed)
+            .OrderBy(p => p.TakenAt).Take(limit)
             .Select(p => new { p.Id, p.OwnerId, p.TakenAt, p.Lat, p.Lon, p.UpdatedAt })
             .ToListAsync(ct);
+        if (batch.Count == 0)
+        {
+            return 0;
+        }
+
         await using var tx = await _db.Database.BeginTransactionAsync(ct);
         foreach (var group in batch.GroupBy(p => p.OwnerId))
         {
-            var owner = group.Key;
             var from = group.Min(p => p.TakenAt) - PhotoSlack;
             var to = group.Max(p => p.TakenAt) + PhotoSlack;
             var acts = await _db.Activities.AsNoTracking()
@@ -258,7 +263,7 @@ public partial class AtlasService
 
                 var actId = act?.Id;
                 var visitId = visit?.Id;
-                await _db.Photos.Where(x => x.Id == p.Id && x.UpdatedAt == p.UpdatedAt && !x.Placed)
+                await _db.Photos.Where(x => x.Id == p.Id && x.OwnerId == owner && x.UpdatedAt == p.UpdatedAt && !x.Placed)
                     .ExecuteUpdateAsync(s => s
                         .SetProperty(x => x.ActivityId, actId)
                         .SetProperty(x => x.VisitId, visitId)
