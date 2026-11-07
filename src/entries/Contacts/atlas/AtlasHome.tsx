@@ -52,6 +52,7 @@ import FusionSettingsDialog from './FusionSettingsDialog';
 import AtlasFilterBar from './AtlasFilterBar';
 import { parseRoadQuery } from './filters';
 import AssistantPanel from '../components/assistant/AssistantPanel';
+import SystemStatusBar from './SystemStatusBar';
 import { atlasToolset } from './atlasTools';
 import { tokens } from '../theme/contactsTheme';
 import { isSet } from './types';
@@ -682,7 +683,12 @@ const AtlasHome: React.FC = () => {
             </Box>
           </Button>
         </Tooltip>
-        <Box sx={{ flex: 1, display: { xs: 'none', md: 'block' } }} />
+        {/* Blank toolbar space now holds the owner-only system status bar (Epic 22). */}
+        <Box
+          sx={{ flex: 1, display: { xs: 'none', md: 'flex' }, justifyContent: 'flex-end', px: 1 }}
+        >
+          <SystemStatusBar />
+        </Box>
         <Tooltip title="Import">
           <Button
             size="small"

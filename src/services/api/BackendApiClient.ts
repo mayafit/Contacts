@@ -363,12 +363,34 @@ interface ContactsResponse {
  */
 interface AuthStatusResponse {
   isAuthenticated: boolean;
+  /** Whether the signed-in account is the system operator (Epic 22). */
+  isAdmin?: boolean;
   user?: {
     id: string;
     email: string;
     name: string;
     picture?: string;
   };
+}
+
+/** Epic 22 — system status bar + on-demand Grafana (owner-only). */
+export type LampState = 'green' | 'yellow' | 'red' | 'unknown';
+export interface SystemLamp {
+  id: string;
+  label: string;
+  state: LampState;
+  detail?: string;
+}
+export interface GrafanaState {
+  awake: boolean;
+  ready: boolean;
+  wakeUntil: number | null;
+}
+export interface SystemStatus {
+  generatedAt: string | null;
+  overall: LampState;
+  lamps: SystemLamp[];
+  grafana: GrafanaState;
 }
 
 /**
@@ -1892,6 +1914,22 @@ export class BackendApiClient {
     return unwrap(
       await this.request<{ enabled: boolean; model: string }>('/assistant/status'),
       'Failed to read assistant status',
+    );
+  }
+
+  /** Owner-only system health snapshot for the status bar (Epic 22). */
+  async getSystemStatus(): Promise<SystemStatus> {
+    return unwrap(
+      await this.request<SystemStatus>('/system/status'),
+      'Failed to read system status',
+    );
+  }
+
+  /** Owner-only: request Grafana be woken (scaled up) for ~30 min (Epic 22). */
+  async wakeGrafana(): Promise<GrafanaState> {
+    return unwrap(
+      await this.request<GrafanaState>('/system/grafana/wake', { method: 'POST' }),
+      'Failed to wake Grafana',
     );
   }
 

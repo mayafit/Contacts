@@ -365,6 +365,7 @@ export class GoogleContactsService {
   static async checkAuthStatus(): Promise<
     APIResponse<{
       isAuthenticated: boolean;
+      isAdmin: boolean;
       user?: { id: string; email: string; name: string; profilePicture?: string };
     }>
   > {
@@ -390,6 +391,7 @@ export class GoogleContactsService {
         success: true,
         data: {
           isAuthenticated: status.isAuthenticated,
+          isAdmin: status.isAdmin ?? false,
           user: status.user
             ? {
                 id: status.user.id,

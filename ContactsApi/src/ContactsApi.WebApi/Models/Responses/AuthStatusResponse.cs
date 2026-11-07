@@ -7,6 +7,10 @@ public class AuthStatusResponse
 {
     public bool IsAuthenticated { get; set; }
     public UserInfo? User { get; set; }
+
+    /// <summary>True when the signed-in account is an operator/admin (Echo:AdminEmails, Epic 22).
+    /// Gates the owner-only system status bar + on-demand Grafana. Fail-closed: false when unset.</summary>
+    public bool IsAdmin { get; set; }
 }
 
 /// <summary>
