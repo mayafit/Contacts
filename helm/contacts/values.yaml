@@ -61,6 +61,19 @@ limitRange:
 # Frontend subchart (React + Nginx)
 # =============================================================================
 frontend:
+  # Wave 2: user-facing tier, and prefer a node not running the data stores.
+  priorityClassName: home-important
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            topologyKey: kubernetes.io/hostname
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/name
+                  operator: In
+                  values: ["postgresql", "redis"]
   replicaCount: 1
 
   image:
@@ -116,6 +129,19 @@ frontend:
 # Backend subchart (C# ASP.NET Core)
 # =============================================================================
 backend:
+  # Wave 2: user-facing tier, and prefer a node not running the data stores.
+  priorityClassName: home-important
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            topologyKey: kubernetes.io/hostname
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/name
+                  operator: In
+                  values: ["postgresql", "redis"]
   replicaCount: 1
 
   image:
@@ -226,6 +252,8 @@ postgresql:
       adminPasswordKey: postgres-password
       userPasswordKey: password
   primary:
+    # Wave 2: critical data store — must survive node eviction pressure.
+    priorityClassName: home-critical-data
     persistence:
       enabled: true
       size: 5Gi
@@ -296,6 +324,8 @@ redis:
                 app.kubernetes.io/name: backend
                 app.kubernetes.io/instance: "{{ .Release.Name }}"
   master:
+    # Wave 2: critical data store — must survive node eviction pressure.
+    priorityClassName: home-critical-data
     persistence:
       enabled: true
       size: 1Gi

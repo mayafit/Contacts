@@ -37,6 +37,13 @@ spec:
         {{- end }}
         {{- end }}
     spec:
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       serviceAccountName: {{ include "backend.fullname" . }}
       automountServiceAccountToken: false
       {{- if .Values.image.pullSecret }}
