@@ -33,6 +33,8 @@ export interface AuthState {
   error: AppError | null;
   /** Computed authentication status */
   isAuthenticated: boolean;
+  /** Whether the signed-in account is the system operator (Echo:AdminEmails, Epic 22) */
+  isAdmin: boolean;
 }
 
 /**

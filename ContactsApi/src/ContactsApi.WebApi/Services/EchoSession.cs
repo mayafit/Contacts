@@ -63,6 +63,7 @@ public static class EchoSessionDefaults
     {
         AppContext.SetSwitch("Microsoft.AspNetCore.Authentication.SuppressAutoDefaultScheme", true);
         services.AddSingleton(AllowedEmails.FromConfiguration(configuration));
+        services.AddSingleton(AdminEmails.FromConfiguration(configuration));
         services.AddSingleton<RedisTicketStore>();
         services.AddSingleton<ITicketStore>(sp => sp.GetRequiredService<RedisTicketStore>());
         services.AddAuthentication().AddCookie(Scheme, o =>

@@ -378,6 +378,18 @@ else
     Log.Warning("Sign-in allowlist ({Key}) is empty or missing: nobody can sign in, and existing sessions are refused", "Echo__AllowedEmails");
 }
 
+// Admin allowlist (Epic 22): operator-only features (system status bar, on-demand
+// Grafana). Fail-closed — when empty the feature is simply hidden for everyone.
+var admins = app.Services.GetRequiredService<AdminEmails>();
+if (admins.IsConfigured)
+{
+    Log.Information("Admin allowlist: {Count} addresses (ops status bar enabled)", admins.Count);
+}
+else
+{
+    Log.Information("Admin allowlist ({Key}) is empty or missing: the ops status bar is hidden for everyone", "Echo__AdminEmails");
+}
+
 try
 {
     app.Run();

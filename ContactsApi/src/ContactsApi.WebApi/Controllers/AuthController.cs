@@ -38,6 +38,7 @@ public class AuthController : ControllerBase
     private readonly ScopePreferences _prefs;
     private readonly IGoogleSignIn _google;
     private readonly AllowedEmails _allowed;
+    private readonly AdminEmails _admin;
     private readonly RedisTicketStore _tickets;
 
     /// <summary>Pre-sign-in session: the ticket of the user who started this flow signed in (deleted at the new sign-in)</summary>
@@ -57,11 +58,13 @@ public class AuthController : ControllerBase
         ScopePreferences prefs,
         IGoogleSignIn google,
         AllowedEmails allowed,
+        AdminEmails admin,
         RedisTicketStore tickets)
     {
         _prefs = prefs;
         _google = google;
         _allowed = allowed;
+        _admin = admin;
         _tickets = tickets;
         _logger = logger;
         _configuration = configuration;
@@ -467,6 +470,7 @@ public class AuthController : ControllerBase
         return Ok(ApiResponse<AuthStatusResponse>.SuccessResponse(new AuthStatusResponse
         {
             IsAuthenticated = true,
+            IsAdmin = _admin.IsAdmin(HttpContext.UserEmail()),
             User = new UserInfo
             {
                 Id = HttpContext.OwnerId() ?? string.Empty,

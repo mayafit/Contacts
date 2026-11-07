@@ -23,6 +23,12 @@ export const selectIsAuthenticated = (state: RootState) =>
   selectAuthState(state)?.isAuthenticated || false;
 
 /**
+ * Select whether the signed-in account is the system operator (Epic 22).
+ * Gates the owner-only system status bar + on-demand Grafana.
+ */
+export const selectIsAdmin = (state: RootState) => selectAuthState(state)?.isAdmin || false;
+
+/**
  * Select access token
  */
 export const selectAccessToken = (state: RootState) => selectAuthState(state)?.accessToken;

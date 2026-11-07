@@ -22,6 +22,7 @@ const initialState: AuthState = {
   isLoading: false,
   error: null,
   isAuthenticated: false,
+  isAdmin: false,
 };
 
 /**
@@ -29,7 +30,7 @@ const initialState: AuthState = {
  * Verifies if user has valid session cookie
  */
 export const checkAuthStatus = createAsyncThunk<
-  { isAuthenticated: boolean; user?: User },
+  { isAuthenticated: boolean; user?: User; isAdmin?: boolean },
   void,
   { rejectValue: AppError }
 >('auth/checkAuthStatus', async (_, { rejectWithValue }) => {
@@ -98,6 +99,7 @@ const authSlice = createSlice({
       state.accessToken = null;
       state.tokenExpiry = null;
       state.isAuthenticated = false;
+      state.isAdmin = false;
       state.error = null;
     },
 
@@ -122,6 +124,8 @@ const authSlice = createSlice({
     restoreAuthState(state, action: PayloadAction<{ user: User }>) {
       state.user = action.payload.user;
       state.isAuthenticated = true;
+      // isAdmin is confirmed only by a fresh checkAuthStatus, never restored blindly.
+      state.isAdmin = false;
     },
 
     /**
@@ -144,13 +148,8 @@ const authSlice = createSlice({
       .addCase(checkAuthStatus.fulfilled, (state, action) => {
         state.isLoading = false;
         state.isAuthenticated = action.payload.isAuthenticated;
+        state.isAdmin = action.payload.isAuthenticated ? (action.payload.isAdmin ?? false) : false;
         state.user = action.payload.isAuthenticated ? (action.payload.user ?? state.user) : null;
-
-        // DIAGNOSTIC: This will show in Redux DevTools console
-        console.log('[authSlice] checkAuthStatus.fulfilled:', {
-          isAuthenticated: action.payload.isAuthenticated,
-          payload: action.payload,
-        });
       })
       // Check auth status rejected
       .addCase(checkAuthStatus.rejected, (state, action) => {
@@ -161,6 +160,7 @@ const authSlice = createSlice({
           timestamp: new Date().toISOString(),
         };
         state.isAuthenticated = false;
+        state.isAdmin = false;
         state.user = null;
       })
       // Logout pending
@@ -174,6 +174,7 @@ const authSlice = createSlice({
         state.accessToken = null;
         state.tokenExpiry = null;
         state.isAuthenticated = false;
+        state.isAdmin = false;
         state.error = null;
       })
       // Logout rejected
@@ -189,6 +190,7 @@ const authSlice = createSlice({
         state.accessToken = null;
         state.tokenExpiry = null;
         state.isAuthenticated = false;
+        state.isAdmin = false;
       });
   },
 });
