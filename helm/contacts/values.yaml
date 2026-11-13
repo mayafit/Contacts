@@ -326,6 +326,24 @@ redis:
   master:
     # Wave 2: critical data store — must survive node eviction pressure.
     priorityClassName: home-critical-data
+    # Wave 2.1: rasp02's SD card is slow - the default appendfsync=everysec makes
+    # Redis block on fsync ("AOF fsync taking too long (disk is busy?)"); the exec
+    # liveness probe then times out and kubelet restarts it, a crashloop (146
+    # restarts) that drops the backend's connection pool and reaches users as
+    # SESSION_STORE_UNAVAILABLE 503s ("The server is busy"). appendfsync=no lets
+    # the kernel flush (<=~30s durability window, fine for sessions/tokens) so
+    # Redis never blocks; the probes are relaxed so a transient AOF-rewrite stall
+    # cannot kill a healthy instance.
+    extraFlags:
+      - "--appendfsync no"
+    livenessProbe:
+      timeoutSeconds: 10
+      periodSeconds: 15
+      failureThreshold: 10
+    readinessProbe:
+      timeoutSeconds: 5
+      periodSeconds: 15
+      failureThreshold: 10
     persistence:
       enabled: true
       size: 1Gi
