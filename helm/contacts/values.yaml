@@ -61,6 +61,19 @@ limitRange:
 # Frontend subchart (React + Nginx)
 # =============================================================================
 frontend:
+  # Wave 2: user-facing tier, and prefer a node not running the data stores.
+  priorityClassName: home-important
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            topologyKey: kubernetes.io/hostname
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/name
+                  operator: In
+                  values: ["postgresql", "redis"]
   replicaCount: 1
 
   image:
@@ -116,6 +129,19 @@ frontend:
 # Backend subchart (C# ASP.NET Core)
 # =============================================================================
 backend:
+  # Wave 2: user-facing tier, and prefer a node not running the data stores.
+  priorityClassName: home-important
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            topologyKey: kubernetes.io/hostname
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/name
+                  operator: In
+                  values: ["postgresql", "redis"]
   replicaCount: 1
 
   image:
@@ -226,6 +252,8 @@ postgresql:
       adminPasswordKey: postgres-password
       userPasswordKey: password
   primary:
+    # Wave 2: critical data store — must survive node eviction pressure.
+    priorityClassName: home-critical-data
     persistence:
       enabled: true
       size: 5Gi
@@ -296,6 +324,26 @@ redis:
                 app.kubernetes.io/name: backend
                 app.kubernetes.io/instance: "{{ .Release.Name }}"
   master:
+    # Wave 2: critical data store — must survive node eviction pressure.
+    priorityClassName: home-critical-data
+    # Wave 2.1: rasp02's SD card is slow - the default appendfsync=everysec makes
+    # Redis block on fsync ("AOF fsync taking too long (disk is busy?)"); the exec
+    # liveness probe then times out and kubelet restarts it, a crashloop (146
+    # restarts) that drops the backend's connection pool and reaches users as
+    # SESSION_STORE_UNAVAILABLE 503s ("The server is busy"). appendfsync=no lets
+    # the kernel flush (<=~30s durability window, fine for sessions/tokens) so
+    # Redis never blocks; the probes are relaxed so a transient AOF-rewrite stall
+    # cannot kill a healthy instance.
+    extraFlags:
+      - "--appendfsync no"
+    livenessProbe:
+      timeoutSeconds: 10
+      periodSeconds: 15
+      failureThreshold: 10
+    readinessProbe:
+      timeoutSeconds: 5
+      periodSeconds: 15
+      failureThreshold: 10
     persistence:
       enabled: true
       size: 1Gi
