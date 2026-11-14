@@ -78,7 +78,7 @@ frontend:
 
   image:
     repository: ghcr.io/mayafit/contacts-frontend
-    tag: latest
+    tag: "72c241b"
     pullPolicy: IfNotPresent
     pullSecret: ""
 
@@ -146,7 +146,7 @@ backend:
 
   image:
     repository: ghcr.io/mayafit/contacts-backend
-    tag: latest
+    tag: "72c241b"
     pullPolicy: IfNotPresent
     pullSecret: ""
 
