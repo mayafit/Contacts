@@ -7,7 +7,9 @@ or with a password in values, does not render. Nothing is emitted.
 {{- if or $pg.password $pg.postgresPassword -}}
 {{- fail "postgresql.auth.password / postgresPassword must not be set: use postgresql.auth.existingSecret (a Secret created from Vault, AD-52)" -}}
 {{- end -}}
+{{- if .Values.postgresql.enabled -}}
 {{- $_ := required "postgresql.auth.existingSecret is required: a Secret created from Vault with the keys postgres-password and password (AD-52 rule 1)" $pg.existingSecret -}}
+{{- end -}}
 {{- $redis := .Values.redis.auth -}}
 {{- if not $redis.enabled -}}
 {{- fail "redis.auth.enabled must be true (AD-50 rule 1)" -}}

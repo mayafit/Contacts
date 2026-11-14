@@ -69,6 +69,23 @@ spec:
       ports:
         - port: {{ .Values.global.postgresql.port }}
           protocol: TCP
+    {{- with .Values.global.postgresql.external }}
+    {{- if .namespace }}
+    # The external (shared) PostgreSQL, when the bundled one is disabled
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .namespace }}
+          {{- with .podLabels }}
+          podSelector:
+            matchLabels:
+              {{- toYaml . | nindent 14 }}
+          {{- end }}
+      ports:
+        - port: {{ $.Values.global.postgresql.port }}
+          protocol: TCP
+    {{- end }}
+    {{- end }}
     - to:
         - namespaceSelector:
             matchLabels:
