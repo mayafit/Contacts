@@ -11,6 +11,22 @@ global:
     port: 5432
     database: contactsdb
     username: contactsapi
+    # A PostgreSQL outside this release (the cluster's shared instance), used
+    # when `postgresql.enabled` is false:
+    #   - host: an ExternalName Service named <release>-postgresql points at it,
+    #     so the connection strings in Vault keep working unchanged;
+    #   - namespace + podLabels: the backend, routes and backup NetworkPolicies
+    #     allow egress to those pods (the namespace is default-deny egress).
+    # The in-namespace Postgres rules stay as they are; with no such pods they
+    # match nothing. Empty by default (no extra egress); `host` is required
+    # once `postgresql.enabled` is false. On home-rasps:
+    #   host: postgres.databases.svc.cluster.local
+    #   namespace: databases
+    #   podLabels: { app.kubernetes.io/name: postgres }
+    external:
+      host: ""
+      namespace: ""
+      podLabels: {}
   redis:
     port: 6379
 
@@ -173,7 +189,8 @@ backend:
     ASPNETCORE_URLS: "http://+:5000"
     DOTNET_RUNNING_IN_CONTAINER: "true"
     OTEL_EXPORTER_OTLP_ENDPOINT: "http://glutenguardian-seq.glutguard.svc.cluster.local:4317"
-    JAEGER_ENDPOINT: "http://glutenguardian-jaeger-all-in-one.glutguard.svc.cluster.local:14268/api/traces"
+    # JAEGER_ENDPOINT removed: the backend has no tracing exporter, and the
+    # GlutenGuardian Jaeger it pointed at is being removed from that chart.
 
   # Secrets come from Vault (vault.enabled). Without Vault, only an existing Secret
   # is accepted (AD-52 rule 1): it must hold GoogleOAuth__ClientId,
@@ -234,6 +251,10 @@ routes:
 # Bitnami PostgreSQL
 # =============================================================================
 postgresql:
+  # false = use the PostgreSQL named in global.postgresql.external instead
+  # (the cluster's shared instance). Disabling deletes the StatefulSet but
+  # keeps its PVC, so re-enabling brings the old data back.
+  enabled: true
   image:
     # Bitnami publishes only `latest`, which crosses majors; pinned to the 18.6.0
     # digest the live pod runs (AD-54 rule 3). `tag` is inert while digest is set

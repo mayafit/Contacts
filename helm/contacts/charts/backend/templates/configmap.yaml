@@ -20,7 +20,6 @@ data:
   Frontend__BaseUrl: {{ $publicUrl | quote }}
   Cors__AllowedOrigins__0: {{ $publicUrl | quote }}
   OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.config.OTEL_EXPORTER_OTLP_ENDPOINT | quote }}
-  JAEGER_ENDPOINT: {{ .Values.config.JAEGER_ENDPOINT | quote }}
   # Row-level security (AD-49 rule 8): the interceptor's mode, the policy migrations'
   # gate, and whether the API still migrates at startup (not once the init container does)
   RowLevelSecurity__Mode: {{ .Values.rowLevelSecurity.mode | quote }}

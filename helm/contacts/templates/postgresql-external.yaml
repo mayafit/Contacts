@@ -1,0 +1,28 @@
+{{- if not .Values.postgresql.enabled }}
+{{- $ext := .Values.global.postgresql.external }}
+# The bundled PostgreSQL is off; contactsdb lives in an external instance (on
+# home-rasps, the shared PostgreSQL in the `databases` namespace). This Service
+# keeps the bundled chart's name, so every connection string that names the host
+# <release>-postgresql (Vault secret/contacts, secret/contacts-routes) reaches
+# the external instance unchanged.
+#
+# Switching an existing release: Kubernetes rejects changing a ClusterIP Service
+# to ExternalName in place, so delete the old <release>-postgresql Service
+# before the upgrade that disables the bundled chart (and again when rolling
+# back). See the shared PostgreSQL runbook in raspberry_deployment.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-postgresql
+  labels:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/part-of: contacts
+    app.kubernetes.io/component: database-alias
+spec:
+  type: ExternalName
+  externalName: {{ required "global.postgresql.external.host is required when postgresql.enabled is false" $ext.host }}
+  ports:
+    - name: tcp-postgresql
+      port: {{ .Values.global.postgresql.port }}
+      protocol: TCP
+{{- end }}
