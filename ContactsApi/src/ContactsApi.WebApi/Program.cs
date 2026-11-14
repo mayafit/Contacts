@@ -71,6 +71,10 @@ builder.Services.AddSingleton<OtherContactsStore>();
 // Assistant: Gemini key from Vault (Gemini__ApiKey); without it the assistant reports itself disabled
 builder.Services.Configure<ContactsApi.WebApi.Controllers.GeminiOptions>(builder.Configuration.GetSection("Gemini"));
 builder.Services.AddSingleton<GeminiService>();
+// Validates files attached to assistant messages before they reach Gemini (allowlist,
+// magic-byte checks, size/count caps). Config section "Gemini:Uploads".
+builder.Services.Configure<UploadOptions>(builder.Configuration.GetSection("Gemini:Uploads"));
+builder.Services.AddSingleton<UploadValidator>();
 // The phonetic fill's Google Translate (AD-43 rule 4); off until GoogleTranslate__ApiKey is set
 builder.Services.Configure<GoogleTranslateOptions>(builder.Configuration.GetSection("GoogleTranslate"));
 builder.Services.AddSingleton<NameTranslator>();

@@ -28,9 +28,21 @@ import {
   ErrorOutline,
   Insights as InsightsIcon,
   AddComment,
+  AttachFile,
+  InsertDriveFile,
 } from '@mui/icons-material';
 import type { Contact, ContactGroup } from '../../types/Contact';
-import type { GeminiContent } from '../../../../services/api/BackendApiClient';
+import type { GeminiContent, GeminiPart } from '../../../../services/api/BackendApiClient';
+import {
+  ACCEPT_ATTR,
+  attachmentToPart,
+  fileToAttachment,
+  isImageType,
+  MAX_FILES,
+  MAX_TOTAL_BYTES,
+  validateFile,
+  type Attachment,
+} from '../../assistant/attachments';
 import { runAgent, type ToolStep, type Toolset } from '../../assistant/agent';
 import {
   type AssistantContext,
@@ -75,8 +87,15 @@ export interface AssistantPanelProps {
 
 type ProposalStatus = 'pending' | 'applying' | 'applied' | 'discarded' | 'failed';
 
+/** An attached file shown in the user's message bubble */
+interface ChatFile {
+  name: string;
+  isImage: boolean;
+  previewUrl?: string;
+}
+
 type ChatItem =
-  | { kind: 'user'; text: string }
+  | { kind: 'user'; text: string; files?: ChatFile[] }
   | { kind: 'assistant'; text: string }
   | { kind: 'step'; step: ToolStep }
   | {
@@ -375,6 +394,9 @@ const AssistantPanel: React.FC<AssistantPanelProps> = ({
   const [items, setItems] = useState<ChatItem[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [dragging, setDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const history = useRef<GeminiContent[]>([]);
   const memory = useRef<SearchMemory>(new Map());
   const notes = useRef<string[]>([]);
@@ -397,22 +419,92 @@ const AssistantPanel: React.FC<AssistantPanelProps> = ({
 
   const add = (item: ChatItem) => setItems((list) => [...list, item]);
 
+  // Validate, cap and read files into pending attachments; reasons are shown in chat
+  const addFiles = useCallback(
+    async (list: FileList | File[]) => {
+      const incoming = Array.from(list);
+      const errors: string[] = [];
+      const accepted: File[] = [];
+      let count = attachments.length;
+      let total = attachments.reduce((sum, a) => sum + a.size, 0);
+      for (const file of incoming) {
+        const err = validateFile(file);
+        if (err) {
+          errors.push(err);
+          continue;
+        }
+        if (count >= MAX_FILES) {
+          errors.push(`You can attach at most ${MAX_FILES} files per message.`);
+          break;
+        }
+        if (total + file.size > MAX_TOTAL_BYTES) {
+          errors.push(
+            `"${file.name}" would push the attachments over ${MAX_TOTAL_BYTES / (1024 * 1024)} MB.`,
+          );
+          continue;
+        }
+        accepted.push(file);
+        count += 1;
+        total += file.size;
+      }
+      try {
+        const read = await Promise.all(accepted.map(fileToAttachment));
+        if (read.length) {
+          setAttachments((cur) => [...cur, ...read]);
+        }
+      } catch (e) {
+        errors.push((e as Error).message || 'A file could not be read.');
+      }
+      if (errors.length) {
+        add({ kind: 'error', text: errors.join(' ') });
+      }
+    },
+    [attachments],
+  );
+
+  const removeAttachment = useCallback((id: string) => {
+    setAttachments((cur) => {
+      const gone = cur.find((a) => a.id === id);
+      if (gone?.previewUrl) {
+        URL.revokeObjectURL(gone.previewUrl);
+      }
+      return cur.filter((a) => a.id !== id);
+    });
+  }, []);
+
   const send = useCallback(
     async (text: string) => {
       const message = text.trim();
-      if (!message || busy) {
+      const files = attachments;
+      if ((!message && files.length === 0) || busy) {
         return;
       }
       setInput('');
-      add({ kind: 'user', text: message });
+      setAttachments([]);
+      add({
+        kind: 'user',
+        text: message,
+        files: files.length
+          ? files.map((f) => ({
+              name: f.name,
+              isImage: isImageType(f.mimeType),
+              previewUrl: f.previewUrl,
+            }))
+          : undefined,
+      });
       setBusy(true);
       const pending = notes.current.splice(0);
-      const parts = [
-        {
-          text: pending.length
-            ? `[Since my last message: ${pending.join('; ')}]\n\n${message}`
-            : message,
-        },
+      const prefixed = pending.length
+        ? `[Since my last message: ${pending.join('; ')}]\n\n${message}`
+        : message;
+      // Attachments first, then the question; a file with no text gets a gentle prompt
+      const parts: GeminiPart[] = [
+        ...files.map(attachmentToPart),
+        ...(prefixed
+          ? [{ text: prefixed }]
+          : files.length
+            ? [{ text: 'Please look at the attached file(s).' }]
+            : []),
       ];
       try {
         const result = await runAgent(
@@ -438,7 +530,7 @@ const AssistantPanel: React.FC<AssistantPanelProps> = ({
         setBusy(false);
       }
     },
-    [busy, context, toolset],
+    [attachments, busy, context, toolset],
   );
 
   // Requests from elsewhere in the app ("Draft" on Reach out)
@@ -602,6 +694,38 @@ const AssistantPanel: React.FC<AssistantPanelProps> = ({
                   fontSize: fs(15),
                 }}
               >
+                {item.files && item.files.length > 0 && (
+                  <Box
+                    sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, mb: item.text ? 0.75 : 0 }}
+                  >
+                    {item.files.map((f, fi) =>
+                      f.isImage && f.previewUrl ? (
+                        <Box
+                          key={fi}
+                          component="img"
+                          src={f.previewUrl}
+                          alt={f.name}
+                          sx={{
+                            width: 56,
+                            height: 56,
+                            objectFit: 'cover',
+                            borderRadius: '8px',
+                            border: `1px solid ${tokens.border}`,
+                          }}
+                        />
+                      ) : (
+                        <Chip
+                          key={fi}
+                          size="small"
+                          icon={<InsertDriveFile sx={{ fontSize: fs(15) }} />}
+                          label={f.name}
+                          variant="outlined"
+                          sx={{ maxWidth: 200, borderColor: tokens.border }}
+                        />
+                      ),
+                    )}
+                  </Box>
+                )}
                 {item.text}
               </Box>
             );
@@ -686,7 +810,63 @@ const AssistantPanel: React.FC<AssistantPanelProps> = ({
             Discard
           </Typography>
         )}
+        {attachments.length > 0 && (
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, mb: 1 }}>
+            {attachments.map((a) => (
+              <Chip
+                key={a.id}
+                size="small"
+                icon={
+                  isImageType(a.mimeType) ? (
+                    <Box
+                      component="img"
+                      src={a.previewUrl}
+                      alt=""
+                      sx={{ width: 18, height: 18, objectFit: 'cover', borderRadius: '3px' }}
+                    />
+                  ) : (
+                    <InsertDriveFile sx={{ fontSize: fs(15) }} />
+                  )
+                }
+                label={a.name}
+                onDelete={() => removeAttachment(a.id)}
+                variant="outlined"
+                sx={{ maxWidth: 220, borderColor: tokens.border, color: tokens.textSecondary }}
+              />
+            ))}
+          </Box>
+        )}
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          accept={ACCEPT_ATTR}
+          hidden
+          onChange={(e) => {
+            if (e.target.files?.length) {
+              void addFiles(e.target.files);
+            }
+            e.target.value = '';
+          }}
+        />
         <Box
+          onDragOver={(e) => {
+            e.preventDefault();
+            if (!dragging) {
+              setDragging(true);
+            }
+          }}
+          onDragLeave={(e) => {
+            e.preventDefault();
+            setDragging(false);
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragging(false);
+            if (e.dataTransfer.files?.length) {
+              void addFiles(e.dataTransfer.files);
+            }
+          }}
           sx={{
             display: 'flex',
             alignItems: 'flex-end',
@@ -694,11 +874,23 @@ const AssistantPanel: React.FC<AssistantPanelProps> = ({
             px: 1.5,
             py: 1,
             borderRadius: '10px',
-            border: `1px solid ${tokens.border}`,
+            border: `1px ${dragging ? 'dashed' : 'solid'} ${dragging ? tokens.accent : tokens.border}`,
             bgcolor: tokens.page,
             '&:focus-within': { borderColor: tokens.accent },
           }}
         >
+          <Tooltip title="Attach a file">
+            <span>
+              <IconButton
+                size="small"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={busy || attachments.length >= MAX_FILES}
+                aria-label="Attach a file"
+              >
+                <AttachFile fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
           <InputBase
             inputRef={inputRef}
             multiline
@@ -711,14 +903,14 @@ const AssistantPanel: React.FC<AssistantPanelProps> = ({
                 void send(input);
               }
             }}
-            placeholder="Ask about your contacts…"
+            placeholder={dragging ? 'Drop files to attach…' : 'Ask about your contacts…'}
             inputProps={{ 'aria-label': 'Message the assistant', dir: 'auto' }}
             sx={{ flex: 1, fontSize: fs(15) }}
           />
           <IconButton
             size="small"
             onClick={() => send(input)}
-            disabled={busy || !input.trim()}
+            disabled={busy || (!input.trim() && attachments.length === 0)}
             aria-label="Send"
           >
             <Send fontSize="small" />
