@@ -297,6 +297,8 @@ export interface GeminiPart {
   thoughtSignature?: string;
   functionCall?: { name: string; args?: Record<string, unknown>; id?: string };
   functionResponse?: { name: string; response: Record<string, unknown>; id?: string };
+  /** An attached file: base64 bytes with its MIME type (validated server-side) */
+  inlineData?: { mimeType: string; data: string };
 }
 
 /** Gemini message */
