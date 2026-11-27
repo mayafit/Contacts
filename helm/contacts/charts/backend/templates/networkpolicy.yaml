@@ -100,6 +100,10 @@ spec:
       ports:
         - port: {{ $np.vault.port }}
           protocol: TCP
+        {{- with $np.vault.tlsPort }}
+        - port: {{ . }}
+          protocol: TCP
+        {{- end }}
     {{- end }}
     - to:
         - ipBlock:

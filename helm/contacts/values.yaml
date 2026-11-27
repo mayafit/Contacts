@@ -30,6 +30,18 @@ global:
   redis:
     port: 6379
 
+  # Vault clients on TLS with the cluster CA (GG 11.8c, H-AD-30). One switch for the
+  # backend and routes agents. Off until the flip in raspberry_deployment; 11.9a then
+  # removes Vault's HTTP listener. With it on, a missing CA ConfigMap keeps the pod
+  # from starting (fail closed); verification is never disabled.
+  vaultTls:
+    enabled: false
+    addr: "https://vault-tls.vault.svc.cluster.local:8202"
+    # The ConfigMap trust-manager writes into namespaces labelled gg-internal-ca (GG 11.8a)
+    caConfigMap: gg-internal-ca
+    caKey: ca.crt
+    mountPath: /etc/gg-internal-ca
+
   # Default-deny networking for the contacts namespace (AD-51 rules 1 and 2). Every
   # chart pod gets its own allow-list on top of a namespace-wide deny; the shared
   # settings live here so every subchart reads the same ones.
@@ -44,6 +56,9 @@ global:
     vault:
       namespace: vault
       port: 8200
+      # Also egress to the TLS listener, in the dark release, so the flip is a values-only
+      # change and pods on the old configuration keep 8200 (GG 11.8c). 11.9a removes 8200
+      tlsPort: 8202
     # Internet egress (TCP 443 only) excludes these: RFC 1918, the CGNAT range the
     # tailnet uses, link-local. In-cluster targets are allowed by pod selectors
     privateRanges:

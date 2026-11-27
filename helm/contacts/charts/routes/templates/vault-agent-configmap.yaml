@@ -28,7 +28,13 @@ data:
 {{- end }}
 {{- define "routes.vaultAgentCommon" -}}
 vault {
+{{- if include "routes.vaultTls" . }}
+{{- $t := .Values.global.vaultTls }}
+  address = "{{ $t.addr }}"
+  ca_cert = "{{ $t.mountPath }}/{{ $t.caKey }}"
+{{- else }}
   address = "http://vault.{{ .Values.vault.namespace }}.svc:{{ .Values.vault.port }}"
+{{- end }}
 }
 auto_auth {
   method "kubernetes" {

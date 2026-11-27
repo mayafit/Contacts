@@ -29,7 +29,13 @@ data:
 {{- end }}
 {{- define "backend.vaultAgentCommon" -}}
 vault {
+{{- if include "backend.vaultTls" . }}
+{{- $t := .Values.global.vaultTls }}
+  address = "{{ $t.addr }}"
+  ca_cert = "{{ $t.mountPath }}/{{ $t.caKey }}"
+{{- else }}
   address = "{{ .Values.vault.address }}"
+{{- end }}
 }
 auto_auth {
   method "kubernetes" {
