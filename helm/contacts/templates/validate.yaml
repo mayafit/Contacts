@@ -24,3 +24,33 @@ or with a password in values, does not render. Nothing is emitted.
 {{- if .Values.postgresql.primary.networkPolicy.allowExternal -}}
 {{- fail "postgresql.primary.networkPolicy.allowExternal must be false (AD-51 rule 2)" -}}
 {{- end -}}
+{{- /*
+Vault over TLS (GG 11.8c, H-AD-30). With the switch on, the clients must name an https
+address and the cluster CA to verify it with; nothing is emitted otherwise.
+*/ -}}
+{{- $vt := .Values.global.vaultTls | default dict -}}
+{{- if $vt.enabled -}}
+{{- $addr := required "global.vaultTls.addr is required when global.vaultTls.enabled is true" $vt.addr -}}
+{{- if not (hasPrefix "https://" $addr) -}}
+{{- fail "global.vaultTls.addr must start with https:// (Vault clients verify TLS, GG 11.8c)" -}}
+{{- end -}}
+{{- $_ := required "global.vaultTls.caConfigMap is required when global.vaultTls.enabled is true" $vt.caConfigMap -}}
+{{- $_ := required "global.vaultTls.caKey is required when global.vaultTls.enabled is true" $vt.caKey -}}
+{{- $mp := required "global.vaultTls.mountPath is required when global.vaultTls.enabled is true" $vt.mountPath -}}
+{{- if not (hasPrefix "/" $mp) -}}
+{{- fail "global.vaultTls.mountPath must be an absolute path (start with /)" -}}
+{{- end -}}
+{{- end -}}
+{{- $vp := ((.Values.global.networkPolicy).vault) | default dict -}}
+{{- if hasKey $vp "tlsPort" -}}
+{{- $tp := $vp.tlsPort -}}
+{{- if not (or (kindIs "float64" $tp) (kindIs "int" $tp) (kindIs "int64" $tp)) -}}
+{{- fail "global.networkPolicy.vault.tlsPort must be an integer port number" -}}
+{{- end -}}
+{{- if or (lt (float64 $tp) 1.0) (gt (float64 $tp) 65535.0) (ne (float64 $tp) (floor (float64 $tp))) -}}
+{{- fail "global.networkPolicy.vault.tlsPort must be an integer from 1 to 65535" -}}
+{{- end -}}
+{{- if eq (float64 $tp) (float64 $vp.port) -}}
+{{- fail "global.networkPolicy.vault.tlsPort must differ from global.networkPolicy.vault.port" -}}
+{{- end -}}
+{{- end -}}

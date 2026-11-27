@@ -37,6 +37,16 @@ spec:
         vault.hashicorp.com/agent-configmap: {{ include "routes.fullname" . }}-vault-agent
         vault.hashicorp.com/agent-init-first: "true"
         {{- end }}
+        {{- if include "routes.vaultTls" . }}
+        {{- $tls := .Values.global.vaultTls }}
+        # GG 11.8c: this pod's agents talk to Vault over TLS and verify it with the cluster
+        # CA. agent-copy-volume-mounts gives the agent containers the mounts of the
+        # routes container, which is how they see the CA file; the agent writes only
+        # /vault/secrets. Verification is never turned off
+        vault.hashicorp.com/service: {{ $tls.addr | quote }}
+        vault.hashicorp.com/ca-cert: {{ printf "%s/%s" $tls.mountPath $tls.caKey | quote }}
+        vault.hashicorp.com/agent-copy-volume-mounts: routes
+        {{- end }}
         {{- end }}
     spec:
       serviceAccountName: {{ include "routes.fullname" . }}
@@ -152,6 +162,11 @@ spec:
               readOnly: true
             - name: tmp
               mountPath: /tmp
+            {{- if include "routes.vaultTls" . }}
+            - name: gg-internal-ca
+              mountPath: {{ .Values.global.vaultTls.mountPath }}
+              readOnly: true
+            {{- end }}
         - name: valhalla
           image: {{ .Values.valhalla.image | quote }}
           # The config shipped in the tiles image (paths under /data, loopback only,
@@ -206,5 +221,18 @@ spec:
                   {{- with .Values.vault.tokenAudience }}
                   audience: {{ . }}
                   {{- end }}
+        {{- end }}
+        {{- if include "routes.vaultTls" . }}
+        {{- $tls := .Values.global.vaultTls }}
+        # The cluster CA (trust-manager). optional: false, so a missing bundle keeps the
+        # pod from starting instead of letting an agent run without verification (GG 11.8c)
+        - name: gg-internal-ca
+          configMap:
+            name: {{ $tls.caConfigMap }}
+            items:
+              - key: {{ $tls.caKey }}
+                path: {{ $tls.caKey }}
+            defaultMode: 0444
+            optional: false
         {{- end }}
 {{- end }}

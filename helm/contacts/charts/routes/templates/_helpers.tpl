@@ -32,3 +32,9 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/name: frontend
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
+
+{{- /* GG 11.8c: Vault over TLS is on only when the umbrella switch global.vaultTls.enabled and this chart's vault.enabled are both on. The annotations, the CA volume and mount, and the custom agent HCL all read this, so they cannot disagree. Renders "true" or nothing. */ -}}
+{{- define "routes.vaultTls" -}}
+{{- $t := (.Values.global).vaultTls | default dict -}}
+{{- if and $t.enabled .Values.vault.enabled -}}true{{- end -}}
+{{- end }}
